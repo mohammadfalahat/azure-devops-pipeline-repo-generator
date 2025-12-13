@@ -44,6 +44,11 @@
     { "id": "Microsoft.TeamFoundation.Server.Integration" }
   ],
   "scopes": ["vso.code", "vso.project", "vso.release", "vso.build"],
+  "links": {
+    "getstarted": {
+      "uri": "https://learn.microsoft.com/azure/devops/extend/overview"
+    }
+  },
   "branding": {
     "color": "#0078D4",
     "theme": "dark"
