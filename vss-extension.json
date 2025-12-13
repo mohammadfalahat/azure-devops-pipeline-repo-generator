@@ -12,7 +12,7 @@
     "default": "src/images/icon.svg"
   },
   "files": [
-    { "path": "src" },
+    { "path": "src", "addressable": true },
     { "path": "README.md" }
   ],
   "contributions": [
