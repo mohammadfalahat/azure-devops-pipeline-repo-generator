@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "pipeline-generator",
   "publisher": "localdev",
-  "version": "0.1.1",
+  "version": "0.1.5",
   "name": "Pipeline Generator",
   "description": "Add a Generate Pipeline button next to each branch to bootstrap pipeline repositories.",
   "public": false,
@@ -12,7 +12,8 @@
     "default": "src/images/icon.svg"
   },
   "files": [
-    { "path": "src" }
+    { "path": "src" },
+    { "path": "README.md" }
   ],
   "contributions": [
     {
@@ -46,7 +47,18 @@
   "scopes": ["vso.code", "vso.project", "vso.release", "vso.build"],
   "links": {
     "getstarted": {
-      "uri": "https://learn.microsoft.com/azure/devops/extend/overview"
+      "uri": "https://learn.microsoft.com/azure/devops/extend/get-started/node"
+    },
+    "repository": {
+      "uri": "https://azure.buluttakin.com/tfs/_git/pipeline-generator"
+    },
+    "support": {
+      "uri": "https://azure.buluttakin.com/tfs/"
+    }
+  },
+  "content": {
+    "details": {
+      "path": "README.md"
     }
   },
   "branding": {

@@ -49,7 +49,7 @@ this manually or with the official `tfx-cli` utility.
 
 ## Uploading to Azure DevOps Server (on-premises)
 
-1. Sign in to your Azure DevOps Server (for example `https://ado.mycompany.com/tfs`).
+1. Sign in to your Azure DevOps Server (for example `https://azure.buluttakin.com/tfs`).
 2. Open **Organization settings** (or **Collection settings** in Azure DevOps Server) → **Extensions** → **Manage extensions**.
 3. Choose **Upload new extension**, select the generated `.vsix`, and upload it.
 4. After upload, choose **Install** for the target project collection. The branch menu action will appear once installed.
@@ -60,7 +60,7 @@ If you prefer the CLI, create a Personal Access Token (PAT) with the **Manage** 
 
 ```bash
 tfx extension publish \
-  --service-url https://ado.mycompany.com/tfs \
+  --service-url https://azure.buluttakin.com/tfs \
   --token YOUR_PAT \
   --vsix <path-to-generated-file>.vsix
 ```
