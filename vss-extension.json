@@ -40,9 +40,7 @@
     }
   ],
   "targets": [
-    { "id": "Microsoft.VisualStudio.Services" },
-    { "id": "Microsoft.TeamFoundation.Server" },
-    { "id": "Microsoft.TeamFoundation.Server.Integration" }
+    { "id": "Microsoft.VisualStudio.Services" }
   ],
   "scopes": ["vso.code", "vso.project", "vso.release", "vso.build"],
   "links": {
