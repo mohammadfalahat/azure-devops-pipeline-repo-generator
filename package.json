@@ -1,0 +1,19 @@
+{
+  "name": "azure-devops-pipeline-repo-generator",
+  "version": "1.0.0",
+  "description": "Azure DevOps extension that adds a generate pipeline action next to each branch.",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo \"Static extension: no build step required\"",
+    "test": "echo \"No automated tests available\""
+  },
+  "keywords": [
+    "azure-devops",
+    "extension",
+    "pipelines",
+    "repositories"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs"
+}

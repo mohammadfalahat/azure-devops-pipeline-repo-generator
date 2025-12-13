@@ -1,0 +1,46 @@
+{
+  "manifestVersion": 1,
+  "id": "pipeline-generator",
+  "publisher": "localdev",
+  "version": "0.1.0",
+  "name": "Pipeline Generator",
+  "description": "Add a Generate Pipeline button next to each branch to bootstrap pipeline repositories.",
+  "public": false,
+  "categories": ["Azure Pipelines", "Azure Repos"],
+  "baseUri": "src/",
+  "icons": {
+    "default": "images/icon.svg"
+  },
+  "files": [
+    { "path": "src" }
+  ],
+  "contributions": [
+    {
+      "id": "generate-pipeline-action",
+      "type": "ms.vss-web.action",
+      "targets": ["ms.vss-code-web.git-branches-menu"],
+      "properties": {
+        "text": "Generate pipeline",
+        "title": "Generate pipeline for this branch",
+        "icon": "images/icon.svg",
+        "uri": "menu-action.html",
+        "registeredObjectId": "generate-pipeline-action"
+      }
+    },
+    {
+      "id": "pipeline-generator-hub",
+      "type": "ms.vss-web.hub",
+      "targets": ["ms.vss-code-web.code-hub-group"],
+      "properties": {
+        "name": "Pipeline Generator",
+        "order": 99,
+        "uri": "index.html"
+      }
+    }
+  ],
+  "scopes": ["vso.code", "vso.project", "vso.release", "vso.build"],
+  "branding": {
+    "color": "#0078D4",
+    "theme": "dark"
+  }
+}

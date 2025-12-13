@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Generate pipeline</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://unpkg.com/azure-devops-extension-sdk@2.0.11"></script>
+  <script defer src="ui.js"></script>
+</head>
+<body>
+  <main class="wrapper">
+    <header>
+      <img src="images/icon.svg" class="logo" alt="Extension icon" />
+      <div>
+        <h1>Generate pipeline</h1>
+        <p id="branch-label">Loading branch context...</p>
+      </div>
+    </header>
+
+    <section class="panel">
+      <p class="hint">
+        Fill the fields below, then generate the pipeline and bootstrap the shared
+        repository. Defaults match the requested deployment template.
+      </p>
+      <form id="pipeline-form">
+        <div class="field">
+          <label for="pool">Pool</label>
+          <input id="pool" name="pool" value="PublishDockerAgent" required />
+        </div>
+        <div class="field">
+          <label for="service">Service name</label>
+          <input id="service" name="service" value="api" required />
+        </div>
+        <div class="field">
+          <label for="environment">Environment</label>
+          <select id="environment" name="environment">
+            <option value="dev">dev</option>
+            <option value="demo" selected>demo</option>
+            <option value="qa">qa</option>
+            <option value="pro">pro</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dockerfileDir">Dockerfile directory</label>
+          <input id="dockerfileDir" name="dockerfileDir" value="src/TMS.API" required />
+        </div>
+        <div class="field">
+          <label for="repositoryAddress">Container registry URL</label>
+          <input id="repositoryAddress" name="repositoryAddress" value="registry.buluttakin.com" required />
+        </div>
+        <div class="field">
+          <label for="containerRegistryService">Container registry service</label>
+          <input id="containerRegistryService" name="containerRegistryService" value="BulutReg" required />
+        </div>
+        <div class="field">
+          <label for="komodoServer">Komodo server</label>
+          <select id="komodoServer" name="komodoServer">
+            <option value="DEMO-192.168.62.91">DEMO-192.168.62.91</option>
+            <option value="Development-192.168.62.19">Development-192.168.62.19</option>
+            <option value="Production-31.7.65.195">Production-31.7.65.195</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="targetRepo">Target repository name</label>
+          <input id="targetRepo" name="targetRepo" readonly />
+          <small>Auto-generated from the project name using the pattern SANITIZEDPROJECTNAME_Azure_DevOps.</small>
+        </div>
+        <button type="submit" class="primary">Create repository and pipeline scaffold</button>
+      </form>
+      <div id="status" role="status" aria-live="polite"></div>
+    </section>
+  </main>
+</body>
+</html>
