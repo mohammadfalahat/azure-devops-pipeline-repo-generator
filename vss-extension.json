@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "pipeline-generator",
   "publisher": "localdev",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "name": "Pipeline Generator",
   "description": "Add a Generate Pipeline button next to each branch to bootstrap pipeline repositories.",
   "public": false,
@@ -37,6 +37,11 @@
         "uri": "index.html"
       }
     }
+  ],
+  "targets": [
+    { "id": "Microsoft.VisualStudio.Services" },
+    { "id": "Microsoft.TeamFoundation.Server" },
+    { "id": "Microsoft.TeamFoundation.Server.Integration" }
   ],
   "scopes": ["vso.code", "vso.project", "vso.release", "vso.build"],
   "branding": {
