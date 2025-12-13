@@ -9,7 +9,7 @@
   "categories": ["Azure Pipelines", "Azure Repos"],
   "baseUri": "src/",
   "icons": {
-    "default": "images/icon.svg"
+    "default": "src/images/icon.svg"
   },
   "files": [
     { "path": "src" }
@@ -22,7 +22,7 @@
       "properties": {
         "text": "Generate pipeline",
         "title": "Generate pipeline for this branch",
-        "icon": "images/icon.svg",
+        "icon": "src/images/icon.svg",
         "uri": "menu-action.html",
         "registeredObjectId": "generate-pipeline-action"
       }
