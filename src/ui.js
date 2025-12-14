@@ -106,43 +106,53 @@
 
   const init = async () => {
     populateDefaults();
-    await SDK.init({ loaded: false });
-    const context = await SDK.ready();
-    const query = new URLSearchParams(window.location.search);
-    const branch = query.get('branch') || '(unknown branch)';
-    const projectId = query.get('projectId');
-    const projectName = query.get('projectName') || projectId;
-    const repoId = query.get('repoId');
 
-    branchLabel.textContent = `Target branch: ${branch}`;
-    targetRepoInput.value = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
+    try {
+      await SDK.init({ loaded: false });
+      const context = await SDK.ready();
+      const query = new URLSearchParams(window.location.search);
+      const branch = query.get('branch') || '(unknown branch)';
+      const projectId = query.get('projectId');
+      const projectName = query.get('projectName') || projectId;
+      const repoId = query.get('repoId');
 
-    if (!projectId) {
-      setStatus('Project context was not provided by the branch action.', true);
-      return;
-    }
+      branchLabel.textContent = `Target branch: ${branch}`;
+      targetRepoInput.value = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
 
-    const host = SDK.getHost();
-    const accessToken = await SDK.getAccessToken();
-    const hostUri = host ? `${host.uri}/` : `${context.webContext.collection.uri}`;
-
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      setStatus('Working on repository...');
-      form.querySelector('button[type="submit"]').disabled = true;
-      const payload = Object.fromEntries(new FormData(form).entries());
-
-      try {
-        const repo = await ensureRepo({ hostUri, projectId, projectName, accessToken });
-        await postScaffold({ hostUri, projectId, repoId: repo.id, accessToken, payload });
-        setStatus(`Repository ${repo.name} is ready with pipeline template.`, false);
-      } catch (error) {
-        console.error(error);
-        setStatus(error.message, true);
+      if (!projectId) {
+        setStatus('Project context was not provided by the branch action.', true);
+        SDK.notifyLoadFailed('Missing project context');
+        return;
       }
 
-      form.querySelector('button[type="submit"]').disabled = false;
-    });
+      const host = SDK.getHost();
+      const accessToken = await SDK.getAccessToken();
+      const hostUri = host ? `${host.uri}/` : `${context.webContext.collection.uri}`;
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        setStatus('Working on repository...');
+        form.querySelector('button[type="submit"]').disabled = true;
+        const payload = Object.fromEntries(new FormData(form).entries());
+
+        try {
+          const repo = await ensureRepo({ hostUri, projectId, projectName, accessToken });
+          await postScaffold({ hostUri, projectId, repoId: repo.id, accessToken, payload });
+          setStatus(`Repository ${repo.name} is ready with pipeline template.`, false);
+        } catch (error) {
+          console.error(error);
+          setStatus(error.message, true);
+        }
+
+        form.querySelector('button[type="submit"]').disabled = false;
+      });
+
+      SDK.notifyLoadSucceeded();
+    } catch (error) {
+      console.error('Failed to initialize extension frame', error);
+      setStatus('Failed to initialize extension frame. Check extension permissions and reload.', true);
+      SDK.notifyLoadFailed(error?.message || 'Initialization failed');
+    }
   };
 
   init();
