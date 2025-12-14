@@ -9,20 +9,41 @@
     return `${referrer.origin}${hasTfsVirtualDir ? '/tfs' : ''}`;
   };
 
-  const loadVssSdk = () =>
+  const loadScript = (src) =>
     new Promise((resolve, reject) => {
-      if (window.VSS) {
-        resolve(window.VSS);
-        return;
-      }
-
       const script = document.createElement('script');
-      script.src = `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`;
+      script.src = src;
       script.async = false;
-      script.onload = () => resolve(window.VSS);
-      script.onerror = () => reject(new Error('Failed to load Azure DevOps SDK from host.'));
+      script.onload = resolve;
+      script.onerror = () => reject(new Error(`Failed to load Azure DevOps SDK from ${src}`));
       document.head.appendChild(script);
     });
+
+  const loadVssSdk = async () => {
+    if (window.VSS) {
+      return window.VSS;
+    }
+
+    const candidates = [
+      new URL('./lib/VSS.SDK.min.js', window.location.href).toString(),
+      `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`
+    ];
+
+    let lastError;
+    for (const src of candidates) {
+      try {
+        await loadScript(src);
+        if (window.VSS) {
+          return window.VSS;
+        }
+        lastError = new Error('Azure DevOps SDK was loaded but did not initialize.');
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('Failed to load Azure DevOps SDK.');
+  };
 
   const defaultValues = {
     pool: 'PublishDockerAgent',

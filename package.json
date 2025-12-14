@@ -16,5 +16,8 @@
   ],
   "author": "",
   "license": "MIT",
-  "type": "commonjs"
+  "type": "commonjs",
+  "dependencies": {
+    "vss-web-extension-sdk": "^5.141.0"
+  }
 }
