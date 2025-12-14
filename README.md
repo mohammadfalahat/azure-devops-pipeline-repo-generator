@@ -25,6 +25,10 @@ Submitting the form ensures a shared repository named `SANITIZEDPROJECTNAME_Azur
 The extension is static (HTML/CSS/JS only), so packaging is just zipping the manifest and `src` folder into a VSIX. You can do
 this manually or with the official `tfx-cli` utility.
 
+> If you install a new VSIX but do not see the **Generate pipeline** action beside your branches, refresh the Repos page and
+> check both the branch context menu and the toolbar menu. The manifest targets multiple branch menus to align with Azure
+> DevOps UI variations, so the action should appear in at least one of those locations after the page reloads.
+
 ### Prerequisites
 
 - Node.js 18+ (for `npm` and `tfx-cli`).

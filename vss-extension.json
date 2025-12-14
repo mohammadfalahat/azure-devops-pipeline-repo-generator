@@ -19,7 +19,11 @@
     {
       "id": "generate-pipeline-action",
       "type": "ms.vss-web.action",
-      "targets": ["ms.vss-code-web.git-branches-menu"],
+      "targets": [
+        "ms.vss-code-web.git-branches-menu",
+        "ms.vss-code-web.branches-menu",
+        "ms.vss-code-web.git-branches-toolbar-menu"
+      ],
       "properties": {
         "text": "Generate pipeline",
         "title": "Generate pipeline for this branch",
