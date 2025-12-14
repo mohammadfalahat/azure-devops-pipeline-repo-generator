@@ -36,8 +36,9 @@ this manually or with the official `tfx-cli` utility.
   can use any unique publisher ID (it is not tied to the public marketplace).
 - An icon at `src/images/icon.svg` (a 128x128 SVG) if you want to replace the placeholder.
 - The manifest `targets` already include Azure DevOps Services (`Microsoft.VisualStudio.Services.Cloud`) and on-premises
-  Azure DevOps Server (`Microsoft.TeamFoundation.Server` with a version range of `[16.0,19.0)`). If you are targeting an older
-  or newer server release and see a `versionCheckError`, adjust the range accordingly before packing.
+  Azure DevOps Server (`Microsoft.TeamFoundation.Server` with a version range of `[16.0,20.0)` to cover 2019, 2020, and
+  2022). If you are targeting an older or newer server release and see a `versionCheckError`, adjust the range accordingly
+  before packing.
 
 ### Using `tfx-cli`
 
@@ -107,7 +108,7 @@ the upload:
    the previous attempt failed.
 
 4. For on-premises servers, double-check the `targets` version range. The
-   manifest currently allows `[16.0,19.0)` (Azure DevOps Server 2019–2022).
+   manifest currently allows `[16.0,20.0)` (Azure DevOps Server 2019–2022).
    Older or newer servers may require adjusting this range to avoid
    `versionCheckError` validation failures.
 
