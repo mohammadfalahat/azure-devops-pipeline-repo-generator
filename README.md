@@ -57,6 +57,9 @@ this manually or with the official `tfx-cli` utility.
 3. Choose **Upload new extension**, select the generated `.vsix`, and upload it.
 4. After upload, choose **Install** for the target project collection. The branch menu action will appear once installed.
 
+> Tip for `azure.buluttakin.com`: if you are publishing from another machine, ensure the hostname is resolvable/reachable from
+> that machine (for example via VPN or hosts file) before running any `tfx` command.
+
 ### Publishing with `tfx-cli` (alternative)
 
 If you prefer the CLI, create a Personal Access Token (PAT) with the **Manage** extension permission. Then run:
@@ -86,10 +89,13 @@ includes a minimal listener to mimic that flow and to keep your extension compat
    always replies with HTTP 200 so Azure DevOps sees the connection as healthy.
 
 2. If your Azure DevOps Server cannot reach `localhost`, expose the listener with a tunnel such as `ssh -R`, `Cloudflared`, or
-   `ngrok`, and use the public URL in the next step.
+   `ngrok`, and use the public URL in the next step. For the `azure.buluttakin.com` server, this makes it easy to send test
+   payloads from your collection to a laptop listener.
 
 3. In Azure DevOps (either Services or Server), open **Project settings** → **Service hooks** → **Create subscription** and pick
-   **Web Hooks**. Use the listener URL (for example `http://localhost:3000/`) and click **Test** to send a sample payload.
+   **Web Hooks**. Use the listener URL (for example `http://localhost:3000/` or your tunnel URL) and click **Test** to send a
+   sample payload. When the Azure DevOps Server at `https://azure.buluttakin.com` sends the request you will see the remote
+   address in the listener output, confirming connectivity from that host.
 
 4. Observe the console output from the listener to verify the payload shape before you depend on it in your extension or other
    downstream tooling.

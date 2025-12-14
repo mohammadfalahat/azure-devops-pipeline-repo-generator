@@ -49,7 +49,8 @@ const logRequest = (req, body) => {
   } catch (error) {
     console.warn('Received non-JSON payload:', error.message);
   }
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  const origin = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown sender';
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} from ${origin}`);
   if (parsed) {
     console.log(' ', summarizePayload(parsed));
   }
