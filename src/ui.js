@@ -126,8 +126,17 @@
       }
 
       const host = SDK.getHost();
-      const accessToken = await SDK.getAccessToken();
-      const hostUri = host ? `${host.uri}/` : `${context.webContext.collection.uri}`;
+      const hostUri = (host?.uri || context.webContext.collection.uri || '').replace(/\/+$/, '') + '/';
+      let accessToken;
+
+      try {
+        accessToken = await SDK.getAccessToken();
+      } catch (tokenError) {
+        console.error('Access token request was rejected', tokenError);
+        setStatus('The extension was denied access to an Azure DevOps token. Ask an admin to approve extension permissions in Organization settings → Extensions.', true);
+        SDK.notifyLoadFailed(tokenError?.message || 'Access token rejected');
+        return;
+      }
 
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
