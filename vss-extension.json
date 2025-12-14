@@ -12,12 +12,7 @@
   },
   "files": [
     { "path": "dist", "addressable": true },
-    { "path": "README.md" },
-    {
-      "path": "node_modules/vss-web-extension-sdk/lib",
-      "addressable": true,
-      "packagePath": "dist/lib"
-    }
+    { "path": "README.md" }
   ],
   "contributions": [
     {
