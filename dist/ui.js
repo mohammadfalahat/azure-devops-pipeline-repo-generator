@@ -1,4 +1,29 @@
 (() => {
+  const getHostBase = () => {
+    if (!document.referrer) {
+      return window.location.origin;
+    }
+    const referrer = new URL(document.referrer);
+    const segments = referrer.pathname.split('/').filter(Boolean);
+    const hasTfsVirtualDir = segments[0]?.toLowerCase() === 'tfs';
+    return `${referrer.origin}${hasTfsVirtualDir ? '/tfs' : ''}`;
+  };
+
+  const loadVssSdk = () =>
+    new Promise((resolve, reject) => {
+      if (window.VSS) {
+        resolve(window.VSS);
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`;
+      script.async = false;
+      script.onload = () => resolve(window.VSS);
+      script.onerror = () => reject(new Error('Failed to load Azure DevOps SDK from host.'));
+      document.head.appendChild(script);
+    });
+
   const defaultValues = {
     pool: 'PublishDockerAgent',
     service: 'api',
@@ -108,8 +133,11 @@
     populateDefaults();
 
     try {
-      await SDK.init({ loaded: false });
-      const context = await SDK.ready();
+      await loadVssSdk();
+      VSS.init({ usePlatformScripts: true, explicitNotifyLoaded: true });
+      await VSS.ready();
+
+      const context = VSS.getWebContext();
       const query = new URLSearchParams(window.location.search);
       const branch = query.get('branch') || '(unknown branch)';
       const projectId = query.get('projectId');
@@ -121,20 +149,20 @@
 
       if (!projectId) {
         setStatus('Project context was not provided by the branch action.', true);
-        SDK.notifyLoadFailed('Missing project context');
+        VSS.notifyLoadFailed('Missing project context');
         return;
       }
 
-      const host = SDK.getHost();
-      const hostUri = (host?.uri || context.webContext.collection.uri || '').replace(/\/+$/, '') + '/';
+      const hostContext = VSS.getHostContext();
+      const hostUri = (hostContext?.host?.uri || context.collection?.uri || '').replace(/\/+$/, '') + '/';
       let accessToken;
 
       try {
-        accessToken = await SDK.getAccessToken();
+        accessToken = await VSS.getAccessToken();
       } catch (tokenError) {
         console.error('Access token request was rejected', tokenError);
         setStatus('The extension was denied access to an Azure DevOps token. Ask an admin to approve extension permissions in Organization settings → Extensions.', true);
-        SDK.notifyLoadFailed(tokenError?.message || 'Access token rejected');
+        VSS.notifyLoadFailed(tokenError?.message || 'Access token rejected');
         return;
       }
 
@@ -156,11 +184,11 @@
         form.querySelector('button[type="submit"]').disabled = false;
       });
 
-      SDK.notifyLoadSucceeded();
+      VSS.notifyLoadSucceeded();
     } catch (error) {
       console.error('Failed to initialize extension frame', error);
       setStatus('Failed to initialize extension frame. Check extension permissions and reload.', true);
-      SDK.notifyLoadFailed(error?.message || 'Initialization failed');
+      VSS.notifyLoadFailed(error?.message || 'Initialization failed');
     }
   };
 
