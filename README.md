@@ -15,14 +15,14 @@ Submitting the form ensures a shared repository named `SANITIZEDPROJECTNAME_Azur
 ## Structure
 
 - `vss-extension.json`: Extension manifest defining the branch action and a hub entry.
-- `src/index.html`: Form UI loaded from the action or the hub.
-- `src/ui.js`: Client-side logic that sanitizes the project name, creates the repository, and pushes the template.
-- `src/menu-action.js`: Registers the branch menu action and opens the UI with branch context.
-- `src/styles.css`: Lightweight styling for the form.
+- `dist/index.html`: Form UI loaded from the action or the hub.
+- `dist/ui.js`: Client-side logic that sanitizes the project name, creates the repository, and pushes the template.
+- `dist/menu-action.js`: Registers the branch menu action and opens the UI with branch context.
+- `dist/styles.css`: Lightweight styling for the form.
 
 ## Packaging (creating the VSIX)
 
-The extension is static (HTML/CSS/JS only), so packaging is just zipping the manifest and `src` folder into a VSIX. You can do
+The extension is static (HTML/CSS/JS only), so packaging is just zipping the manifest and `dist` folder into a VSIX. You can do
 this manually or with the official `tfx-cli` utility.
 
 > If you install a new VSIX but do not see the **Generate pipeline** action beside your branches, refresh the Repos page and
@@ -34,7 +34,7 @@ this manually or with the official `tfx-cli` utility.
 - Node.js 18+ (for `npm` and `tfx-cli`).
 - A publisher ID and display name to embed in `vss-extension.json` (`publisher` and `name` fields). For on-premises servers you
   can use any unique publisher ID (it is not tied to the public marketplace).
-- An icon at `src/images/icon.svg` (a 128x128 SVG) if you want to replace the placeholder.
+- An icon at `dist/images/icon.svg` (a 128x128 SVG) if you want to replace the placeholder.
 - The manifest `targets` already include Azure DevOps Services (`Microsoft.VisualStudio.Services.Cloud`) and on-premises
   Azure DevOps Server (`Microsoft.TeamFoundation.Server` with a version range of `[16.0,20.0)` to cover 2019, 2020, and
   2022). If you are targeting an older or newer server release and see a `versionCheckError`, adjust the range accordingly
@@ -52,7 +52,7 @@ this manually or with the official `tfx-cli` utility.
 
    This outputs a `*.vsix` file in the current directory.
 
-> You can also zip the contents of `vss-extension.json` and the `src/` directory yourself; just rename the archive to
+> You can also zip the contents of `vss-extension.json` and the `dist/` directory yourself; just rename the archive to
 > `*.vsix`.
 
 ## Uploading to Azure DevOps Server (on-premises)
@@ -101,7 +101,7 @@ the upload:
 2. Verify that the VSIX contains both `Microsoft.VisualStudio.Services.VsixManifest`
    and `Microsoft.VisualStudio.Services.Manifest` assets. If you zipped the
    extension manually, ensure you included `vss-extension.json`, the entire
-   `src/` directory, and that the VSIX file name is unique for each version.
+   `dist/` directory, and that the VSIX file name is unique for each version.
 
 3. Confirm that the `version` field in `vss-extension.json` was incremented
    before packing. Azure DevOps rejects re-uploads with the same version even if
