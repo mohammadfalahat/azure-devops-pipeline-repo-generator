@@ -59,14 +59,23 @@
     });
   };
 
+  const getAuthHeader = (token) => {
+    const tokenValue = typeof token === 'string' ? token : token?.token;
+    if (!tokenValue) {
+      throw new Error('Extension access token was unavailable.');
+    }
+    return `Bearer ${tokenValue}`;
+  };
+
   const ensureRepo = async ({ hostUri, projectId, projectName, accessToken }) => {
     const sanitized = sanitizeProjectName(projectName);
     const targetName = `${sanitized}_Azure_DevOps`;
     targetRepoInput.value = targetName;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories?api-version=7.1-preview.1`;
 
+    const authHeader = getAuthHeader(accessToken);
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` }
+      headers: { Authorization: authHeader }
     });
     if (!res.ok) {
       throw new Error(`Failed to list repositories (${res.status})`);
@@ -80,7 +89,7 @@
     const createRes = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: authHeader,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ name: targetName, project: { id: projectId } })
@@ -94,6 +103,7 @@
   const postScaffold = async ({ hostUri, projectId, repoId, accessToken, payload }) => {
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=7.1-preview.1`;
     const content = `pool: ${payload.pool}\nservice: ${payload.service}\nenvironment: ${payload.environment}\ndockerfileDir: ${payload.dockerfileDir}\nrepositoryAddress: ${payload.repositoryAddress}\ncontainerRegistryService: ${payload.containerRegistryService}\nkomodoServer: ${payload.komodoServer}\n`;
+    const authHeader = getAuthHeader(accessToken);
     const body = {
       refUpdates: [
         {
@@ -118,7 +128,7 @@
     const res = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: authHeader,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(body)
