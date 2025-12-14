@@ -73,6 +73,45 @@ tfx extension publish \
 
 Use `--update` when pushing a new version, and increment `version` in `vss-extension.json` each time.
 
+## Troubleshooting extension validation failures
+
+If the Azure DevOps gallery reports `Error` or shows a validation message such as
+`Something went wrong, please retry after sometime.`, use these steps to diagnose
+the upload:
+
+1. Capture the validation details from the gallery REST API. Replace
+   `PUBLISHER`, `EXTENSIONNAME`, and `VERSION` with your values:
+
+   ```bash
+   curl -s \
+     "https://azure.buluttakin.com/_apis/public/gallery/publisher/PUBLISHER/extension/EXTENSIONNAME/VERSION" \
+     | jq .versions[0]
+   ```
+
+   Look for `validationResultMessage` and any missing `files` entries in the
+   response. A message that stays generic after multiple retries usually means
+   the package failed server-side validation (for example due to an unexpected
+   manifest format or missing assets).
+
+2. Verify that the VSIX contains both `Microsoft.VisualStudio.Services.VsixManifest`
+   and `Microsoft.VisualStudio.Services.Manifest` assets. If you zipped the
+   extension manually, ensure you included `vss-extension.json`, the entire
+   `src/` directory, and that the VSIX file name is unique for each version.
+
+3. Confirm that the `version` field in `vss-extension.json` was incremented
+   before packing. Azure DevOps rejects re-uploads with the same version even if
+   the previous attempt failed.
+
+4. For on-premises servers, double-check the `targets` version range. The
+   manifest currently allows `[16.0,19.0)` (Azure DevOps Server 2019–2022).
+   Older or newer servers may require adjusting this range to avoid
+   `versionCheckError` validation failures.
+
+5. After making fixes, regenerate the VSIX (`tfx extension create --rev-version`)
+   and retry the upload. If the error persists, review the server event logs for
+   extension validation errors—they often include the specific manifest or file
+   issues that the public API hides behind the generic message.
+
 ## Local service hook testing (on-premises friendly)
 
 The Azure DevOps service hook samples (see [official docs](https://learn.microsoft.com/azure/devops/extend/develop/add-service-hook))
