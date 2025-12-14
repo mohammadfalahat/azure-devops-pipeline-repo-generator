@@ -40,7 +40,8 @@
     }
   ],
   "targets": [
-    { "id": "Microsoft.VisualStudio.Services" }
+    { "id": "Microsoft.VisualStudio.Services.Cloud" },
+    { "id": "Microsoft.TeamFoundation.Server", "version": "[16.0,19.0)" }
   ],
   "scopes": ["vso.code", "vso.project", "vso.release", "vso.build"],
   "links": {
