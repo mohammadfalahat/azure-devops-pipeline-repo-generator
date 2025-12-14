@@ -31,6 +31,9 @@ this manually or with the official `tfx-cli` utility.
 - A publisher ID and display name to embed in `vss-extension.json` (`publisher` and `name` fields). For on-premises servers you
   can use any unique publisher ID (it is not tied to the public marketplace).
 - An icon at `src/images/icon.svg` (a 128x128 SVG) if you want to replace the placeholder.
+- The manifest `targets` already include Azure DevOps Services (`Microsoft.VisualStudio.Services.Cloud`) and on-premises
+  Azure DevOps Server (`Microsoft.TeamFoundation.Server` with a version range of `[16.0,19.0)`). If you are targeting an older
+  or newer server release and see a `versionCheckError`, adjust the range accordingly before packing.
 
 ### Using `tfx-cli`
 
@@ -66,3 +69,31 @@ tfx extension publish \
 ```
 
 Use `--update` when pushing a new version, and increment `version` in `vss-extension.json` each time.
+
+## Local service hook testing (on-premises friendly)
+
+The Azure DevOps service hook samples (see [official docs](https://learn.microsoft.com/azure/devops/extend/develop/add-service-hook))
+recommend validating your webhook endpoint locally before wiring it to your organization or collection. This repository now
+includes a minimal listener to mimic that flow and to keep your extension compatible with on-premises Azure DevOps Server.
+
+1. Start the local listener (defaults to port `3000`):
+
+   ```bash
+   npm run service-hook:listen
+   ```
+
+   The listener logs the `eventType`, `notificationId`, collection, project, and repository values for every POST payload and
+   always replies with HTTP 200 so Azure DevOps sees the connection as healthy.
+
+2. If your Azure DevOps Server cannot reach `localhost`, expose the listener with a tunnel such as `ssh -R`, `Cloudflared`, or
+   `ngrok`, and use the public URL in the next step.
+
+3. In Azure DevOps (either Services or Server), open **Project settings** → **Service hooks** → **Create subscription** and pick
+   **Web Hooks**. Use the listener URL (for example `http://localhost:3000/`) and click **Test** to send a sample payload.
+
+4. Observe the console output from the listener to verify the payload shape before you depend on it in your extension or other
+   downstream tooling.
+
+5. When you are satisfied, package the extension with `tfx extension create --manifest-globs vss-extension.json --rev-version`
+   and upload it to your on-premises collection as described above. Because the listener uses only Azure DevOps-standard fields
+   (`eventType`, `notificationId`, `resourceContainers`, etc.), the same payload contract will be honored after deployment.
