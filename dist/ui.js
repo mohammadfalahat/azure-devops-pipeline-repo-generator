@@ -88,6 +88,24 @@
     return `Bearer ${tokenValue}`;
   };
 
+  const getBranchObjectId = async ({ hostUri, projectId, repoId, branch, accessToken }) => {
+    const branchName = branch?.replace(/^refs\/heads\//, '') || 'main';
+    const refUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/refs?filter=${encodeURIComponent(`heads/${branchName}`)}&api-version=7.1-preview.1`;
+    const authHeader = getAuthHeader(accessToken);
+    const res = await fetch(refUrl, { headers: { Authorization: authHeader } });
+
+    if (res.status === 404) {
+      return '0000000000000000000000000000000000000000';
+    }
+
+    if (!res.ok) {
+      throw new Error(`Failed to query branch (${res.status})`);
+    }
+
+    const payload = await res.json();
+    return payload.value?.[0]?.objectId || '0000000000000000000000000000000000000000';
+  };
+
   const ensureRepo = async ({ hostUri, projectId, projectName, accessToken }) => {
     const sanitized = sanitizeProjectName(projectName);
     const targetName = `${sanitized}_Azure_DevOps`;
@@ -121,15 +139,18 @@
     return createRes.json();
   };
 
-  const postScaffold = async ({ hostUri, projectId, repoId, accessToken, payload }) => {
+  const postScaffold = async ({ hostUri, projectId, repoId, branch, accessToken, payload }) => {
+    const branchName = branch?.replace(/^refs\/heads\//, '') || 'main';
+    const branchRef = `refs/heads/${branchName}`;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=7.1-preview.1`;
     const content = `pool: ${payload.pool}\nservice: ${payload.service}\nenvironment: ${payload.environment}\ndockerfileDir: ${payload.dockerfileDir}\nrepositoryAddress: ${payload.repositoryAddress}\ncontainerRegistryService: ${payload.containerRegistryService}\nkomodoServer: ${payload.komodoServer}\n`;
     const authHeader = getAuthHeader(accessToken);
+    const oldObjectId = await getBranchObjectId({ hostUri, projectId, repoId, branch: branchName, accessToken });
     const body = {
       refUpdates: [
         {
-          name: 'refs/heads/main',
-          oldObjectId: '0000000000000000000000000000000000000000'
+          name: branchRef,
+          oldObjectId
         }
       ],
       commits: [
@@ -205,8 +226,9 @@
 
         try {
           const repo = await ensureRepo({ hostUri, projectId, projectName, accessToken });
-          await postScaffold({ hostUri, projectId, repoId: repo.id, accessToken, payload });
-          setStatus(`Repository ${repo.name} is ready with pipeline template.`, false);
+          const branch = repo.defaultBranch?.replace(/^refs\/heads\//, '') || 'main';
+          await postScaffold({ hostUri, projectId, repoId: repo.id, branch, accessToken, payload });
+          setStatus(`Repository ${repo.name} is ready with pipeline template on ${branch}.`, false);
         } catch (error) {
           console.error(error);
           setStatus(error.message, true);
