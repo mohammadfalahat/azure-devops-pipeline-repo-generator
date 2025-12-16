@@ -24,6 +24,11 @@
       </p>
       <form id="pipeline-form">
         <div class="field">
+          <label for="branch">Selected branch</label>
+          <input id="branch" name="branch" disabled />
+          <small>Captured from the branch list action and cannot be edited here.</small>
+        </div>
+        <div class="field">
           <label for="pool">Pool</label>
           <input id="pool" name="pool" value="PublishDockerAgent" required />
         </div>

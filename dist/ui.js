@@ -55,7 +55,10 @@
     komodoServer: 'DEMO-192.168.62.91'
   };
 
+  const getQueryValue = (value) => (value && value !== 'undefined' && value !== 'null' ? value : undefined);
+
   const branchLabel = document.getElementById('branch-label');
+  const branchInput = document.getElementById('branch');
   const form = document.getElementById('pipeline-form');
   const status = document.getElementById('status');
   const targetRepoInput = document.getElementById('targetRepo');
@@ -192,17 +195,21 @@
       const context = VSS.getWebContext();
       const query = new URLSearchParams(window.location.search);
 
-      const branchFromQuery = query.get('branch');
+      const branchFromQuery = getQueryValue(query.get('branch'));
       const branch =
         branchFromQuery ||
         context?.repository?.defaultBranch?.replace(/^refs\/heads\//, '') ||
         '(unknown branch)';
 
-      const projectId = query.get('projectId') || context?.project?.id;
-      const projectName = query.get('projectName') || context?.project?.name || projectId;
-      const repoId = query.get('repoId') || context?.repository?.id;
+      const projectId = getQueryValue(query.get('projectId')) || context?.project?.id;
+      const projectName = getQueryValue(query.get('projectName')) || context?.project?.name || projectId;
+      const repoId = getQueryValue(query.get('repoId')) || context?.repository?.id;
 
       branchLabel.textContent = `Target branch: ${branch}`;
+      if (branchInput) {
+        branchInput.value = branch;
+        branchInput.disabled = true;
+      }
       targetRepoInput.value = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
 
       if (!projectId) {
