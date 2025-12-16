@@ -70,8 +70,8 @@
     }
 
     const candidates = [
-      new URL('./lib/VSS.SDK.min.js', window.location.href).toString(),
-      `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`
+      `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`,
+      new URL('./lib/VSS.SDK.min.js', window.location.href).toString()
     ];
 
     let lastError;
