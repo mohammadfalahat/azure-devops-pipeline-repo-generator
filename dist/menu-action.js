@@ -58,6 +58,11 @@ const getActionContext = (context) => {
   return configuration?.actionContext || context || {};
 };
 
+const getProject = (context) =>
+  context?.project ||
+  getRepository(context)?.project ||
+  VSS.getWebContext?.()?.project;
+
 const getRepository = (context) =>
   context?.gitRepository ||
   context?.repository ||
@@ -100,24 +105,37 @@ const getBranchName = (context) => {
   }
 
   const fallbackBranch = getRepository(actionContext)?.defaultBranch;
-  return normalizeBranchName(fallbackBranch) || 'Unknown branch';
+  const branchFromWebContext = VSS.getWebContext?.()?.repository?.defaultBranch;
+  return normalizeBranchName(fallbackBranch) || normalizeBranchName(branchFromWebContext) || 'Unknown branch';
 };
 
 const openGenerator = async (context) => {
-  const actionContext = getActionContext(context);
-  const repository = getRepository(actionContext);
-  const branchName = getBranchName(actionContext);
-  const project = actionContext?.project || repository?.project;
-  const repoId = repository?.id;
-  const projectId = project?.id || actionContext?.projectId;
-  const projectName = project?.name || projectId;
-  const extContext = VSS.getExtensionContext();
-  const targetUrl = `${extContext.baseUri}index.html?branch=${encodeURIComponent(branchName)}&projectId=${encodeURIComponent(projectId)}&projectName=${encodeURIComponent(projectName)}&repoId=${encodeURIComponent(repoId || '')}`;
-  const hostService = await VSS.getService(VSS.ServiceIds.HostPageLayout);
-  if (hostService?.openWindow) {
-    hostService.openWindow(targetUrl, {});
-  } else {
-    window.open(targetUrl, '_blank');
+  try {
+    const actionContext = getActionContext(context);
+    const repository = getRepository(actionContext) || VSS.getWebContext?.()?.repository;
+    const branchName = getBranchName(actionContext);
+    const project = getProject(actionContext);
+    const repoId = repository?.id;
+    const projectId = project?.id || actionContext?.projectId;
+    const projectName = project?.name || projectId;
+    const extContext = VSS.getExtensionContext();
+    const params = new URLSearchParams();
+
+    if (branchName) params.set('branch', branchName);
+    if (projectId) params.set('projectId', projectId);
+    if (projectName) params.set('projectName', projectName);
+    if (repoId) params.set('repoId', repoId);
+
+    const targetUrl = `${extContext.baseUri}index.html?${params.toString()}`;
+    const hostService = await VSS.getService(VSS.ServiceIds.HostPageLayout);
+    if (hostService?.openWindow) {
+      hostService.openWindow(targetUrl, {});
+    } else {
+      window.open(targetUrl, '_blank');
+    }
+  } catch (error) {
+    console.error('Failed to launch pipeline generator', error);
+    VSS.handleError?.(error);
   }
 };
 
