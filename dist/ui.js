@@ -191,16 +191,22 @@
 
       const context = VSS.getWebContext();
       const query = new URLSearchParams(window.location.search);
-      const branch = query.get('branch') || '(unknown branch)';
-      const projectId = query.get('projectId');
-      const projectName = query.get('projectName') || projectId;
-      const repoId = query.get('repoId');
+
+      const branchFromQuery = query.get('branch');
+      const branch =
+        branchFromQuery ||
+        context?.repository?.defaultBranch?.replace(/^refs\/heads\//, '') ||
+        '(unknown branch)';
+
+      const projectId = query.get('projectId') || context?.project?.id;
+      const projectName = query.get('projectName') || context?.project?.name || projectId;
+      const repoId = query.get('repoId') || context?.repository?.id;
 
       branchLabel.textContent = `Target branch: ${branch}`;
       targetRepoInput.value = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
 
       if (!projectId) {
-        setStatus('Project context was not provided by the branch action.', true);
+        setStatus('Project context was not provided by the branch action or hub.', true);
         VSS.notifyLoadFailed('Missing project context');
         return;
       }
