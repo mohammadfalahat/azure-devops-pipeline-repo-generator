@@ -51,11 +51,8 @@
         </div>
         <div class="field">
           <label for="dockerfileDir">Dockerfile directory</label>
-          <div class="inline-input">
-            <input id="dockerfileDir" name="dockerfileDir" value="src/TMS.API" required />
-            <button type="button" id="dockerfileBrowse" class="secondary">Browse</button>
-          </div>
-          <small>Automatically detects Dockerfile locations in the branch; you can still override the directory.</small>
+          <input id="dockerfileDir" name="dockerfileDir" value="src/TMS.API" required />
+          <small>Automatically scans the branch for Dockerfiles and pre-fills the directory. You can still override the value.</small>
         </div>
         <div class="field">
           <label for="repositoryAddress">Container registry URL</label>
@@ -85,15 +82,5 @@
       <div id="status" role="status" aria-live="polite"></div>
     </section>
   </main>
-
-  <div id="dockerfile-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dockerfile-modal-title">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3 id="dockerfile-modal-title">Select a Dockerfile</h3>
-        <button type="button" id="dockerfile-close" class="icon-button" aria-label="Close">×</button>
-      </div>
-      <div id="dockerfile-list" class="modal-body"></div>
-    </div>
-  </div>
 </body>
 </html>

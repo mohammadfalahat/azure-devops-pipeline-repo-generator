@@ -19,9 +19,54 @@
       document.head.appendChild(script);
     });
 
+  const hasCoreSdkApis = (sdk) =>
+    Boolean(
+      sdk &&
+        sdk.init &&
+        sdk.ready &&
+        sdk.getAccessToken &&
+        sdk.getService &&
+        (sdk.getWebContext || sdk.getHostContext)
+    );
+
+  const normalizeSdk = (sdk) => {
+    if (!sdk) return sdk;
+
+    const getHostContext = () => {
+      const webContext = sdk.getWebContext?.();
+      const hostFromWeb = webContext?.host || webContext?.collection;
+      const host = sdk.getHostContext?.()?.host || hostFromWeb || {};
+      return {
+        host: {
+          name: host.name || webContext?.collection?.name,
+          uri: host.uri || hostFromWeb?.uri || getHostBase(),
+          relativeUri: host.relativeUri || '/',
+          hostType: host.hostType || webContext?.host?.hostType,
+          id: host.id || webContext?.host?.id
+        }
+      };
+    };
+
+    if (!sdk.getHostContext) {
+      sdk.getHostContext = getHostContext;
+    }
+    if (!sdk.getWebContext) {
+      sdk.getWebContext = () => ({ host: getHostContext().host });
+    }
+    if (!sdk.notifyLoadSucceeded) {
+      sdk.notifyLoadSucceeded = () => {};
+    }
+    if (!sdk.notifyLoadFailed) {
+      sdk.notifyLoadFailed = () => {};
+    }
+
+    return sdk;
+  };
+
   const loadVssSdk = async () => {
-    if (window.VSS) {
-      return window.VSS;
+    const ambientSdk = normalizeSdk(window.VSS || window.parent?.VSS);
+    if (hasCoreSdkApis(ambientSdk)) {
+      return ambientSdk;
     }
 
     const candidates = [
@@ -33,8 +78,8 @@
     for (const src of candidates) {
       try {
         await loadScript(src);
-        if (window.VSS) {
-          return window.VSS;
+        if (hasCoreSdkApis(window.VSS)) {
+          return normalizeSdk(window.VSS);
         }
         lastError = new Error('Azure DevOps SDK was loaded but did not initialize.');
       } catch (error) {
@@ -63,10 +108,6 @@
   const poolSelect = document.getElementById('pool');
   const registrySelect = document.getElementById('containerRegistryService');
   const dockerfileInput = document.getElementById('dockerfileDir');
-  const dockerfileBrowse = document.getElementById('dockerfileBrowse');
-  const dockerfileModal = document.getElementById('dockerfile-modal');
-  const dockerfileList = document.getElementById('dockerfile-list');
-  const dockerfileClose = document.getElementById('dockerfile-close');
   const form = document.getElementById('pipeline-form');
   const status = document.getElementById('status');
   const targetRepoInput = document.getElementById('targetRepo');
@@ -292,51 +333,6 @@
       .filter(Boolean);
   };
 
-  const renderDockerfileModal = (paths, errorMessage) => {
-    if (!dockerfileList) return;
-    dockerfileList.innerHTML = '';
-
-    if (errorMessage) {
-      const note = document.createElement('p');
-      note.textContent = errorMessage;
-      dockerfileList.appendChild(note);
-      return;
-    }
-
-    if (!paths.length) {
-      const note = document.createElement('p');
-      note.textContent = 'No Dockerfile was found in this branch.';
-      dockerfileList.appendChild(note);
-      return;
-    }
-
-    paths.forEach((path) => {
-      const row = document.createElement('div');
-      row.className = 'dockerfile-option';
-
-      const label = document.createElement('div');
-      label.innerHTML = `<strong>${path}</strong><br/><small>Directory without the Dockerfile filename</small>`;
-
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'secondary';
-      button.textContent = 'Use this path';
-      button.addEventListener('click', () => {
-        if (dockerfileInput) {
-          dockerfileInput.value = path;
-        }
-        dockerfileModal?.classList.add('hidden');
-      });
-
-      row.appendChild(label);
-      row.appendChild(button);
-      dockerfileList.appendChild(row);
-    });
-  };
-
-  const showDockerfileModal = () => dockerfileModal?.classList.remove('hidden');
-  const hideDockerfileModal = () => dockerfileModal?.classList.add('hidden');
-
   const init = async () => {
     populateDefaults();
 
@@ -372,8 +368,7 @@
         return;
       }
 
-      const hostContext = VSS.getHostContext();
-      const hostUri = (hostContext?.host?.uri || context.collection?.uri || '').replace(/\/+$/, '') + '/';
+      const hostUri = (context.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
       let accessToken;
 
       try {
@@ -429,36 +424,23 @@
       };
 
       let cachedDockerfiles = [];
-      const refreshDockerfiles = async (openModal = false) => {
+      const refreshDockerfiles = async () => {
         if (!dockerfileInput) return;
         try {
           cachedDockerfiles = await fetchDockerfileDirectories({ hostUri, projectId, repoId, branch, accessToken });
           if (cachedDockerfiles.length) {
             const defaultPath = cachedDockerfiles[0];
             dockerfileInput.value = defaultPath;
-          }
-          if (openModal) {
-            renderDockerfileModal(cachedDockerfiles);
-            showDockerfileModal();
+          } else {
+            setStatus('No Dockerfile was found in this branch. Please provide the directory manually.', true);
           }
         } catch (error) {
           console.error(error);
-          if (openModal) {
-            renderDockerfileModal([], error.message);
-            showDockerfileModal();
-          }
+          setStatus('Could not auto-detect Dockerfile location. Please fill it manually.', true);
         }
       };
 
-      dockerfileBrowse?.addEventListener('click', () => refreshDockerfiles(true));
-      dockerfileClose?.addEventListener('click', hideDockerfileModal);
-      dockerfileModal?.addEventListener('click', (event) => {
-        if (event.target === dockerfileModal) {
-          hideDockerfileModal();
-        }
-      });
-
-      await Promise.all([loadPools(), loadContainerRegistries(), refreshDockerfiles(false)]);
+      await Promise.all([loadPools(), loadContainerRegistries(), refreshDockerfiles()]);
 
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
