@@ -126,7 +126,8 @@ const openGenerator = async (context) => {
     if (projectName) params.set('projectName', projectName);
     if (repoId) params.set('repoId', repoId);
 
-    const targetUrl = `${extContext.baseUri}index.html?${params.toString()}`;
+    const baseUri = extContext.baseUri.endsWith('/') ? extContext.baseUri : `${extContext.baseUri}/`;
+    const targetUrl = `${baseUri}dist/index.html?${params.toString()}`;
 
     try {
       const hostService = await VSS.getService(VSS.ServiceIds.HostPageLayout);
