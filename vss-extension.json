@@ -33,21 +33,6 @@
       }
     },
     {
-      "id": "generate-pipeline-build-button",
-      "type": "ms.vss-web.action",
-      "targets": [
-        "ms.vss-code-web.repository-toolbar-menu",
-        "ms.vss-code-web.repository-menu"
-      ],
-      "properties": {
-        "text": "Generate build",
-        "title": "Generate build pipeline for this branch",
-        "icon": "dist/images/icon.svg",
-        "uri": "dist/menu-action.html",
-        "registeredObjectId": "generate-pipeline-repo-action"
-      }
-    },
-    {
       "id": "pipeline-generator-hub",
       "type": "ms.vss-web.hub",
       "targets": ["ms.vss-code-web.code-hub-group"],
