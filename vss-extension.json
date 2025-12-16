@@ -21,6 +21,7 @@
       "targets": [
         "ms.vss-code-web.git-branches-menu",
         "ms.vss-code-web.branches-menu",
+        "ms.vss-code-web.git-branches-tree-menu",
         "ms.vss-code-web.git-branches-toolbar-menu"
       ],
       "properties": {

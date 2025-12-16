@@ -44,26 +44,72 @@ const loadVssSdk = async () => {
   throw lastError || new Error('Failed to load Azure DevOps SDK.');
 };
 
+const normalizeBranchName = (name) => {
+  if (!name) {
+    return undefined;
+  }
+
+  const withoutVersionPrefix = name.startsWith('GB') ? name.slice(2) : name;
+  return withoutVersionPrefix.replace(/^refs\/heads\//i, '');
+};
+
+const getActionContext = (context) => {
+  const configuration = VSS.getConfiguration?.();
+  return configuration?.actionContext || context || {};
+};
+
+const getRepository = (context) =>
+  context?.gitRepository ||
+  context?.repository ||
+  context?.item?.repository ||
+  context?.branch?.repository ||
+  context?.gitRef?.repository ||
+  context?.selectedItem?.repository;
+
 const getBranchName = (context) => {
-  const branchFromContext = context?.branch?.name || context?.gitRef?.name;
+  const actionContext = getActionContext(context);
+  const branchCandidates = [
+    actionContext?.branch?.name,
+    actionContext?.branch?.fullName,
+    actionContext?.branch?.refName,
+    actionContext?.gitRef?.name,
+    actionContext?.gitRef?.fullName,
+    actionContext?.gitRef?.refName,
+    actionContext?.ref?.name,
+    actionContext?.ref?.refName,
+    actionContext?.refName,
+    actionContext?.selectedItem?.refName,
+    actionContext?.selectedItem?.name,
+    actionContext?.item?.refName,
+    actionContext?.item?.name,
+    actionContext?.branchName,
+    actionContext?.name,
+    actionContext?.fullName
+  ];
+
+  const branchFromContext = branchCandidates.find((value) => typeof value === 'string' && value.trim().length > 0);
   if (branchFromContext) {
-    return branchFromContext;
+    return normalizeBranchName(branchFromContext.trim());
   }
 
   const url = new URL(window.location.href);
   const version = url.searchParams.get('version');
-  if (version?.startsWith('GB')) {
-    return version.slice(2);
+  const branchFromQuery = normalizeBranchName(version);
+  if (branchFromQuery) {
+    return branchFromQuery;
   }
 
-  return context?.gitRepository?.defaultBranch || 'Unknown branch';
+  const fallbackBranch = getRepository(actionContext)?.defaultBranch;
+  return normalizeBranchName(fallbackBranch) || 'Unknown branch';
 };
 
 const openGenerator = async (context) => {
-  const branchName = getBranchName(context);
-  const project = context?.project || context?.gitRepository?.project;
-  const repoId = context?.gitRepository?.id;
-  const projectId = project?.id || context?.projectId;
+  const actionContext = getActionContext(context);
+  const repository = getRepository(actionContext);
+  const branchName = getBranchName(actionContext);
+  const project = actionContext?.project || repository?.project;
+  const repoId = repository?.id;
+  const projectId = project?.id || actionContext?.projectId;
   const projectName = project?.name || projectId;
   const extContext = VSS.getExtensionContext();
   const targetUrl = `${extContext.baseUri}index.html?branch=${encodeURIComponent(branchName)}&projectId=${encodeURIComponent(projectId)}&projectName=${encodeURIComponent(projectName)}&repoId=${encodeURIComponent(repoId || '')}`;
