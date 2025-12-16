@@ -45,6 +45,16 @@ header {
   margin-bottom: 12px;
 }
 
+.inline-input {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-input input {
+  flex: 1 1 auto;
+}
+
 label {
   font-weight: 600;
   margin-bottom: 4px;
@@ -78,6 +88,24 @@ button.primary:disabled {
   cursor: not-allowed;
 }
 
+button.secondary,
+.icon-button {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  color: #111827;
+  cursor: pointer;
+}
+
+.icon-button {
+  padding: 4px 10px;
+  font-size: 18px;
+  line-height: 1;
+  border: none;
+  background: transparent;
+}
+
 #status {
   margin-top: 12px;
   min-height: 18px;
@@ -90,4 +118,55 @@ button.primary:disabled {
 
 .status-error {
   color: #b91c1c;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-content {
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  width: min(520px, 90vw);
+  max-height: 80vh;
+  overflow: auto;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.16);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.modal-body {
+  padding: 12px 16px 16px;
+}
+
+.dockerfile-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  gap: 12px;
+}
+
+.dockerfile-option small {
+  color: #4b5563;
 }

@@ -146,16 +146,22 @@ const openGenerator = async (context) => {
   }
 };
 
-(async () => {
-  await loadVssSdk();
-  VSS.init({ usePlatformScripts: true });
-  await VSS.ready();
+const initializeAction = async () => {
+  let sdk;
+  try {
+    sdk = await loadVssSdk();
+    sdk.init({ usePlatformScripts: true, explicitNotifyLoaded: true });
+    await sdk.ready();
 
-  VSS.register('generate-pipeline-action', {
-    execute: openGenerator
-  });
+    sdk.register('generate-pipeline-action', {
+      execute: openGenerator
+    });
 
-  VSS.register('generate-pipeline-repo-action', {
-    execute: openGenerator
-  });
-})();
+    sdk.notifyLoadSucceeded();
+  } catch (error) {
+    console.error('Failed to initialize branch action', error);
+    sdk?.notifyLoadFailed?.(error?.message || 'Initialization failed');
+  }
+};
+
+initializeAction();

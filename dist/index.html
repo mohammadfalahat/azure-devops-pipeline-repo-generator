@@ -30,7 +30,10 @@
         </div>
         <div class="field">
           <label for="pool">Pool</label>
-          <input id="pool" name="pool" value="PublishDockerAgent" required />
+          <select id="pool" name="pool" required>
+            <option value="">Loading pools...</option>
+          </select>
+          <small>Only pools (queues) that are accessible for this project are listed.</small>
         </div>
         <div class="field">
           <label for="service">Service name</label>
@@ -44,10 +47,15 @@
             <option value="qa">qa</option>
             <option value="pro">pro</option>
           </select>
+          <small>Defaults to the detected environment from the branch name but stays editable.</small>
         </div>
         <div class="field">
           <label for="dockerfileDir">Dockerfile directory</label>
-          <input id="dockerfileDir" name="dockerfileDir" value="src/TMS.API" required />
+          <div class="inline-input">
+            <input id="dockerfileDir" name="dockerfileDir" value="src/TMS.API" required />
+            <button type="button" id="dockerfileBrowse" class="secondary">Browse</button>
+          </div>
+          <small>Automatically detects Dockerfile locations in the branch; you can still override the directory.</small>
         </div>
         <div class="field">
           <label for="repositoryAddress">Container registry URL</label>
@@ -55,7 +63,9 @@
         </div>
         <div class="field">
           <label for="containerRegistryService">Container registry service</label>
-          <input id="containerRegistryService" name="containerRegistryService" value="BulutReg" required />
+          <select id="containerRegistryService" name="containerRegistryService" required>
+            <option value="">Loading container registries...</option>
+          </select>
         </div>
         <div class="field">
           <label for="komodoServer">Komodo server</label>
@@ -75,5 +85,15 @@
       <div id="status" role="status" aria-live="polite"></div>
     </section>
   </main>
+
+  <div id="dockerfile-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dockerfile-modal-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="dockerfile-modal-title">Select a Dockerfile</h3>
+        <button type="button" id="dockerfile-close" class="icon-button" aria-label="Close">×</button>
+      </div>
+      <div id="dockerfile-list" class="modal-body"></div>
+    </div>
+  </div>
 </body>
 </html>
