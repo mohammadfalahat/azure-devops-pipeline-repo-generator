@@ -82,6 +82,22 @@ const loadVssSdk = async () => {
   throw lastError || new Error('Failed to load Azure DevOps SDK.');
 };
 
+const prefetchResources = () => {
+  const resources = [
+    new URL('./index.html', window.location.href).toString(),
+    new URL('./ui.js', window.location.href).toString(),
+    new URL('./styles.css', window.location.href).toString(),
+    `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`
+  ];
+
+  resources.forEach((href) => {
+    const link = document.createElement('link');
+    link.rel = 'prefetch';
+    link.href = href;
+    document.head.appendChild(link);
+  });
+};
+
 const normalizeBranchName = (name) => {
   if (!name) {
     return undefined;
@@ -185,22 +201,51 @@ const openGenerator = async (context) => {
   }
 };
 
-const initializeAction = async () => {
-  let sdk;
-  try {
-    sdk = await loadVssSdk();
-    sdk.init({ usePlatformScripts: true, explicitNotifyLoaded: true });
-    await sdk.ready();
+const initializeAction = () => {
+  let sdkInitPromise;
 
+  const ensureSdkReady = () => {
+    if (!sdkInitPromise) {
+      sdkInitPromise = (async () => {
+        const sdk = await loadVssSdk();
+        sdk.init({ usePlatformScripts: true, explicitNotifyLoaded: true });
+        await sdk.ready();
+        prefetchResources();
+        sdk.notifyLoadSucceeded();
+        return sdk;
+      })().catch((error) => {
+        console.error('Failed to initialize branch action', error);
+        const fallbackSdk = normalizeSdk(window.VSS || window.parent?.VSS);
+        fallbackSdk?.notifyLoadFailed?.(error?.message || 'Initialization failed');
+        throw error;
+      });
+    }
+    return sdkInitPromise;
+  };
+
+  const registerAction = () => {
+    const sdk = normalizeSdk(window.VSS || window.parent?.VSS);
+    if (!sdk?.register) {
+      return false;
+    }
     sdk.register('generate-pipeline-action', {
-      execute: openGenerator
+      execute: async (context) => {
+        await ensureSdkReady();
+        await openGenerator(context);
+      }
     });
+    return true;
+  };
 
-    sdk.notifyLoadSucceeded();
-  } catch (error) {
-    console.error('Failed to initialize branch action', error);
-    sdk?.notifyLoadFailed?.(error?.message || 'Initialization failed');
+  if (!registerAction()) {
+    const intervalId = setInterval(() => {
+      if (registerAction()) {
+        clearInterval(intervalId);
+      }
+    }, 50);
   }
+
+  ensureSdkReady().catch(() => {});
 };
 
 initializeAction();
