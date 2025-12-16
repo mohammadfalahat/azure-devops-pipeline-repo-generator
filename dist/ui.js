@@ -97,17 +97,27 @@
   const detectEnvironmentFromBranch = (branch) => {
     if (!branch) return undefined;
     const lower = branch.toLowerCase();
+
     if (lower.includes('master') || lower.includes('main')) {
       return 'pro';
     }
-    const known = ['dev', 'demo', 'qa', 'pro'];
-    return known.find((key) => lower.includes(key));
+
+    const candidates = environmentSelect
+      ? Array.from(environmentSelect.options).map((option) => option.value.toLowerCase())
+      : ['dev', 'demo', 'qa', 'pro'];
+
+    return candidates.find((key) => key && lower.includes(key));
   };
 
   const applyDetectedEnvironment = (branch) => {
     const detected = detectEnvironmentFromBranch(branch);
     if (detected && environmentSelect) {
-      environmentSelect.value = detected;
+      const available = Array.from(environmentSelect.options).some(
+        (option) => option.value.toLowerCase() === detected.toLowerCase()
+      );
+      if (available) {
+        environmentSelect.value = detected;
+      }
     }
   };
 
@@ -423,8 +433,9 @@
         if (!dockerfileInput) return;
         try {
           cachedDockerfiles = await fetchDockerfileDirectories({ hostUri, projectId, repoId, branch, accessToken });
-          if (cachedDockerfiles.length === 1) {
-            dockerfileInput.value = cachedDockerfiles[0];
+          if (cachedDockerfiles.length) {
+            const defaultPath = cachedDockerfiles[0];
+            dockerfileInput.value = defaultPath;
           }
           if (openModal) {
             renderDockerfileModal(cachedDockerfiles);

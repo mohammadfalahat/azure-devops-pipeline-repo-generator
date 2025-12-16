@@ -31,16 +31,6 @@
         "uri": "dist/menu-action.html",
         "registeredObjectId": "generate-pipeline-action"
       }
-    },
-    {
-      "id": "pipeline-generator-hub",
-      "type": "ms.vss-web.hub",
-      "targets": ["ms.vss-code-web.code-hub-group"],
-      "properties": {
-        "name": "Pipeline Generator",
-        "order": 99,
-        "uri": "dist/index.html"
-      }
     }
   ],
   "targets": [
