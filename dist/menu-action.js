@@ -127,12 +127,18 @@ const openGenerator = async (context) => {
     if (repoId) params.set('repoId', repoId);
 
     const targetUrl = `${extContext.baseUri}index.html?${params.toString()}`;
-    const hostService = await VSS.getService(VSS.ServiceIds.HostPageLayout);
-    if (hostService?.openWindow) {
-      hostService.openWindow(targetUrl, {});
-    } else {
-      window.open(targetUrl, '_blank');
+
+    try {
+      const hostService = await VSS.getService(VSS.ServiceIds.HostPageLayout);
+      if (hostService?.openWindow) {
+        hostService.openWindow(targetUrl, {});
+        return;
+      }
+    } catch (serviceError) {
+      console.warn('Falling back to window.open because HostPageLayout was unavailable', serviceError);
     }
+
+    window.open(targetUrl, '_blank');
   } catch (error) {
     console.error('Failed to launch pipeline generator', error);
     VSS.handleError?.(error);
