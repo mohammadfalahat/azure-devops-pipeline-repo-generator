@@ -44,26 +44,47 @@ const loadVssSdk = async () => {
   throw lastError || new Error('Failed to load Azure DevOps SDK.');
 };
 
+const getBranchName = (context) => {
+  const branchFromContext = context?.branch?.name || context?.gitRef?.name;
+  if (branchFromContext) {
+    return branchFromContext;
+  }
+
+  const url = new URL(window.location.href);
+  const version = url.searchParams.get('version');
+  if (version?.startsWith('GB')) {
+    return version.slice(2);
+  }
+
+  return context?.gitRepository?.defaultBranch || 'Unknown branch';
+};
+
+const openGenerator = async (context) => {
+  const branchName = getBranchName(context);
+  const project = context?.project || context?.gitRepository?.project;
+  const repoId = context?.gitRepository?.id;
+  const projectId = project?.id || context?.projectId;
+  const projectName = project?.name || projectId;
+  const extContext = VSS.getExtensionContext();
+  const targetUrl = `${extContext.baseUri}index.html?branch=${encodeURIComponent(branchName)}&projectId=${encodeURIComponent(projectId)}&projectName=${encodeURIComponent(projectName)}&repoId=${encodeURIComponent(repoId || '')}`;
+  const hostService = await VSS.getService(VSS.ServiceIds.HostPageLayout);
+  if (hostService?.openWindow) {
+    hostService.openWindow(targetUrl, {});
+  } else {
+    window.open(targetUrl, '_blank');
+  }
+};
+
 (async () => {
   await loadVssSdk();
   VSS.init({ usePlatformScripts: true });
   await VSS.ready();
 
   VSS.register('generate-pipeline-action', {
-    execute: async (context) => {
-      const branchName = context?.branch?.name || context?.gitRef?.name || 'Unknown branch';
-      const project = context?.project || context?.gitRepository?.project;
-      const repoId = context?.gitRepository?.id;
-      const projectId = project?.id || context?.projectId;
-      const projectName = project?.name || projectId;
-      const extContext = VSS.getExtensionContext();
-      const targetUrl = `${extContext.baseUri}index.html?branch=${encodeURIComponent(branchName)}&projectId=${encodeURIComponent(projectId)}&projectName=${encodeURIComponent(projectName)}&repoId=${encodeURIComponent(repoId || '')}`;
-      const hostService = await VSS.getService(VSS.ServiceIds.HostPageLayout);
-      if (hostService?.openWindow) {
-        hostService.openWindow(targetUrl, {});
-      } else {
-        window.open(targetUrl, '_blank');
-      }
-    }
+    execute: openGenerator
+  });
+
+  VSS.register('generate-pipeline-repo-action', {
+    execute: openGenerator
   });
 })();
