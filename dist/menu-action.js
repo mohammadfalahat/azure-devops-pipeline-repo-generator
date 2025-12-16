@@ -118,7 +118,9 @@ const openGenerator = async (context) => {
     const repoId = repository?.id;
     const projectId = project?.id || actionContext?.projectId;
     const projectName = project?.name || projectId;
-    const extContext = VSS.getExtensionContext();
+    const extContext = VSS.getExtensionContext?.();
+    const baseUriCandidate = extContext?.baseUri || `${getHostBase()}/`;
+    const baseUri = baseUriCandidate.endsWith('/') ? baseUriCandidate : `${baseUriCandidate}/`;
     const params = new URLSearchParams();
 
     if (branchName) params.set('branch', branchName);
@@ -126,7 +128,6 @@ const openGenerator = async (context) => {
     if (projectName) params.set('projectName', projectName);
     if (repoId) params.set('repoId', repoId);
 
-    const baseUri = extContext.baseUri.endsWith('/') ? extContext.baseUri : `${extContext.baseUri}/`;
     const targetUrl = `${baseUri}dist/index.html?${params.toString()}`;
 
     try {

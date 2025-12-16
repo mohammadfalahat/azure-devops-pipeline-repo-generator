@@ -269,7 +269,7 @@
   };
 
   const normalizeDockerfileDir = (path = '') => {
-    const normalized = path.replace(/\\/g, '/').replace(/\/g, '/');
+    const normalized = path.split('\\').join('/');
     const withoutFile = normalized.replace(/\/?Dockerfile$/i, '');
     const trimmed = withoutFile.replace(/^\/+/, '').replace(/^\//, '');
     return trimmed || '.';
