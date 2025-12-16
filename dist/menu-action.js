@@ -18,9 +18,47 @@ const loadScript = (src) =>
     document.head.appendChild(script);
   });
 
+const hasCoreSdkApis = (sdk) =>
+  Boolean(sdk && sdk.init && sdk.ready && sdk.getService && (sdk.getWebContext || sdk.getHostContext));
+
+const normalizeSdk = (sdk) => {
+  if (!sdk) return sdk;
+
+  const getHostContext = () => {
+    const webContext = sdk.getWebContext?.();
+    const hostFromWeb = webContext?.host || webContext?.collection;
+    const host = sdk.getHostContext?.()?.host || hostFromWeb || {};
+    return {
+      host: {
+        name: host.name || webContext?.collection?.name,
+        uri: host.uri || hostFromWeb?.uri || getHostBase(),
+        relativeUri: host.relativeUri || '/',
+        hostType: host.hostType || webContext?.host?.hostType,
+        id: host.id || webContext?.host?.id
+      }
+    };
+  };
+
+  if (!sdk.getHostContext) {
+    sdk.getHostContext = getHostContext;
+  }
+  if (!sdk.getWebContext) {
+    sdk.getWebContext = () => ({ host: getHostContext().host });
+  }
+  if (!sdk.notifyLoadSucceeded) {
+    sdk.notifyLoadSucceeded = () => {};
+  }
+  if (!sdk.notifyLoadFailed) {
+    sdk.notifyLoadFailed = () => {};
+  }
+
+  return sdk;
+};
+
 const loadVssSdk = async () => {
-  if (window.VSS) {
-    return window.VSS;
+  const ambientSdk = normalizeSdk(window.VSS || window.parent?.VSS);
+  if (hasCoreSdkApis(ambientSdk)) {
+    return ambientSdk;
   }
 
   const candidates = [
@@ -32,8 +70,8 @@ const loadVssSdk = async () => {
   for (const src of candidates) {
     try {
       await loadScript(src);
-      if (window.VSS) {
-        return window.VSS;
+      if (hasCoreSdkApis(window.VSS)) {
+        return normalizeSdk(window.VSS);
       }
       lastError = new Error('Azure DevOps SDK was loaded but did not initialize.');
     } catch (error) {
