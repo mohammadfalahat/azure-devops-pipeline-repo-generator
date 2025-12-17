@@ -391,7 +391,8 @@
     if (!tokenValue) {
       throw new Error('Extension access token was unavailable.');
     }
-    return `Bearer ${tokenValue}`;
+    const encoded = btoa(`:${tokenValue}`);
+    return `Basic ${encoded}`;
   };
 
   const populateSelectOptions = (select, options, placeholder) => {
