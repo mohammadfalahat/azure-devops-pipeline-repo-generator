@@ -14,6 +14,7 @@
       const script = document.createElement('script');
       script.src = src;
       script.async = false;
+      script.crossOrigin = 'anonymous';
       script.onload = resolve;
       script.onerror = () => reject(new Error(`Failed to load Azure DevOps SDK from ${src}`));
       document.head.appendChild(script);
@@ -69,10 +70,9 @@
       return ambientSdk;
     }
 
-    const candidates = [
-      new URL('./lib/VSS.SDK.min.js', window.location.href).toString(),
-      `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`
-    ];
+    const localSdk = new URL('./lib/VSS.SDK.min.js', window.location.href).toString();
+    const localSdkFallback = new URL('./lib/VSS.SDK.js', window.location.href).toString();
+    const candidates = [localSdk, localSdkFallback, `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`];
 
     let lastError;
     for (const src of candidates) {
