@@ -10,6 +10,8 @@ A lightweight Azure DevOps extension that adds a **Generate pipeline** action be
 - `containerRegistryService`: `BulutReg`
 - `komodoServer`: `DEMO-192.168.62.91` (with other options available)
 
+If the extension cannot request a scoped token from Azure DevOps, you can save a personal access token in the new **Settings** section of the UI. The token stays in your browser (localStorage) and is used for repository creation and pipeline scaffolding.
+
 Submitting the form ensures a shared repository named `SANITIZEDPROJECTNAME_Azure_DevOps` exists in the current project. If it does not, the extension creates it and pushes a `pipeline-template.yml` containing the submitted settings.
 
 ## Structure
