@@ -81,6 +81,34 @@
       </form>
       <div id="status" role="status" aria-live="polite"></div>
     </section>
+
+    <section class="panel" aria-labelledby="settings-heading">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Settings</p>
+          <h2 id="settings-heading">Personal access token</h2>
+          <p class="hint">
+            Provide an Azure DevOps PAT with repository access. The token is stored only in your browser
+            (localStorage) and will be used automatically when the extension cannot obtain a project-scoped token.
+          </p>
+        </div>
+      </div>
+      <form id="settings-form">
+        <div class="field">
+          <label for="personalToken">Token</label>
+          <div class="inline-input">
+            <input id="personalToken" name="personalToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste token here" />
+            <button type="button" class="icon-button" id="toggle-token-visibility" aria-label="Toggle token visibility">👁</button>
+          </div>
+          <small>Tokens stay in this browser only. Clear the field and save to remove.</small>
+        </div>
+        <div class="actions">
+          <button type="submit" class="secondary">Save token</button>
+          <button type="button" class="secondary" id="clear-token">Clear saved token</button>
+        </div>
+        <div id="token-status" role="status" aria-live="polite"></div>
+      </form>
+    </section>
   </main>
 </body>
 </html>

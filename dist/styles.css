@@ -34,9 +34,30 @@ header {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
 }
 
+.panel + .panel {
+  margin-top: 16px;
+}
+
 .hint {
   color: #4b5563;
   margin-top: 0;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+  margin: 0 0 4px;
+}
+
+.section-header h2 {
+  margin: 0 0 6px;
+}
+
+.section-header .hint {
+  margin: 0 0 12px;
 }
 
 .field {
@@ -106,10 +127,22 @@ button.secondary,
   background: transparent;
 }
 
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+}
+
 #status {
   margin-top: 12px;
   min-height: 18px;
   color: #111827;
+}
+
+#token-status {
+  min-height: 18px;
+  color: #4b5563;
 }
 
 .status-success {

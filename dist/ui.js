@@ -99,6 +99,7 @@
   };
   const defaultPoolOptions = ['PublishDockerAgent', 'Default'];
   const defaultRegistryOptions = ['BulutReg', 'DockerReg'];
+  const tokenStorageKey = 'pipeline-generator.settings.token';
 
   const mergeWithDefaults = (defaults, values) => {
     const seen = new Set();
@@ -123,10 +124,112 @@
   const form = document.getElementById('pipeline-form');
   const status = document.getElementById('status');
   const targetRepoInput = document.getElementById('targetRepo');
+  const settingsForm = document.getElementById('settings-form');
+  const tokenInput = document.getElementById('personalToken');
+  const clearTokenButton = document.getElementById('clear-token');
+  const toggleTokenVisibilityButton = document.getElementById('toggle-token-visibility');
+  const tokenStatus = document.getElementById('token-status');
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
     status.className = isError ? 'status-error' : 'status-success';
+  };
+
+  const readStoredToken = () => {
+    try {
+      const raw = window.localStorage?.getItem(tokenStorageKey);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === 'string') {
+        return { token: parsed };
+      }
+      if (parsed && typeof parsed.token === 'string') {
+        return { token: parsed.token, savedAt: parsed.savedAt };
+      }
+    } catch (error) {
+      console.warn('Failed to read stored token', error);
+    }
+    return {};
+  };
+
+  const persistToken = (token) => {
+    if (!token) return false;
+    try {
+      window.localStorage?.setItem(tokenStorageKey, JSON.stringify({ token, savedAt: new Date().toISOString() }));
+      return true;
+    } catch (error) {
+      console.error('Failed to persist token', error);
+      return false;
+    }
+  };
+
+  const clearStoredToken = () => {
+    try {
+      window.localStorage?.removeItem(tokenStorageKey);
+      return true;
+    } catch (error) {
+      console.error('Failed to clear stored token', error);
+      return false;
+    }
+  };
+
+  const setTokenStatus = (message, isError = false) => {
+    if (!tokenStatus) return;
+    tokenStatus.textContent = message;
+    tokenStatus.className = isError ? 'status-error' : 'status-success';
+  };
+
+  const describeTokenState = () => {
+    const { token, savedAt } = readStoredToken();
+    if (token) {
+      const savedMessage = savedAt ? `Saved ${new Date(savedAt).toLocaleString()}.` : '';
+      setTokenStatus(`A personal access token is saved locally and will be used automatically. ${savedMessage}`.trim());
+    } else {
+      setTokenStatus('No personal token saved. The extension will request a project-scoped token instead.');
+    }
+  };
+
+  const toggleTokenVisibility = () => {
+    if (!tokenInput) return;
+    tokenInput.type = tokenInput.type === 'password' ? 'text' : 'password';
+  };
+
+  const wireSettingsForm = () => {
+    describeTokenState();
+    settingsForm?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const value = tokenInput?.value.trim();
+      if (!value) {
+        clearStoredToken();
+        describeTokenState();
+        return;
+      }
+
+      const saved = persistToken(value);
+      if (saved && tokenInput) {
+        tokenInput.value = '';
+        tokenInput.type = 'password';
+        setTokenStatus('Token saved locally.');
+      }
+      if (!saved) {
+        setTokenStatus('Unable to save token. Check browser storage permissions.', true);
+      }
+      describeTokenState();
+    });
+
+    clearTokenButton?.addEventListener('click', () => {
+      const cleared = clearStoredToken();
+      if (tokenInput) {
+        tokenInput.value = '';
+        tokenInput.type = 'password';
+      }
+      describeTokenState();
+      if (!cleared) {
+        setTokenStatus('Unable to clear stored token. Check browser storage permissions.', true);
+      }
+    });
+
+    toggleTokenVisibilityButton?.addEventListener('click', () => toggleTokenVisibility());
   };
 
   const sanitizeProjectName = (name) => name.replace(/[^A-Za-z0-9]/g, '_');
@@ -355,6 +458,7 @@
 
   const init = async () => {
     populateDefaults();
+    wireSettingsForm();
 
     try {
       await loadVssSdk();
@@ -394,15 +498,29 @@
       let accessToken;
 
       try {
-        accessToken = await VSS.getAccessToken();
+        const saved = readStoredToken();
+        if (saved.token) {
+          accessToken = saved.token;
+          setTokenStatus('Using saved personal access token.');
+        } else {
+          accessToken = await VSS.getAccessToken();
+          setTokenStatus('Using Azure DevOps provided token.');
+        }
       } catch (tokenError) {
         console.error('Access token request was rejected', tokenError);
-        setStatus(
-          'The extension was denied access to an Azure DevOps token. Ask an admin to approve extension permissions in Organization settings → Extensions.',
-          true
-        );
-        VSS.notifyLoadFailed(tokenError?.message || 'Access token rejected');
-        return;
+        const saved = readStoredToken();
+        if (saved.token) {
+          accessToken = saved.token;
+          setTokenStatus('Using saved personal access token. Azure DevOps token request was rejected.');
+        } else {
+          setStatus(
+            'No token is available. Save a personal access token in Settings or ask an admin to approve extension permissions in Organization settings → Extensions.',
+            true
+          );
+          setTokenStatus('Missing token. Add one in Settings.', true);
+          VSS.notifyLoadFailed(tokenError?.message || 'Access token rejected');
+          return;
+        }
       }
 
       const loadPools = async () => {
