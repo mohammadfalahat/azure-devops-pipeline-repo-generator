@@ -100,6 +100,8 @@
   const defaultPoolOptions = ['PublishDockerAgent', 'Default'];
   const defaultRegistryOptions = ['BulutReg', 'DockerReg'];
   const tokenStorageKey = 'pipeline-generator.settings.token';
+  const hostUriRef = { current: `${getHostBase().replace(/\/+$/, '')}/` };
+  const onTokenUpdatedRef = { handler: () => {} };
 
   const mergeWithDefaults = (defaults, values) => {
     const seen = new Set();
@@ -213,9 +215,11 @@
 
   const verifyPersonalToken = async ({ hostUri, token }) => {
     if (!token) return false;
+    const normalizedHost = `${(hostUri || hostUriRef.current || '').replace(/\/+$/, '')}/`;
+    if (!normalizedHost) return false;
     try {
       const res = await fetch(
-        `${hostUri}_apis/connectionData?connectOptions=1&lastChangeId=-1&lastChangeId64=-1`,
+        `${normalizedHost}_apis/connectionData?connectOptions=1&lastChangeId=-1&lastChangeId64=-1`,
         {
           headers: { Authorization: getAuthHeader(token) }
         }
@@ -255,7 +259,7 @@
     return token;
   };
 
-  const wireSettingsForm = ({ hostUri, onTokenUpdated }) => {
+  const wireSettingsForm = ({ hostUriRef, getOnTokenUpdated }) => {
     const toggleSettings = () => {
       const isOpen = !settingsPanel?.classList.contains('hidden');
       if (isOpen) {
@@ -274,6 +278,7 @@
 
     settingsForm?.addEventListener('submit', async (event) => {
       event.preventDefault();
+      const hostUri = hostUriRef?.current;
       const value = tokenInput?.value.trim();
       if (!value) {
         setTokenStatus('Enter a personal access token to continue.', true);
@@ -309,10 +314,12 @@
       setTokenGateStatus('');
       showPipelineForm();
       closeSettingsPanel();
-      onTokenUpdated?.(value);
+      const handler = getOnTokenUpdated?.();
+      handler?.(value);
     });
 
     clearTokenButton?.addEventListener('click', () => {
+      const handler = getOnTokenUpdated?.();
       const cleared = clearStoredToken();
       if (tokenInput) {
         tokenInput.value = '';
@@ -322,7 +329,7 @@
       setTokenGateStatus('Personal access token is required to continue.', true);
       setTokenStatus(cleared ? 'Saved token cleared. Add a new one to continue.' : 'Unable to clear stored token.', !cleared);
       openSettingsPanel();
-      onTokenUpdated?.(null);
+      handler?.(null);
     });
   };
 
@@ -552,6 +559,27 @@
 
   const init = async () => {
     populateDefaults();
+    const query = new URLSearchParams(window.location.search);
+    const branchFromQuery = getQueryValue(query.get('branch'));
+    const projectIdFromQuery = getQueryValue(query.get('projectId'));
+    const projectNameFromQuery = getQueryValue(query.get('projectName')) || projectIdFromQuery;
+    const repoIdFromQuery = getQueryValue(query.get('repoId'));
+    const repoNameFromQuery = getQueryValue(query.get('repoName'));
+    const initialBranch = branchFromQuery || '(unknown branch)';
+
+    branchLabel.textContent = branchFromQuery ? `Target branch: ${initialBranch}` : 'Loading branch context...';
+    if (branchInput && branchFromQuery) {
+      branchInput.value = initialBranch;
+      branchInput.disabled = true;
+    }
+    targetRepoInput.value = `${sanitizeProjectName(projectNameFromQuery || 'project')}_Azure_DevOps`;
+    setServiceNameFromRepository(repoNameFromQuery);
+    applyDetectedEnvironment(initialBranch);
+
+    wireSettingsForm({
+      hostUriRef,
+      getOnTokenUpdated: () => onTokenUpdatedRef.handler
+    });
 
     try {
       await loadVssSdk();
@@ -559,18 +587,16 @@
       await VSS.ready();
 
       const context = VSS.getWebContext();
-      const query = new URLSearchParams(window.location.search);
 
-      const branchFromQuery = getQueryValue(query.get('branch'));
       const branch =
         branchFromQuery ||
         context?.repository?.defaultBranch?.replace(/^refs\/heads\//, '') ||
         '(unknown branch)';
 
-      const projectId = getQueryValue(query.get('projectId')) || context?.project?.id;
-      const projectName = getQueryValue(query.get('projectName')) || context?.project?.name || projectId;
-      const repoId = getQueryValue(query.get('repoId')) || context?.repository?.id;
-      const repositoryName = getQueryValue(query.get('repoName')) || context?.repository?.name;
+      const projectId = projectIdFromQuery || context?.project?.id;
+      const projectName = projectNameFromQuery || context?.project?.name || projectId;
+      const repoId = repoIdFromQuery || context?.repository?.id;
+      const repositoryName = repoNameFromQuery || context?.repository?.name;
 
       branchLabel.textContent = `Target branch: ${branch}`;
       if (branchInput) {
@@ -588,6 +614,7 @@
       }
 
       const hostUri = (context.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
+      hostUriRef.current = hostUri;
       let accessToken;
       let cachedDockerfiles = [];
 
@@ -666,17 +693,14 @@
         await initializeData();
       };
 
-      wireSettingsForm({
-        hostUri,
-        onTokenUpdated: async (token) => {
-          if (!token) {
-            accessToken = undefined;
-            setStatus('Add a personal access token to continue.', true);
-            return;
-          }
-          await applyAccessToken(token);
+      onTokenUpdatedRef.handler = async (token) => {
+        if (!token) {
+          accessToken = undefined;
+          setStatus('Add a personal access token to continue.', true);
+          return;
         }
-      });
+        await applyAccessToken(token);
+      };
 
       const verifiedToken = await requireVerifiedToken({ hostUri });
       if (!verifiedToken) {
@@ -718,7 +742,10 @@
     } catch (error) {
       console.error('Failed to initialize extension frame', error);
       setStatus('Failed to initialize extension frame. Check extension permissions and reload.', true);
-      VSS.notifyLoadFailed(error?.message || 'Initialization failed');
+      const sdk = normalizeSdk(window.VSS || window.parent?.VSS);
+      sdk?.notifyLoadFailed?.(error?.message || 'Initialization failed');
+      setTokenGateStatus('Failed to initialize extension frame. Open settings after fixing the issue.', true);
+      openSettingsPanel();
     }
   };
 
