@@ -92,13 +92,13 @@
 
   const defaultValues = {
     pool: 'PublishDockerAgent',
-    service: 'api',
     environment: 'demo',
-    dockerfileDir: 'src/TMS.API',
     repositoryAddress: 'registry.buluttakin.com',
     containerRegistryService: 'BulutReg',
     komodoServer: 'DEMO-192.168.62.91'
   };
+  const defaultPoolOptions = ['PublishDockerAgent', 'Default'];
+  const defaultRegistryOptions = ['BulutReg', 'DockerReg'];
 
   const getQueryValue = (value) => (value && value !== 'undefined' && value !== 'null' ? value : undefined);
 
@@ -106,6 +106,7 @@
   const branchInput = document.getElementById('branch');
   const environmentSelect = document.getElementById('environment');
   const poolSelect = document.getElementById('pool');
+  const serviceInput = document.getElementById('service');
   const registrySelect = document.getElementById('containerRegistryService');
   const dockerfileInput = document.getElementById('dockerfileDir');
   const form = document.getElementById('pipeline-form');
@@ -353,6 +354,7 @@
       const projectId = getQueryValue(query.get('projectId')) || context?.project?.id;
       const projectName = getQueryValue(query.get('projectName')) || context?.project?.name || projectId;
       const repoId = getQueryValue(query.get('repoId')) || context?.repository?.id;
+      const repositoryName = getQueryValue(query.get('repoName')) || context?.repository?.name;
 
       branchLabel.textContent = `Target branch: ${branch}`;
       if (branchInput) {
@@ -360,6 +362,9 @@
         branchInput.disabled = true;
       }
       targetRepoInput.value = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
+      if (serviceInput && repositoryName) {
+        serviceInput.value = repositoryName.toLowerCase();
+      }
       applyDetectedEnvironment(branch);
 
       if (!projectId) {
@@ -387,17 +392,19 @@
         if (!poolSelect) return;
         try {
           const poolNames = await fetchAgentQueues({ hostUri, projectId, accessToken });
-          const options = poolNames.map((name) => ({ value: name, label: name }));
-          if (!options.length && defaultValues.pool) {
-            options.push({ value: defaultValues.pool, label: defaultValues.pool });
-          }
+          const options = Array.from(new Set([...poolNames, ...defaultPoolOptions])).map((name) => ({
+            value: name,
+            label: name
+          }));
           populateSelectOptions(poolSelect, options, options.length ? 'Select a pool' : 'No accessible pools found');
-          if (defaultValues.pool && poolNames.includes(defaultValues.pool)) {
+          if (defaultValues.pool && options.some((option) => option.value === defaultValues.pool)) {
             poolSelect.value = defaultValues.pool;
           }
         } catch (error) {
           console.error(error);
-          populateSelectOptions(poolSelect, [], 'Unable to load pools');
+          const fallbackOptions = defaultPoolOptions.map((name) => ({ value: name, label: name }));
+          populateSelectOptions(poolSelect, fallbackOptions, 'Unable to load pools');
+          poolSelect.value = defaultValues.pool;
         }
       };
 
@@ -405,21 +412,26 @@
         if (!registrySelect) return;
         try {
           const registries = await fetchContainerRegistries({ hostUri, projectId, accessToken });
-          const options = registries.map((name) => ({ value: name, label: name }));
-          if (!options.length && defaultValues.containerRegistryService) {
-            options.push({ value: defaultValues.containerRegistryService, label: defaultValues.containerRegistryService });
-          }
+          const options = Array.from(new Set([...registries, ...defaultRegistryOptions])).map((name) => ({
+            value: name,
+            label: name
+          }));
           populateSelectOptions(
             registrySelect,
             options,
             options.length ? 'Select a container registry service connection' : 'No container registries found'
           );
-          if (defaultValues.containerRegistryService && registries.includes(defaultValues.containerRegistryService)) {
+          if (
+            defaultValues.containerRegistryService &&
+            options.some((option) => option.value === defaultValues.containerRegistryService)
+          ) {
             registrySelect.value = defaultValues.containerRegistryService;
           }
         } catch (error) {
           console.error(error);
-          populateSelectOptions(registrySelect, [], 'Unable to load container registries');
+          const fallbackOptions = defaultRegistryOptions.map((name) => ({ value: name, label: name }));
+          populateSelectOptions(registrySelect, fallbackOptions, 'Unable to load container registries');
+          registrySelect.value = defaultValues.containerRegistryService;
         }
       };
 
@@ -432,10 +444,12 @@
             const defaultPath = cachedDockerfiles[0];
             dockerfileInput.value = defaultPath;
           } else {
+            dockerfileInput.value = '';
             setStatus('No Dockerfile was found in this branch. Please provide the directory manually.', true);
           }
         } catch (error) {
           console.error(error);
+          dockerfileInput.value = '';
           setStatus('Could not auto-detect Dockerfile location. Please fill it manually.', true);
         }
       };
