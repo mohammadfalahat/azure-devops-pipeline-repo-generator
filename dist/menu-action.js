@@ -84,17 +84,27 @@ const loadVssSdk = async () => {
 
 const prefetchResources = () => {
   const resources = [
-    new URL('./index.html', window.location.href).toString(),
-    new URL('./ui.js', window.location.href).toString(),
-    new URL('./styles.css', window.location.href).toString(),
-    new URL('./lib/VSS.SDK.min.js', window.location.href).toString()
+    { href: new URL('./index.html', window.location.href).toString(), as: 'document' },
+    { href: new URL('./ui.js', window.location.href).toString(), as: 'script' },
+    { href: new URL('./styles.css', window.location.href).toString(), as: 'style' },
+    { href: new URL('./lib/VSS.SDK.min.js', window.location.href).toString(), as: 'script' }
   ];
 
-  resources.forEach((href) => {
-    const link = document.createElement('link');
-    link.rel = 'prefetch';
-    link.href = href;
-    document.head.appendChild(link);
+  resources.forEach(({ href, as }) => {
+    const preload = document.createElement('link');
+    preload.rel = 'preload';
+    preload.as = as || 'script';
+    preload.href = href;
+    if (as === 'script') {
+      preload.crossOrigin = 'anonymous';
+    }
+    document.head.appendChild(preload);
+
+    const prefetch = document.createElement('link');
+    prefetch.rel = 'prefetch';
+    prefetch.as = as || 'script';
+    prefetch.href = href;
+    document.head.appendChild(prefetch);
   });
 };
 
