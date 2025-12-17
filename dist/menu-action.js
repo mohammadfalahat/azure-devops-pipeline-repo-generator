@@ -170,6 +170,7 @@ const openGenerator = async (context) => {
     const branchName = getBranchName(actionContext);
     const project = getProject(actionContext);
     const repoId = repository?.id;
+    const repoName = repository?.name;
     const projectId = project?.id || actionContext?.projectId;
     const projectName = project?.name || projectId;
     const extContext = VSS.getExtensionContext?.();
@@ -181,6 +182,7 @@ const openGenerator = async (context) => {
     if (projectId) params.set('projectId', projectId);
     if (projectName) params.set('projectName', projectName);
     if (repoId) params.set('repoId', repoId);
+    if (repoName) params.set('repoName', repoName);
 
     const targetUrl = `${baseUri}dist/index.html?${params.toString()}`;
 

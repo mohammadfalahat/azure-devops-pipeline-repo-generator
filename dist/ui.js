@@ -100,6 +100,17 @@
   const defaultPoolOptions = ['PublishDockerAgent', 'Default'];
   const defaultRegistryOptions = ['BulutReg', 'DockerReg'];
 
+  const mergeWithDefaults = (defaults, values) => {
+    const seen = new Set();
+    const combined = [];
+    [...defaults, ...values].forEach((value) => {
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      combined.push(value);
+    });
+    return combined;
+  };
+
   const getQueryValue = (value) => (value && value !== 'undefined' && value !== 'null' ? value : undefined);
 
   const branchLabel = document.getElementById('branch-label');
@@ -119,6 +130,14 @@
   };
 
   const sanitizeProjectName = (name) => name.replace(/[^A-Za-z0-9]/g, '_');
+
+  const setServiceNameFromRepository = (name) => {
+    if (!serviceInput || !name) return;
+    const normalized = name.toString().trim().toLowerCase();
+    if (normalized) {
+      serviceInput.value = normalized;
+    }
+  };
 
   const populateDefaults = () => {
     Object.entries(defaultValues).forEach(([key, value]) => {
@@ -362,9 +381,7 @@
         branchInput.disabled = true;
       }
       targetRepoInput.value = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
-      if (serviceInput && repositoryName) {
-        serviceInput.value = repositoryName.toLowerCase();
-      }
+      setServiceNameFromRepository(repositoryName);
       applyDetectedEnvironment(branch);
 
       if (!projectId) {
@@ -392,7 +409,8 @@
         if (!poolSelect) return;
         try {
           const poolNames = await fetchAgentQueues({ hostUri, projectId, accessToken });
-          const options = Array.from(new Set([...poolNames, ...defaultPoolOptions])).map((name) => ({
+          const poolOptionNames = mergeWithDefaults(defaultPoolOptions, poolNames);
+          const options = poolOptionNames.map((name) => ({
             value: name,
             label: name
           }));
@@ -412,7 +430,8 @@
         if (!registrySelect) return;
         try {
           const registries = await fetchContainerRegistries({ hostUri, projectId, accessToken });
-          const options = Array.from(new Set([...registries, ...defaultRegistryOptions])).map((name) => ({
+          const registryOptionNames = mergeWithDefaults(defaultRegistryOptions, registries);
+          const options = registryOptionNames.map((name) => ({
             value: name,
             label: name
           }));
@@ -438,6 +457,7 @@
       let cachedDockerfiles = [];
       const refreshDockerfiles = async () => {
         if (!dockerfileInput) return;
+        dockerfileInput.value = '';
         try {
           cachedDockerfiles = await fetchDockerfileDirectories({ hostUri, projectId, repoId, branch, accessToken });
           if (cachedDockerfiles.length) {
