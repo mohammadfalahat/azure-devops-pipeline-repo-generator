@@ -10,14 +10,34 @@
 <body>
   <main class="wrapper">
     <header>
-      <img src="images/icon.svg" class="logo" alt="Extension icon" />
-      <div>
-        <h1>Generate pipeline</h1>
-        <p id="branch-label">Loading branch context...</p>
+      <div class="header-main">
+        <img src="images/icon.svg" class="logo" alt="Extension icon" />
+        <div>
+          <h1>Generate pipeline</h1>
+          <p id="branch-label">Loading branch context...</p>
+        </div>
       </div>
+      <button type="button" class="icon-button" id="open-settings" aria-controls="settings-panel" aria-expanded="false" title="Settings">⚙</button>
     </header>
 
-    <section class="panel">
+    <section class="panel" id="token-gate">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Setup required</p>
+          <h2>Personal access token needed</h2>
+          <p class="hint">
+            A verified personal access token is required before you can generate the pipeline. Tokens are stored only in this browser
+            and are never shown again after saving.
+          </p>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="button" class="primary" id="open-settings-from-gate">Open settings</button>
+      </div>
+      <div id="token-gate-message" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="panel hidden" id="pipeline-section">
       <p class="hint">
         Fill the fields below, then generate the pipeline and bootstrap the shared
         repository. Defaults match the requested deployment template.
@@ -82,28 +102,26 @@
       <div id="status" role="status" aria-live="polite"></div>
     </section>
 
-    <section class="panel" aria-labelledby="settings-heading">
+    <section class="panel hidden" aria-labelledby="settings-heading" id="settings-panel">
       <div class="section-header">
         <div>
           <p class="eyebrow">Settings</p>
           <h2 id="settings-heading">Personal access token</h2>
           <p class="hint">
             Provide an Azure DevOps PAT with repository access. The token is stored only in your browser
-            (localStorage) and will be used automatically when the extension cannot obtain a project-scoped token.
+            (localStorage) and must be verified before the pipeline form is shown. Saved tokens cannot be viewed again.
           </p>
         </div>
+        <button type="button" class="icon-button" id="close-settings" aria-label="Close settings">✕</button>
       </div>
       <form id="settings-form">
         <div class="field">
           <label for="personalToken">Token</label>
-          <div class="inline-input">
-            <input id="personalToken" name="personalToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste token here" />
-            <button type="button" class="icon-button" id="toggle-token-visibility" aria-label="Toggle token visibility">👁</button>
-          </div>
-          <small>Tokens stay in this browser only. Clear the field and save to remove.</small>
+          <input id="personalToken" name="personalToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste token here" />
+          <small>Tokens stay in this browser only and are never displayed after saving. A valid token is required to continue.</small>
         </div>
         <div class="actions">
-          <button type="submit" class="secondary">Save token</button>
+          <button type="submit" class="primary">Save token</button>
           <button type="button" class="secondary" id="clear-token">Clear saved token</button>
         </div>
         <div id="token-status" role="status" aria-live="polite"></div>

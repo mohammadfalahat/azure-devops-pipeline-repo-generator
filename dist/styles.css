@@ -17,8 +17,15 @@ body {
 header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.header-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .logo {
@@ -127,6 +134,10 @@ button.secondary,
   background: transparent;
 }
 
+.icon-button[aria-expanded="true"] {
+  background: #e5e7eb;
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -150,6 +161,20 @@ button.secondary,
 }
 
 .status-error {
+  color: #b91c1c;
+}
+
+.hidden {
+  display: none;
+}
+
+#token-gate-message {
+  margin-top: 8px;
+  min-height: 18px;
+  color: #6b7280;
+}
+
+#token-gate-message.status-error {
   color: #b91c1c;
 }
 
