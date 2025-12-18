@@ -33,9 +33,10 @@
         <div class="field">
           <label for="pool">Pool</label>
           <select id="pool" name="pool" required>
-            <option value="">Loading pools...</option>
+            <option value="PublishDockerAgent" selected>PublishDockerAgent</option>
+            <option value="Default">Default</option>
           </select>
-          <small>Only pools (queues) that are accessible for this project are listed.</small>
+          <small>Choose the build pool for the generated pipeline.</small>
         </div>
         <div class="field">
           <label for="service">Service name</label>
@@ -53,7 +54,7 @@
         </div>
         <div class="field">
           <label for="dockerfileDir">Dockerfile directory</label>
-          <input id="dockerfileDir" name="dockerfileDir" required />
+          <input id="dockerfileDir" name="dockerfileDir" value="**" required />
           <small>Automatically scans the branch for Dockerfiles and pre-fills the directory. You can still override the value.</small>
         </div>
         <div class="field">
@@ -63,7 +64,8 @@
         <div class="field">
           <label for="containerRegistryService">Container registry service</label>
           <select id="containerRegistryService" name="containerRegistryService" required>
-            <option value="">Loading container registries...</option>
+            <option value="BulutReg" selected>BulutReg</option>
+            <option value="DockerReg">DockerReg</option>
           </select>
         </div>
         <div class="field">

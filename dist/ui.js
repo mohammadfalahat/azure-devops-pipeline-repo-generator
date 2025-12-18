@@ -95,7 +95,8 @@
     environment: 'demo',
     repositoryAddress: 'registry.buluttakin.com',
     containerRegistryService: 'BulutReg',
-    komodoServer: 'DEMO-192.168.62.91'
+    komodoServer: 'DEMO-192.168.62.91',
+    dockerfileDir: '**'
   };
   const defaultPoolOptions = ['PublishDockerAgent', 'Default'];
   const defaultRegistryOptions = ['BulutReg', 'DockerReg'];
@@ -428,69 +429,40 @@
       let cachedDockerfiles = [];
 
       const loadPools = async () => {
-        if (!poolSelect || !accessToken) return;
-        try {
-          const poolNames = await fetchAgentQueues({ hostUri, projectId, accessToken });
-          const poolOptionNames = mergeWithDefaults(defaultPoolOptions, poolNames);
-          const options = poolOptionNames.map((name) => ({
-            value: name,
-            label: name
-          }));
-          populateSelectOptions(poolSelect, options, options.length ? 'Select a pool' : 'No accessible pools found');
-          if (defaultValues.pool && options.some((option) => option.value === defaultValues.pool)) {
-            poolSelect.value = defaultValues.pool;
-          }
-        } catch (error) {
-          console.error(error);
-          const fallbackOptions = defaultPoolOptions.map((name) => ({ value: name, label: name }));
-          populateSelectOptions(poolSelect, fallbackOptions, 'Unable to load pools');
-          poolSelect.value = defaultValues.pool;
-        }
+        if (!poolSelect) return;
+        const options = defaultPoolOptions.map((name) => ({
+          value: name,
+          label: name
+        }));
+        populateSelectOptions(poolSelect, options);
+        poolSelect.value = defaultValues.pool;
       };
 
       const loadContainerRegistries = async () => {
-        if (!registrySelect || !accessToken) return;
-        try {
-          const registries = await fetchContainerRegistries({ hostUri, projectId, accessToken });
-          const registryOptionNames = mergeWithDefaults(defaultRegistryOptions, registries);
-          const options = registryOptionNames.map((name) => ({
-            value: name,
-            label: name
-          }));
-          populateSelectOptions(
-            registrySelect,
-            options,
-            options.length ? 'Select a container registry service connection' : 'No container registries found'
-          );
-          if (
-            defaultValues.containerRegistryService &&
-            options.some((option) => option.value === defaultValues.containerRegistryService)
-          ) {
-            registrySelect.value = defaultValues.containerRegistryService;
-          }
-        } catch (error) {
-          console.error(error);
-          const fallbackOptions = defaultRegistryOptions.map((name) => ({ value: name, label: name }));
-          populateSelectOptions(registrySelect, fallbackOptions, 'Unable to load container registries');
-          registrySelect.value = defaultValues.containerRegistryService;
-        }
+        if (!registrySelect) return;
+        const options = defaultRegistryOptions.map((name) => ({
+          value: name,
+          label: name
+        }));
+        populateSelectOptions(registrySelect, options);
+        registrySelect.value = defaultValues.containerRegistryService;
       };
 
       const refreshDockerfiles = async () => {
         if (!dockerfileInput || !accessToken) return;
-        dockerfileInput.value = '';
+        dockerfileInput.value = defaultValues.dockerfileDir || '';
         try {
           cachedDockerfiles = await fetchDockerfileDirectories({ hostUri, projectId, repoId, branch, accessToken });
           if (cachedDockerfiles.length) {
             const defaultPath = cachedDockerfiles[0];
             dockerfileInput.value = defaultPath;
           } else {
-            dockerfileInput.value = '';
+            dockerfileInput.value = defaultValues.dockerfileDir || '';
             setStatus('No Dockerfile was found in this branch. Please provide the directory manually.', true);
           }
         } catch (error) {
           console.error(error);
-          dockerfileInput.value = '';
+          dockerfileInput.value = defaultValues.dockerfileDir || '';
           setStatus('Could not auto-detect Dockerfile location. Please fill it manually.', true);
         }
       };
