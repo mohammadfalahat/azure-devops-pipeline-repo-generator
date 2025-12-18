@@ -222,7 +222,7 @@
     if (isLikelyJwt) {
       return `Bearer ${tokenValue}`;
     }
-    const encoded = btoa(`pat:${tokenValue}`);
+    const encoded = btoa(`:${tokenValue}`);
     return `Basic ${encoded}`;
   };
 
