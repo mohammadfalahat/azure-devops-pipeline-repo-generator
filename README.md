@@ -37,7 +37,9 @@ this manually or with the official `tfx-cli` utility.
 - Optional: run `npm install` to pull the Azure DevOps SDK (`vss-web-extension-sdk`) into
   `node_modules/vss-web-extension-sdk/lib`, then copy it to `dist/lib` if you want to bundle the SDK
   with the VSIX for fully offline deployments. If you skip this step, the extension automatically
-  loads the platform-hosted SDK from `/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js` at runtime.
+  loads the SDK from the published extension asset
+  (`https://azure.buluttakin.com/_apis/public/gallery/publisher/localdev/extension/pipeline-generator/0.1.10/assetbyname/dist/lib/VSS.SDK.min.js`),
+  then falls back to the platform-hosted path `/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`.
 - A publisher ID and display name to embed in `vss-extension.json` (`publisher` and `name` fields). For on-premises servers you
   can use any unique publisher ID (it is not tied to the public marketplace).
 - An icon at `dist/images/icon.svg` (a 128x128 SVG) if you want to replace the placeholder.
