@@ -164,6 +164,7 @@
     repositoryName: null,
     branch: null
   };
+  let initializationPromise;
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
@@ -455,6 +456,13 @@
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (initializationPromise) {
+      try {
+        await initializationPromise;
+      } catch (error) {
+        console.error('Initialization failed before submit', error);
+      }
+    }
     const payload = Object.fromEntries(new FormData(form).entries());
     const yaml = showYamlPreview(payload);
 
@@ -550,6 +558,8 @@
   };
 
   const init = async () => {
+    setSubmitting(true);
+    setStatus('Loading Azure DevOps context...');
     populateDefaults();
     const query = new URLSearchParams(window.location.search);
     const branchFromQuery = getQueryValue(query.get('branch'));
@@ -577,6 +587,7 @@
     const hasHostContext = Boolean(document.referrer || projectIdFromQuery || repoIdFromQuery);
     if (!hasHostContext) {
       setStatus('Running outside Azure DevOps. Fill the form to preview the YAML, then copy it below.', true);
+      setSubmitting(false);
       return;
     }
 
@@ -671,6 +682,7 @@
         accessToken = await getAccessTokenFromSdk(sdk);
         state.accessToken = accessToken;
         await initializeData();
+        setStatus('Azure DevOps context ready. Generate the pipeline when you are ready.');
       } catch (tokenError) {
         console.error('Failed to acquire Azure DevOps access token', tokenError);
         setStatus('Failed to acquire access token from Azure DevOps. Reload the page and try again.', true);
@@ -687,6 +699,8 @@
       );
       const sdk = normalizeSdk(window.VSS || window.parent?.VSS);
       sdk?.notifyLoadFailed?.(error?.message || 'Initialization failed');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -696,5 +710,5 @@
     });
   }
 
-  init();
+  initializationPromise = init();
 })();
