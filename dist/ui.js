@@ -207,6 +207,18 @@
 
   const sanitizeProjectName = (name) => name.replace(/[^A-Za-z0-9]/g, '_');
 
+  const slugifyName = (value, fallback) => {
+    const slug = value?.toString().trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return slug || fallback;
+  };
+
+  const buildPipelineFilename = ({ projectName, repositoryName, environment }) => {
+    const projectSlug = slugifyName(projectName, 'project');
+    const repoSlug = slugifyName(repositoryName || projectName, 'repo');
+    const environmentSlug = slugifyName(environment, 'env');
+    return `${projectSlug}-${repoSlug}-${environmentSlug}.yml`;
+  };
+
   const setServiceNameFromRepository = (name) => {
     if (!serviceInput || !name) return;
     const normalized = name.toString().trim().toLowerCase();
@@ -342,7 +354,15 @@
     return createRes.json();
   };
 
-  const postScaffold = async ({ hostUri, projectId, repoId, branch, accessToken, content }) => {
+  const postScaffold = async ({
+    hostUri,
+    projectId,
+    repoId,
+    branch,
+    accessToken,
+    content,
+    pipelineFilename = 'pipeline-template.yml'
+  }) => {
     const branchName = branch?.replace(/^refs\/heads\//, '') || 'main';
     const branchRef = `refs/heads/${branchName}`;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=7.1-preview.1`;
@@ -362,7 +382,7 @@
           changes: [
             {
               changeType: 'add',
-              item: { path: '/pipeline-template.yml' },
+              item: { path: `/${pipelineFilename}` },
               newContent: { content: pipelineContent, contentType: 'rawtext' }
             }
           ]
@@ -441,6 +461,28 @@
     setStatus('Generating pipeline template...');
     setSubmitting(true);
 
+    if (!state.accessToken && state.sdk?.getAccessToken) {
+      try {
+        state.accessToken = await getAccessTokenFromSdk(state.sdk);
+      } catch (error) {
+        console.error('Failed to refresh access token during submit', error);
+      }
+    }
+
+    if (!state.projectId && state.sdk?.getWebContext) {
+      const context = state.sdk.getWebContext();
+      state.projectId = context?.project?.id || state.projectId;
+      state.projectName = context?.project?.name || state.projectId || state.projectName;
+      state.repoId = context?.repository?.id || state.repoId;
+      state.repositoryName = context?.repository?.name || state.repositoryName;
+    }
+
+    const pipelineFilename = buildPipelineFilename({
+      projectName: state.projectName,
+      repositoryName: state.repositoryName,
+      environment: payload.environment
+    });
+
     if (!state.accessToken || !state.projectId) {
       setStatus('Template generated below. Open the extension from Azure DevOps to save it automatically.', true);
       setSubmitting(false);
@@ -461,9 +503,13 @@
         repoId: repo.id,
         branch: defaultBranch,
         accessToken: state.accessToken,
-        content: yaml
+        content: yaml,
+        pipelineFilename
       });
-      setStatus(`Repository ${repo.name} is ready with pipeline template on ${defaultBranch}.`, false);
+      setStatus(
+        `Repository ${repo.name} is ready with ${pipelineFilename} on ${defaultBranch}.`,
+        false
+      );
     } catch (error) {
       console.error(error);
       setStatus(`Template generated below, but automatic push failed: ${error.message}`, true);
