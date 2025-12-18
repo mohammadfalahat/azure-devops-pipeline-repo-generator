@@ -111,7 +111,7 @@ const warmupAssets = async () => {
 
 const prefetchResources = () => {
   const resources = [
-    { href: new URL('./index.html', window.location.href).toString(), as: 'fetch' },
+    { href: new URL('./index.html', window.location.href).toString(), as: 'document' },
     { href: new URL('./ui.js', window.location.href).toString(), as: 'script' },
     { href: new URL('./styles.css', window.location.href).toString(), as: 'style' },
     { href: new URL('./lib/VSS.SDK.min.js', window.location.href).toString(), as: 'script' },
@@ -123,15 +123,14 @@ const prefetchResources = () => {
     preload.rel = 'preload';
     preload.as = as || 'script';
     preload.href = href;
-    if (as === 'script') {
-      preload.crossOrigin = 'use-credentials';
-    }
+    preload.crossOrigin = 'use-credentials';
     document.head.appendChild(preload);
 
     const prefetch = document.createElement('link');
     prefetch.rel = 'prefetch';
     prefetch.as = as || 'script';
     prefetch.href = href;
+    prefetch.crossOrigin = 'use-credentials';
     document.head.appendChild(prefetch);
   });
 };
@@ -258,7 +257,6 @@ const initializeAction = () => {
             return undefined;
           });
         }
-        sdk.notifyLoadSucceeded();
         return sdk;
       })().catch((error) => {
         console.error('Failed to initialize branch action', error);
@@ -270,32 +268,53 @@ const initializeAction = () => {
     return sdkInitPromise;
   };
 
-  const registerAction = () => {
+  const registerAction = async () => {
     const sdk = normalizeSdk(window.VSS || window.parent?.VSS);
     if (!sdk?.register) {
       return false;
     }
-    sdk.register('generate-pipeline-action', {
+
+    const action = {
       execute: async (context) => {
-        await ensureSdkReady();
+        const readySdk = await ensureSdkReady();
         if (assetWarmupPromise) {
           await assetWarmupPromise.catch(() => {});
         }
         await openGenerator(context);
+        readySdk.notifyLoadSucceeded?.();
       }
-    });
+    };
+
+    try {
+      const readySdk = await ensureSdkReady();
+      sdk.register('generate-pipeline-action', action);
+      readySdk.notifyLoadSucceeded?.();
+    } catch (error) {
+      console.error('Failed to register branch action', error);
+      sdk.notifyLoadFailed?.(error?.message || 'Registration failed');
+      return false;
+    }
+
     return true;
   };
 
-  if (!registerAction()) {
+  const startRetryLoop = () => {
     const intervalId = setInterval(() => {
-      if (registerAction()) {
-        clearInterval(intervalId);
-      }
+      registerAction().then((registered) => {
+        if (registered) {
+          clearInterval(intervalId);
+        }
+      });
     }, 50);
-  }
+  };
 
-  ensureSdkReady().catch(() => {});
+  registerAction()
+    .then((registered) => {
+      if (!registered) {
+        startRetryLoop();
+      }
+    })
+    .catch(() => startRetryLoop());
 };
 
 initializeAction();
