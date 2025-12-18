@@ -192,6 +192,61 @@
     }
   };
 
+  const loadPools = async ({ hostUri, projectId, accessToken }) => {
+    if (!poolSelect) return [];
+    try {
+      const dynamicPools = await fetchAgentQueues({ hostUri, projectId, accessToken });
+      const options = mergeWithDefaults(defaultPoolOptions, dynamicPools).map((name) => ({ value: name, label: name }));
+      populateSelectOptions(poolSelect, options);
+      poolSelect.value = poolSelect.value || defaultValues.pool;
+      return options;
+    } catch (error) {
+      console.warn('Falling back to default pools', error);
+      const fallback = defaultPoolOptions.map((name) => ({ value: name, label: name }));
+      populateSelectOptions(poolSelect, fallback);
+      poolSelect.value = defaultValues.pool;
+      return fallback;
+    }
+  };
+
+  const loadContainerRegistries = async ({ hostUri, projectId, accessToken }) => {
+    if (!registrySelect) return [];
+    try {
+      const registries = await fetchContainerRegistries({ hostUri, projectId, accessToken });
+      const options = mergeWithDefaults(defaultRegistryOptions, registries).map((name) => ({ value: name, label: name }));
+      populateSelectOptions(registrySelect, options);
+      registrySelect.value = registrySelect.value || defaultValues.containerRegistryService;
+      return options;
+    } catch (error) {
+      console.warn('Falling back to default container registries', error);
+      const fallback = defaultRegistryOptions.map((name) => ({ value: name, label: name }));
+      populateSelectOptions(registrySelect, fallback);
+      registrySelect.value = defaultValues.containerRegistryService;
+      return fallback;
+    }
+  };
+
+  const refreshDockerfiles = async ({ hostUri, projectId, repoId, branch, accessToken }) => {
+    if (!dockerfileInput || !accessToken || !projectId || !repoId || !hostUri) return [];
+    dockerfileInput.value = defaultValues.dockerfileDir || '';
+    try {
+      const dockerfiles = await fetchDockerfileDirectories({ hostUri, projectId, repoId, branch, accessToken });
+      if (dockerfiles.length) {
+        const defaultPath = dockerfiles[0];
+        dockerfileInput.value = defaultPath;
+      } else {
+        dockerfileInput.value = defaultValues.dockerfileDir || '';
+        setStatus('No Dockerfile was found in this branch. Please provide the directory manually.', true);
+      }
+      return dockerfiles;
+    } catch (error) {
+      console.error(error);
+      dockerfileInput.value = defaultValues.dockerfileDir || '';
+      setStatus('Could not auto-detect Dockerfile location. Please fill it manually.', true);
+      return [];
+    }
+  };
+
   const getAuthHeader = (token) => {
     const tokenValue = typeof token === 'string' ? token : token?.token;
     if (!tokenValue) {
@@ -233,6 +288,71 @@
     const repoSlug = slugifyName(repositoryName || projectName, 'repo');
     const environmentSlug = slugifyName(environment, 'env');
     return `${projectSlug}-${repoSlug}-${environmentSlug}.yml`;
+  };
+
+  const applyBootstrapPayload = async (payload = {}, source = 'message') => {
+    const {
+      branch,
+      projectId,
+      projectName,
+      repoId,
+      repoName,
+      hostUri,
+      accessToken
+    } = payload;
+
+    const normalizedHost = (hostUri || state.hostUri || getHostBase()).replace(/\/+$/, '') + '/';
+    state.branch = branch || state.branch;
+    state.projectId = projectId || state.projectId;
+    state.projectName = projectName || state.projectName;
+    state.repoId = repoId || state.repoId;
+    state.repositoryName = repoName || state.repositoryName;
+    state.hostUri = normalizedHost;
+    state.accessToken = accessToken || state.accessToken;
+
+    const targetBranch = state.branch;
+    branchLabel.textContent = targetBranch ? `Target branch: ${targetBranch}` : 'Loading branch context...';
+    if (branchInput && targetBranch) {
+      branchInput.value = targetBranch;
+      branchInput.disabled = true;
+    }
+
+    targetRepoInput.value = `${sanitizeProjectName(state.projectName || 'project')}_Azure_DevOps`;
+    if (!serviceInput.value) {
+      setServiceNameFromRepository(state.repositoryName || state.projectName);
+    }
+    applyDetectedEnvironment(targetBranch);
+    setKomodoServerFromEnvironment(environmentSelect?.value);
+
+    if (!state.projectId || !state.accessToken || !state.hostUri) {
+      setStatus('Loaded context from branch action. Waiting for Azure DevOps host to provide an access token...', true);
+      setSubmitting(false);
+      return;
+    }
+
+    try {
+      await Promise.all([
+        loadPools({ hostUri: state.hostUri, projectId: state.projectId, accessToken: state.accessToken }),
+        loadContainerRegistries({ hostUri: state.hostUri, projectId: state.projectId, accessToken: state.accessToken }),
+        refreshDockerfiles({
+          hostUri: state.hostUri,
+          projectId: state.projectId,
+          repoId: state.repoId,
+          branch: targetBranch,
+          accessToken: state.accessToken
+        })
+      ]);
+      setStatus(
+        source === 'message'
+          ? 'Azure DevOps context received from the branch action. Generate the pipeline when ready.'
+          : 'Azure DevOps context ready. Generate the pipeline when you are ready.'
+      );
+    } catch (error) {
+      console.error('Failed to hydrate form from bootstrap payload', error);
+      setStatus('Context loaded, but some resources could not be auto-detected. Fill missing values manually.', true);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const setServiceNameFromRepository = (name) => {
@@ -442,6 +562,7 @@
     return (payload.value || []).map((endpoint) => endpoint.name || endpoint.id).filter(Boolean);
   };
 
+
   const normalizeDockerfileDir = (path = '') => {
     const normalized = path.split('\\').join('/');
     const withoutFile = normalized.replace(/\/?Dockerfile$/i, '');
@@ -650,53 +771,15 @@
       const hostUri = (context.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
       state.hostUri = hostUri;
       let accessToken;
-      let cachedDockerfiles = [];
-
-      const loadPools = async () => {
-        if (!poolSelect) return;
-        const options = defaultPoolOptions.map((name) => ({
-          value: name,
-          label: name
-        }));
-        populateSelectOptions(poolSelect, options);
-        poolSelect.value = defaultValues.pool;
-      };
-
-      const loadContainerRegistries = async () => {
-        if (!registrySelect) return;
-        const options = defaultRegistryOptions.map((name) => ({
-          value: name,
-          label: name
-        }));
-        populateSelectOptions(registrySelect, options);
-        registrySelect.value = defaultValues.containerRegistryService;
-      };
-
-      const refreshDockerfiles = async () => {
-        if (!dockerfileInput || !accessToken) return;
-        dockerfileInput.value = defaultValues.dockerfileDir || '';
-        try {
-          cachedDockerfiles = await fetchDockerfileDirectories({ hostUri, projectId, repoId, branch, accessToken });
-          if (cachedDockerfiles.length) {
-            const defaultPath = cachedDockerfiles[0];
-            dockerfileInput.value = defaultPath;
-          } else {
-            dockerfileInput.value = defaultValues.dockerfileDir || '';
-            setStatus('No Dockerfile was found in this branch. Please provide the directory manually.', true);
-          }
-        } catch (error) {
-          console.error(error);
-          dockerfileInput.value = defaultValues.dockerfileDir || '';
-          setStatus('Could not auto-detect Dockerfile location. Please fill it manually.', true);
-        }
-      };
-
-      const initializeData = async () => Promise.all([loadPools(), loadContainerRegistries(), refreshDockerfiles()]);
 
       try {
         accessToken = await getAccessTokenFromSdk(sdk);
         state.accessToken = accessToken;
-        await initializeData();
+        await Promise.all([
+          loadPools({ hostUri, projectId, accessToken }),
+          loadContainerRegistries({ hostUri, projectId, accessToken }),
+          refreshDockerfiles({ hostUri, projectId, repoId, branch, accessToken })
+        ]);
         setStatus('Azure DevOps context ready. Generate the pipeline when you are ready.');
       } catch (tokenError) {
         console.error('Failed to acquire Azure DevOps access token', tokenError);
@@ -724,6 +807,14 @@
       setKomodoServerFromEnvironment(event.target.value);
     });
   }
+
+  window.addEventListener('message', (event) => {
+    if (!event?.data || event.origin !== window.location.origin) return;
+    if (event.data.type === 'pipeline-bootstrap') {
+      applyBootstrapPayload(event.data.payload || {}, 'message');
+      event.source?.postMessage({ type: 'pipeline-bootstrap-ack' }, event.origin);
+    }
+  });
 
   initializationPromise = init();
 })();
