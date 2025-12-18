@@ -12,6 +12,8 @@ A lightweight Azure DevOps extension that adds a **Generate pipeline** action be
 
 The extension uses the scoped Azure DevOps access token provided by the host page to create repositories and scaffold the pipeline template—no extra prompts or saved tokens are required.
 
+The manifest scopes include `vso.code_manage` so the extension can create repositories on behalf of the signed-in user (who must also have **Create repository** permission in the project).
+
 Submitting the form ensures a shared repository named `SANITIZEDPROJECTNAME_Azure_DevOps` exists in the current project. If it does not, the extension creates it and pushes a `pipeline-template.yml` containing the submitted settings.
 
 ## Structure
