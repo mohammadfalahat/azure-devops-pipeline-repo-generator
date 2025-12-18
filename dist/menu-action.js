@@ -8,12 +8,15 @@ const getHostBase = () => {
   return `${referrer.origin}${hasTfsVirtualDir ? '/tfs' : ''}`;
 };
 
+const gallerySdkUrl =
+  'https://azure.buluttakin.com/_apis/public/gallery/publisher/localdev/extension/pipeline-generator/0.1.10/assetbyname/dist/lib/VSS.SDK.min.js';
+
 const loadScript = (src) =>
   new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.src = src;
     script.async = false;
-    script.crossOrigin = 'anonymous';
+    script.crossOrigin = 'use-credentials';
     script.onload = resolve;
     script.onerror = () => reject(new Error(`Failed to load Azure DevOps SDK from ${src}`));
     document.head.appendChild(script);
@@ -65,7 +68,7 @@ const loadVssSdk = async () => {
   const hostSdk = `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`;
   const localSdk = new URL('./lib/VSS.SDK.min.js', window.location.href).toString();
   const localSdkFallback = new URL('./lib/VSS.SDK.js', window.location.href).toString();
-  const candidates = [hostSdk, localSdk, localSdkFallback];
+  const candidates = [gallerySdkUrl, hostSdk, localSdk, localSdkFallback];
 
   let lastError;
   for (const src of candidates) {
@@ -88,7 +91,8 @@ const warmupAssets = async () => {
     new URL('./index.html', window.location.href).toString(),
     new URL('./ui.js', window.location.href).toString(),
     new URL('./styles.css', window.location.href).toString(),
-    new URL('./lib/VSS.SDK.min.js', window.location.href).toString()
+    new URL('./lib/VSS.SDK.min.js', window.location.href).toString(),
+    gallerySdkUrl
   ];
 
   await Promise.all(
@@ -110,7 +114,8 @@ const prefetchResources = () => {
     { href: new URL('./index.html', window.location.href).toString(), as: 'fetch' },
     { href: new URL('./ui.js', window.location.href).toString(), as: 'script' },
     { href: new URL('./styles.css', window.location.href).toString(), as: 'style' },
-    { href: new URL('./lib/VSS.SDK.min.js', window.location.href).toString(), as: 'script' }
+    { href: new URL('./lib/VSS.SDK.min.js', window.location.href).toString(), as: 'script' },
+    { href: gallerySdkUrl, as: 'script' }
   ];
 
   resources.forEach(({ href, as }) => {
@@ -119,7 +124,7 @@ const prefetchResources = () => {
     preload.as = as || 'script';
     preload.href = href;
     if (as === 'script') {
-      preload.crossOrigin = 'anonymous';
+      preload.crossOrigin = 'use-credentials';
     }
     document.head.appendChild(preload);
 
