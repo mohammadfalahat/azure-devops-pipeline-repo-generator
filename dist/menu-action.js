@@ -62,9 +62,10 @@ const loadVssSdk = async () => {
     return ambientSdk;
   }
 
+  const hostSdk = `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`;
   const localSdk = new URL('./lib/VSS.SDK.min.js', window.location.href).toString();
   const localSdkFallback = new URL('./lib/VSS.SDK.js', window.location.href).toString();
-  const candidates = [localSdk, localSdkFallback, `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`];
+  const candidates = [hostSdk, localSdk, localSdkFallback];
 
   let lastError;
   for (const src of candidates) {
@@ -106,7 +107,7 @@ const warmupAssets = async () => {
 
 const prefetchResources = () => {
   const resources = [
-    { href: new URL('./index.html', window.location.href).toString(), as: 'document' },
+    { href: new URL('./index.html', window.location.href).toString(), as: 'fetch' },
     { href: new URL('./ui.js', window.location.href).toString(), as: 'script' },
     { href: new URL('./styles.css', window.location.href).toString(), as: 'style' },
     { href: new URL('./lib/VSS.SDK.min.js', window.location.href).toString(), as: 'script' }

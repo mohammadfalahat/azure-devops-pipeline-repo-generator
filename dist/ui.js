@@ -70,9 +70,10 @@
       return ambientSdk;
     }
 
+    const hostSdk = `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`;
     const localSdk = new URL('./lib/VSS.SDK.min.js', window.location.href).toString();
     const localSdkFallback = new URL('./lib/VSS.SDK.js', window.location.href).toString();
-    const candidates = [localSdk, localSdkFallback, `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`];
+    const candidates = [hostSdk, localSdk, localSdkFallback];
 
     let lastError;
     for (const src of candidates) {
@@ -100,6 +101,12 @@
   };
   const defaultPoolOptions = ['PublishDockerAgent', 'Default'];
   const defaultRegistryOptions = ['BulutReg', 'DockerReg'];
+  const environmentKomodoMap = {
+    dev: 'Development-192.168.62.19',
+    demo: 'DEMO-192.168.62.91',
+    qa: 'QA-192.168.62.153',
+    pro: 'Production-31.7.65.195'
+  };
 
   const mergeWithDefaults = (defaults, values) => {
     const seen = new Set();
@@ -124,6 +131,7 @@
   const form = document.getElementById('pipeline-form');
   const status = document.getElementById('status');
   const targetRepoInput = document.getElementById('targetRepo');
+  const komodoSelect = document.getElementById('komodoServer');
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
@@ -169,6 +177,16 @@
     }
   };
 
+  const setKomodoServerFromEnvironment = (environment) => {
+    if (!environment || !komodoSelect) return;
+    const target = environmentKomodoMap[environment.toLowerCase()];
+    if (!target) return;
+    const match = Array.from(komodoSelect.options).find((option) => option.value === target);
+    if (match) {
+      komodoSelect.value = target;
+    }
+  };
+
   const populateDefaults = () => {
     Object.entries(defaultValues).forEach(([key, value]) => {
       const input = document.getElementById(key);
@@ -208,6 +226,7 @@
       );
       if (available) {
         environmentSelect.value = detected;
+        setKomodoServerFromEnvironment(detected);
       }
     }
   };
@@ -389,7 +408,7 @@
       branchInput.disabled = true;
     }
     targetRepoInput.value = `${sanitizeProjectName(projectNameFromQuery || 'project')}_Azure_DevOps`;
-    setServiceNameFromRepository(repoNameFromQuery);
+    setServiceNameFromRepository(repoNameFromQuery || projectNameFromQuery);
     applyDetectedEnvironment(initialBranch);
 
     try {
@@ -415,8 +434,11 @@
         branchInput.disabled = true;
       }
       targetRepoInput.value = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
-      setServiceNameFromRepository(repositoryName);
+      if (!serviceInput.value) {
+        setServiceNameFromRepository(repositoryName || projectName);
+      }
       applyDetectedEnvironment(branch);
+      setKomodoServerFromEnvironment(environmentSelect?.value);
 
       if (!projectId) {
         setStatus('Project context was not provided by the branch action or hub.', true);
@@ -512,6 +534,12 @@
       sdk?.notifyLoadFailed?.(error?.message || 'Initialization failed');
     }
   };
+
+  if (environmentSelect) {
+    environmentSelect.addEventListener('change', (event) => {
+      setKomodoServerFromEnvironment(event.target.value);
+    });
+  }
 
   init();
 })();
