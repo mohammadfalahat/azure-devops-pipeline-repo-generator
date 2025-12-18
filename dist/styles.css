@@ -45,6 +45,17 @@ header {
   margin-top: 16px;
 }
 
+.code-block {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  overflow: auto;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .hint {
   color: #4b5563;
   margin-top: 0;

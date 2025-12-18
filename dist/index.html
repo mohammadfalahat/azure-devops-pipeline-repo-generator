@@ -28,7 +28,7 @@
         <div class="field">
           <label for="branch">Selected branch</label>
           <input id="branch" name="branch" disabled />
-          <small>Captured from the branch list action and cannot be edited here.</small>
+          <small>Captured from the branch list action. To change it, reopen the generator from the desired branch.</small>
         </div>
         <div class="field">
           <label for="pool">Pool</label>
@@ -36,11 +36,12 @@
             <option value="PublishDockerAgent" selected>PublishDockerAgent</option>
             <option value="Default">Default</option>
           </select>
-          <small>Choose the build pool for the generated pipeline.</small>
+          <small>Use the build pool that will run the generated pipeline.</small>
         </div>
         <div class="field">
           <label for="service">Service name</label>
           <input id="service" name="service" required />
+          <small>Lowercase identifier for the service being deployed. Auto-filled from the repository name when available.</small>
         </div>
         <div class="field">
           <label for="environment">Environment</label>
@@ -50,16 +51,17 @@
             <option value="qa">qa</option>
             <option value="pro">pro</option>
           </select>
-          <small>Defaults to the detected environment from the branch name but stays editable.</small>
+          <small>Auto-detected from the branch name when possible. You can still pick a different environment.</small>
         </div>
         <div class="field">
           <label for="dockerfileDir">Dockerfile directory</label>
           <input id="dockerfileDir" name="dockerfileDir" value="**" required />
-          <small>Automatically scans the branch for Dockerfiles and pre-fills the directory. You can still override the value.</small>
+          <small>Scans the branch for Dockerfiles and pre-fills the closest directory. Override if you want a different location.</small>
         </div>
         <div class="field">
           <label for="repositoryAddress">Container registry URL</label>
           <input id="repositoryAddress" name="repositoryAddress" value="registry.buluttakin.com" required />
+          <small>Base registry address used by the generated pipeline template.</small>
         </div>
         <div class="field">
           <label for="containerRegistryService">Container registry service</label>
@@ -67,6 +69,7 @@
             <option value="BulutReg" selected>BulutReg</option>
             <option value="DockerReg">DockerReg</option>
           </select>
+          <small>Azure DevOps service connection that provides credentials for the registry address above.</small>
         </div>
         <div class="field">
           <label for="komodoServer">Komodo server</label>
@@ -76,15 +79,28 @@
             <option value="QA-192.168.62.153">QA-192.168.62.153</option>
             <option value="Production-31.7.65.195">Production-31.7.65.195</option>
           </select>
+          <small>Auto-adjusted when you change the environment. Pick another host only if you need a different target.</small>
         </div>
         <div class="field">
           <label for="targetRepo">Target repository name</label>
           <input id="targetRepo" name="targetRepo" readonly />
-          <small>Auto-generated from the project name using the pattern SANITIZEDPROJECTNAME_Azure_DevOps.</small>
+          <small>Auto-generated from the project name using the pattern SANITIZEDPROJECTNAME_Azure_DevOps. The extension will create or reuse this repository.</small>
         </div>
         <button type="submit" class="primary">Create repository and pipeline scaffold</button>
       </form>
       <div id="status" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="panel hidden" id="preview-panel" aria-live="polite">
+      <div class="section-header">
+        <p class="eyebrow">Pipeline template</p>
+        <h2>Generated YAML</h2>
+        <p class="hint">The template below matches the values you submitted. Copy it or let the extension push it automatically.</p>
+      </div>
+      <div class="actions">
+        <button type="button" class="secondary" id="copy-yaml">Copy YAML</button>
+      </div>
+      <pre id="yaml-output" class="code-block" aria-label="Generated pipeline YAML"></pre>
     </section>
   </main>
 </body>

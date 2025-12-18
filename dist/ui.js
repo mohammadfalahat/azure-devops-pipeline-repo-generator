@@ -149,10 +149,31 @@
   const status = document.getElementById('status');
   const targetRepoInput = document.getElementById('targetRepo');
   const komodoSelect = document.getElementById('komodoServer');
+  const previewPanel = document.getElementById('preview-panel');
+  const yamlOutput = document.getElementById('yaml-output');
+  const copyYamlButton = document.getElementById('copy-yaml');
+  const submitButton = form?.querySelector('button[type="submit"]');
+
+  const state = {
+    sdk: null,
+    accessToken: null,
+    hostUri: null,
+    projectId: null,
+    projectName: null,
+    repoId: null,
+    repositoryName: null,
+    branch: null
+  };
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
     status.className = isError ? 'status-error' : 'status-success';
+  };
+
+  const setSubmitting = (isSubmitting) => {
+    if (submitButton) {
+      submitButton.disabled = isSubmitting;
+    }
   };
 
   const getAuthHeader = (token) => {
@@ -321,11 +342,11 @@
     return createRes.json();
   };
 
-  const postScaffold = async ({ hostUri, projectId, repoId, branch, accessToken, payload }) => {
+  const postScaffold = async ({ hostUri, projectId, repoId, branch, accessToken, content }) => {
     const branchName = branch?.replace(/^refs\/heads\//, '') || 'main';
     const branchRef = `refs/heads/${branchName}`;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=7.1-preview.1`;
-    const content = `pool: ${payload.pool}\nservice: ${payload.service}\nenvironment: ${payload.environment}\ndockerfileDir: ${payload.dockerfileDir}\nrepositoryAddress: ${payload.repositoryAddress}\ncontainerRegistryService: ${payload.containerRegistryService}\nkomodoServer: ${payload.komodoServer}\n`;
+    const pipelineContent = content || '';
     const authHeader = getAuthHeader(accessToken);
     const oldObjectId = await getBranchObjectId({ hostUri, projectId, repoId, branch: branchName, accessToken });
     const body = {
@@ -342,7 +363,7 @@
             {
               changeType: 'add',
               item: { path: '/pipeline-template.yml' },
-              newContent: { content, contentType: 'rawtext' }
+              newContent: { content: pipelineContent, contentType: 'rawtext' }
             }
           ]
         }
@@ -392,6 +413,79 @@
     return trimmed || '.';
   };
 
+  const buildPipelineYaml = (payload) =>
+    [
+      `pool: ${payload.pool || ''}`,
+      `service: ${payload.service || ''}`,
+      `environment: ${payload.environment || ''}`,
+      `dockerfileDir: ${payload.dockerfileDir || ''}`,
+      `repositoryAddress: ${payload.repositoryAddress || ''}`,
+      `containerRegistryService: ${payload.containerRegistryService || ''}`,
+      `komodoServer: ${payload.komodoServer || ''}`,
+      ''
+    ].join('\n');
+
+  const showYamlPreview = (payload) => {
+    if (!yamlOutput) return '';
+    const yaml = buildPipelineYaml(payload);
+    yamlOutput.textContent = yaml;
+    previewPanel?.classList.remove('hidden');
+    return yaml;
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(form).entries());
+    const yaml = showYamlPreview(payload);
+
+    setStatus('Generating pipeline template...');
+    setSubmitting(true);
+
+    if (!state.accessToken || !state.projectId) {
+      setStatus('Template generated below. Open the extension from Azure DevOps to save it automatically.', true);
+      setSubmitting(false);
+      return yaml;
+    }
+
+    try {
+      const repo = await ensureRepo({
+        hostUri: state.hostUri,
+        projectId: state.projectId,
+        projectName: state.projectName,
+        accessToken: state.accessToken
+      });
+      const defaultBranch = repo.defaultBranch?.replace(/^refs\/heads\//, '') || state.branch || 'main';
+      await postScaffold({
+        hostUri: state.hostUri,
+        projectId: state.projectId,
+        repoId: repo.id,
+        branch: defaultBranch,
+        accessToken: state.accessToken,
+        content: yaml
+      });
+      setStatus(`Repository ${repo.name} is ready with pipeline template on ${defaultBranch}.`, false);
+    } catch (error) {
+      console.error(error);
+      setStatus(`Template generated below, but automatic push failed: ${error.message}`, true);
+    }
+
+    setSubmitting(false);
+    return yaml;
+  };
+
+  form?.addEventListener('submit', handleSubmit);
+
+  copyYamlButton?.addEventListener('click', async () => {
+    if (!yamlOutput?.textContent) return;
+    try {
+      await navigator.clipboard?.writeText(yamlOutput.textContent);
+      setStatus('YAML copied to clipboard.');
+    } catch (error) {
+      console.error(error);
+      setStatus('Could not copy YAML. Please copy it manually from the preview.', true);
+    }
+  });
+
   const fetchDockerfileDirectories = async ({ hostUri, projectId, repoId, branch, accessToken }) => {
     if (!repoId) return [];
     const versionDescriptor = branch
@@ -419,6 +513,13 @@
     const repoNameFromQuery = getQueryValue(query.get('repoName'));
     const initialBranch = branchFromQuery || '(unknown branch)';
 
+    state.branch = initialBranch;
+    state.projectId = projectIdFromQuery;
+    state.projectName = projectNameFromQuery;
+    state.repoId = repoIdFromQuery;
+    state.repositoryName = repoNameFromQuery;
+    state.hostUri = `${getHostBase().replace(/\/+$/, '')}/`;
+
     branchLabel.textContent = branchFromQuery ? `Target branch: ${initialBranch}` : 'Loading branch context...';
     if (branchInput && branchFromQuery) {
       branchInput.value = initialBranch;
@@ -427,6 +528,11 @@
     targetRepoInput.value = `${sanitizeProjectName(projectNameFromQuery || 'project')}_Azure_DevOps`;
     setServiceNameFromRepository(repoNameFromQuery || projectNameFromQuery);
     applyDetectedEnvironment(initialBranch);
+    const hasHostContext = Boolean(document.referrer || projectIdFromQuery || repoIdFromQuery);
+    if (!hasHostContext) {
+      setStatus('Running outside Azure DevOps. Fill the form to preview the YAML, then copy it below.', true);
+      return;
+    }
 
     try {
       const sdk = await loadVssSdk();
@@ -439,11 +545,17 @@
         branchFromQuery ||
         context?.repository?.defaultBranch?.replace(/^refs\/heads\//, '') ||
         '(unknown branch)';
+      state.branch = branch;
 
       const projectId = projectIdFromQuery || context?.project?.id;
       const projectName = projectNameFromQuery || context?.project?.name || projectId;
       const repoId = repoIdFromQuery || context?.repository?.id;
       const repositoryName = repoNameFromQuery || context?.repository?.name;
+      state.sdk = sdk;
+      state.projectId = projectId;
+      state.projectName = projectName;
+      state.repoId = repoId;
+      state.repositoryName = repositoryName;
 
       branchLabel.textContent = `Target branch: ${branch}`;
       if (branchInput) {
@@ -464,6 +576,7 @@
       }
 
       const hostUri = (context.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
+      state.hostUri = hostUri;
       let accessToken;
       let cachedDockerfiles = [];
 
@@ -510,6 +623,7 @@
 
       try {
         accessToken = await getAccessTokenFromSdk(sdk);
+        state.accessToken = accessToken;
         await initializeData();
       } catch (tokenError) {
         console.error('Failed to acquire Azure DevOps access token', tokenError);
@@ -518,35 +632,13 @@
         return;
       }
 
-      form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        setStatus('Working on repository...');
-        form.querySelector('button[type="submit"]').disabled = true;
-        const payload = Object.fromEntries(new FormData(form).entries());
-
-        if (!accessToken) {
-          setStatus('Access token unavailable. Reload the extension and try again.', true);
-          form.querySelector('button[type="submit"]').disabled = false;
-          return;
-        }
-
-        try {
-          const repo = await ensureRepo({ hostUri, projectId, projectName, accessToken });
-          const defaultBranch = repo.defaultBranch?.replace(/^refs\/heads\//, '') || branch || 'main';
-          await postScaffold({ hostUri, projectId, repoId: repo.id, branch: defaultBranch, accessToken, payload });
-          setStatus(`Repository ${repo.name} is ready with pipeline template on ${defaultBranch}.`, false);
-        } catch (error) {
-          console.error(error);
-          setStatus(error.message, true);
-        }
-
-        form.querySelector('button[type="submit"]').disabled = false;
-      });
-
       sdk.notifyLoadSucceeded();
     } catch (error) {
       console.error('Failed to initialize extension frame', error);
-      setStatus('Failed to initialize extension frame. Check extension permissions and reload.', true);
+      setStatus(
+        'Failed to initialize extension frame. Check extension permissions and reload, or copy the template below.',
+        true
+      );
       const sdk = normalizeSdk(window.VSS || window.parent?.VSS);
       sdk?.notifyLoadFailed?.(error?.message || 'Initialization failed');
     }
