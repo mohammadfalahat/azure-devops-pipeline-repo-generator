@@ -213,6 +213,24 @@
     tokenStatus.className = isError ? 'status-error' : 'status-success';
   };
 
+  const getAuthHeader = (token) => {
+    const tokenValue = typeof token === 'string' ? token : token?.token;
+    if (!tokenValue) {
+      throw new Error('Extension access token was unavailable.');
+    }
+    const isLikelyJwt = tokenValue.split('.').length === 3;
+    if (isLikelyJwt) {
+      return `Bearer ${tokenValue}`;
+    }
+    const encoded = btoa(`pat:${tokenValue}`);
+    return `Basic ${encoded}`;
+  };
+
+  const authHeaders = (token) => ({
+    Authorization: getAuthHeader(token),
+    'X-TFS-FedAuthRedirect': 'Suppress'
+  });
+
   const verifyPersonalToken = async ({ hostUri, token }) => {
     if (!token) return false;
     const normalizedHost = `${(hostUri || hostUriRef.current || '').replace(/\/+$/, '')}/`;
@@ -221,7 +239,7 @@
       const res = await fetch(
         `${normalizedHost}_apis/connectionData?connectOptions=1&lastChangeId=-1&lastChangeId64=-1`,
         {
-          headers: { Authorization: getAuthHeader(token) }
+          headers: authHeaders(token)
         }
       );
       return res.ok;
@@ -386,14 +404,6 @@
     }
   };
 
-  const getAuthHeader = (token) => {
-    const tokenValue = typeof token === 'string' ? token : token?.token;
-    if (!tokenValue) {
-      throw new Error('Extension access token was unavailable.');
-    }
-    return `Bearer ${tokenValue}`;
-  };
-
   const populateSelectOptions = (select, options, placeholder) => {
     if (!select) return;
     select.innerHTML = '';
@@ -421,8 +431,7 @@
     const refUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/refs?filter=${encodeURIComponent(
       `heads/${branchName}`
     )}&api-version=7.1-preview.1`;
-    const authHeader = getAuthHeader(accessToken);
-    const res = await fetch(refUrl, { headers: { Authorization: authHeader } });
+    const res = await fetch(refUrl, { headers: authHeaders(accessToken) });
 
     if (res.status === 404) {
       return '0000000000000000000000000000000000000000';
@@ -442,9 +451,8 @@
     targetRepoInput.value = targetName;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories?api-version=7.1-preview.1`;
 
-    const authHeader = getAuthHeader(accessToken);
     const res = await fetch(url, {
-      headers: { Authorization: authHeader }
+      headers: authHeaders(accessToken)
     });
     if (!res.ok) {
       throw new Error(`Failed to list repositories (${res.status})`);
@@ -458,7 +466,7 @@
     const createRes = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: authHeader,
+        ...authHeaders(accessToken),
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ name: targetName, project: { id: projectId } })
@@ -500,7 +508,7 @@
     const res = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: authHeader,
+        ...authHeaders(accessToken),
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(body)
@@ -513,7 +521,7 @@
 
   const fetchAgentQueues = async ({ hostUri, projectId, accessToken }) => {
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/distributedtask/queues?api-version=7.1-preview.1`;
-    const res = await fetch(url, { headers: { Authorization: getAuthHeader(accessToken) } });
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       throw new Error(`Failed to load pools (${res.status})`);
     }
@@ -525,7 +533,7 @@
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/serviceendpoint/endpoints?type=dockerregistry&projectIds=${encodeURIComponent(
       projectId
     )}&api-version=7.1-preview.4`;
-    const res = await fetch(url, { headers: { Authorization: getAuthHeader(accessToken) } });
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       throw new Error(`Failed to load container registries (${res.status})`);
     }
