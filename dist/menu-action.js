@@ -214,7 +214,37 @@ const getBranchName = (context) => {
   return normalizeBranchName(fallbackBranch) || normalizeBranchName(branchFromWebContext) || 'Unknown branch';
 };
 
-const openGenerator = async (context) => {
+const postBootstrapMessage = (targetWindow, targetOrigin, payload) => {
+  if (!targetWindow || !targetOrigin) return;
+
+  const message = { type: 'pipeline-bootstrap', payload };
+  let attempts = 0;
+  const maxAttempts = 10;
+
+  const intervalId = setInterval(() => {
+    attempts += 1;
+    if (targetWindow.closed || attempts > maxAttempts) {
+      clearInterval(intervalId);
+      return;
+    }
+    try {
+      targetWindow.postMessage(message, targetOrigin);
+    } catch (error) {
+      console.warn('Failed to post bootstrap message to generator window', error);
+    }
+  }, 400);
+
+  const handleAck = (event) => {
+    if (event.source === targetWindow && event.origin === targetOrigin && event.data?.type === 'pipeline-bootstrap-ack') {
+      clearInterval(intervalId);
+      window.removeEventListener('message', handleAck);
+    }
+  };
+
+  window.addEventListener('message', handleAck);
+};
+
+const openGenerator = async (context, sdk) => {
   try {
     const actionContext = getActionContext(context);
     const repository = getRepository(actionContext) || VSS.getWebContext?.()?.repository;
@@ -236,18 +266,39 @@ const openGenerator = async (context) => {
     if (repoName) params.set('repoName', repoName);
 
     const targetUrl = `${baseUri}dist/index.html?${params.toString()}`;
+    const targetOrigin = new URL(targetUrl).origin;
+
+    const hostUri = (VSS.getWebContext?.()?.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
+    let accessToken;
+    try {
+      accessToken = await sdk.getAccessToken?.();
+    } catch (tokenError) {
+      console.warn('Could not acquire access token before opening generator', tokenError);
+    }
+
+    const bootstrapPayload = {
+      branch: branchName,
+      projectId,
+      projectName,
+      repoId,
+      repoName,
+      hostUri,
+      accessToken
+    };
 
     try {
       const hostService = await VSS.getService(VSS.ServiceIds.HostPageLayout);
       if (hostService?.openWindow) {
-        hostService.openWindow(targetUrl, {});
+        const generatorWindow = hostService.openWindow(targetUrl, {});
+        postBootstrapMessage(generatorWindow, targetOrigin, bootstrapPayload);
         return;
       }
     } catch (serviceError) {
       console.warn('Falling back to window.open because HostPageLayout was unavailable', serviceError);
     }
 
-    window.open(targetUrl, '_blank');
+    const generatorWindow = window.open(targetUrl, '_blank');
+    postBootstrapMessage(generatorWindow, targetOrigin, bootstrapPayload);
   } catch (error) {
     console.error('Failed to launch pipeline generator', error);
     VSS.handleError?.(error);
@@ -303,7 +354,7 @@ const initializeAction = () => {
         if (assetWarmupPromise) {
           await assetWarmupPromise.catch(() => {});
         }
-        await openGenerator(context);
+        await openGenerator(context, sdkInstance);
         sdkInstance.notifyLoadSucceeded?.();
       }
     };
