@@ -94,6 +94,20 @@
     throw lastError || new Error('Failed to load Azure DevOps SDK.');
   };
 
+  const waitForSdkReady = async (sdk) => {
+    if (!sdk?.ready) {
+      return;
+    }
+
+    await new Promise((resolve, reject) => {
+      try {
+        sdk.ready(resolve);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  };
+
   const defaultValues = {
     pool: 'PublishDockerAgent',
     environment: 'demo',
@@ -417,7 +431,7 @@
     try {
       const sdk = await loadVssSdk();
       sdk.init({ usePlatformScripts: true, explicitNotifyLoaded: true });
-      await sdk.ready();
+      await waitForSdkReady(sdk);
 
       const context = sdk.getWebContext();
 
