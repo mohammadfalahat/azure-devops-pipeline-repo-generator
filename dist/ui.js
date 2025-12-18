@@ -99,9 +99,6 @@
   };
   const defaultPoolOptions = ['PublishDockerAgent', 'Default'];
   const defaultRegistryOptions = ['BulutReg', 'DockerReg'];
-  const tokenStorageKey = 'pipeline-generator.settings.token';
-  const hostUriRef = { current: `${getHostBase().replace(/\/+$/, '')}/` };
-  const onTokenUpdatedRef = { handler: () => {} };
 
   const mergeWithDefaults = (defaults, values) => {
     const seen = new Set();
@@ -126,91 +123,10 @@
   const form = document.getElementById('pipeline-form');
   const status = document.getElementById('status');
   const targetRepoInput = document.getElementById('targetRepo');
-  const pipelineSection = document.getElementById('pipeline-section');
-  const tokenGate = document.getElementById('token-gate');
-  const tokenGateMessage = document.getElementById('token-gate-message');
-  const settingsPanel = document.getElementById('settings-panel');
-  const openSettingsButton = document.getElementById('open-settings');
-  const openSettingsFromGateButton = document.getElementById('open-settings-from-gate');
-  const closeSettingsButton = document.getElementById('close-settings');
-  const settingsForm = document.getElementById('settings-form');
-  const tokenInput = document.getElementById('personalToken');
-  const clearTokenButton = document.getElementById('clear-token');
-  const tokenStatus = document.getElementById('token-status');
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
     status.className = isError ? 'status-error' : 'status-success';
-  };
-
-  const setTokenGateStatus = (message, isError = false) => {
-    if (!tokenGateMessage) return;
-    tokenGateMessage.textContent = message || '';
-    tokenGateMessage.className = isError ? 'status-error' : '';
-  };
-
-  const showPipelineForm = () => {
-    pipelineSection?.classList.remove('hidden');
-    tokenGate?.classList.add('hidden');
-  };
-
-  const hidePipelineForm = () => {
-    pipelineSection?.classList.add('hidden');
-    tokenGate?.classList.remove('hidden');
-  };
-
-  const openSettingsPanel = () => {
-    settingsPanel?.classList.remove('hidden');
-    openSettingsButton?.setAttribute('aria-expanded', 'true');
-  };
-
-  const closeSettingsPanel = () => {
-    settingsPanel?.classList.add('hidden');
-    openSettingsButton?.setAttribute('aria-expanded', 'false');
-  };
-
-  const readStoredToken = () => {
-    try {
-      const raw = window.localStorage?.getItem(tokenStorageKey);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
-      if (typeof parsed === 'string') {
-        return { token: parsed };
-      }
-      if (parsed && typeof parsed.token === 'string') {
-        return { token: parsed.token, savedAt: parsed.savedAt };
-      }
-    } catch (error) {
-      console.warn('Failed to read stored token', error);
-    }
-    return {};
-  };
-
-  const persistToken = (token) => {
-    if (!token) return false;
-    try {
-      window.localStorage?.setItem(tokenStorageKey, JSON.stringify({ token, savedAt: new Date().toISOString() }));
-      return true;
-    } catch (error) {
-      console.error('Failed to persist token', error);
-      return false;
-    }
-  };
-
-  const clearStoredToken = () => {
-    try {
-      window.localStorage?.removeItem(tokenStorageKey);
-      return true;
-    } catch (error) {
-      console.error('Failed to clear stored token', error);
-      return false;
-    }
-  };
-
-  const setTokenStatus = (message, isError = false) => {
-    if (!tokenStatus) return;
-    tokenStatus.textContent = message;
-    tokenStatus.className = isError ? 'status-error' : 'status-success';
   };
 
   const getAuthHeader = (token) => {
@@ -231,124 +147,15 @@
     'X-TFS-FedAuthRedirect': 'Suppress'
   });
 
-  const verifyPersonalToken = async ({ hostUri, token }) => {
-    if (!token) return false;
-    const normalizedHost = `${(hostUri || hostUriRef.current || '').replace(/\/+$/, '')}/`;
-    if (!normalizedHost) return false;
-    try {
-      const res = await fetch(
-        `${normalizedHost}_apis/connectionData?connectOptions=1&lastChangeId=-1&lastChangeId64=-1`,
-        {
-          headers: authHeaders(token)
-        }
-      );
-      return res.ok;
-    } catch (error) {
-      console.error('Failed to verify personal access token', error);
-      return false;
+  const getAccessTokenFromSdk = async (sdk) => {
+    if (!sdk?.getAccessToken) {
+      throw new Error('Azure DevOps access token API is unavailable.');
     }
-  };
-
-  const requireVerifiedToken = async ({ hostUri }) => {
-    const { token, savedAt } = readStoredToken();
+    const token = await sdk.getAccessToken();
     if (!token) {
-      hidePipelineForm();
-      setTokenStatus('A personal access token is required to continue.', true);
-      setTokenGateStatus('Please add a personal access token in Settings to unlock the form.', true);
-      openSettingsPanel();
-      return null;
+      throw new Error('Azure DevOps did not provide an access token.');
     }
-
-    setTokenGateStatus('Verifying saved personal access token...');
-    const verified = await verifyPersonalToken({ hostUri, token });
-    if (!verified) {
-      hidePipelineForm();
-      setTokenStatus('The saved personal access token could not be verified. Please update it in Settings.', true);
-      setTokenGateStatus('Token verification failed. Replace it in Settings to continue.', true);
-      openSettingsPanel();
-      return null;
-    }
-
-    const savedMessage = savedAt ? ` (saved ${new Date(savedAt).toLocaleString()})` : '';
-    setTokenStatus(`Personal access token verified${savedMessage}.`);
-    setTokenGateStatus('');
-    showPipelineForm();
-    closeSettingsPanel();
     return token;
-  };
-
-  const wireSettingsForm = ({ hostUriRef, getOnTokenUpdated }) => {
-    const toggleSettings = () => {
-      const isOpen = !settingsPanel?.classList.contains('hidden');
-      if (isOpen) {
-        closeSettingsPanel();
-      } else {
-        openSettingsPanel();
-      }
-    };
-
-    openSettingsButton?.addEventListener('click', toggleSettings);
-    closeSettingsButton?.addEventListener('click', closeSettingsPanel);
-    openSettingsFromGateButton?.addEventListener('click', () => {
-      openSettingsPanel();
-      tokenInput?.focus();
-    });
-
-    settingsForm?.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const hostUri = hostUriRef?.current;
-      const value = tokenInput?.value.trim();
-      if (!value) {
-        setTokenStatus('Enter a personal access token to continue.', true);
-        hidePipelineForm();
-        setTokenGateStatus('Personal access token required.', true);
-        openSettingsPanel();
-        return;
-      }
-
-      setTokenStatus('Verifying personal access token...');
-      setTokenGateStatus('Verifying personal access token...');
-      const verified = await verifyPersonalToken({ hostUri, token: value });
-      if (!verified) {
-        setTokenStatus('Token is invalid or lacks required permissions.', true);
-        setTokenGateStatus('Token verification failed. Update it to proceed.', true);
-        hidePipelineForm();
-        openSettingsPanel();
-        return;
-      }
-
-      const saved = persistToken(value);
-      if (saved && tokenInput) {
-        tokenInput.value = '';
-        tokenInput.type = 'password';
-      }
-      if (!saved) {
-        setTokenStatus('Unable to save token. Check browser storage permissions.', true);
-        setTokenGateStatus('Unable to save token. Check browser storage permissions.', true);
-        return;
-      }
-
-      setTokenStatus('Token verified and saved.');
-      setTokenGateStatus('');
-      showPipelineForm();
-      closeSettingsPanel();
-      const handler = getOnTokenUpdated?.();
-      handler?.(value);
-    });
-
-    clearTokenButton?.addEventListener('click', () => {
-      const handler = getOnTokenUpdated?.();
-      const cleared = clearStoredToken();
-      if (tokenInput) {
-        tokenInput.value = '';
-        tokenInput.type = 'password';
-      }
-      hidePipelineForm();
-      setTokenGateStatus('Personal access token is required to continue.', true);
-      setTokenStatus(cleared ? 'Saved token cleared. Add a new one to continue.' : 'Unable to clear stored token.', !cleared);
-      openSettingsPanel();
-      handler?.(null);
-    });
   };
 
   const sanitizeProjectName = (name) => name.replace(/[^A-Za-z0-9]/g, '_');
@@ -584,17 +391,12 @@
     setServiceNameFromRepository(repoNameFromQuery);
     applyDetectedEnvironment(initialBranch);
 
-    wireSettingsForm({
-      hostUriRef,
-      getOnTokenUpdated: () => onTokenUpdatedRef.handler
-    });
-
     try {
-      await loadVssSdk();
-      VSS.init({ usePlatformScripts: true, explicitNotifyLoaded: true });
-      await VSS.ready();
+      const sdk = await loadVssSdk();
+      sdk.init({ usePlatformScripts: true, explicitNotifyLoaded: true });
+      await sdk.ready();
 
-      const context = VSS.getWebContext();
+      const context = sdk.getWebContext();
 
       const branch =
         branchFromQuery ||
@@ -617,12 +419,11 @@
 
       if (!projectId) {
         setStatus('Project context was not provided by the branch action or hub.', true);
-        VSS.notifyLoadFailed('Missing project context');
+        sdk.notifyLoadFailed('Missing project context');
         return;
       }
 
       const hostUri = (context.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
-      hostUriRef.current = hostUri;
       let accessToken;
       let cachedDockerfiles = [];
 
@@ -696,28 +497,15 @@
 
       const initializeData = async () => Promise.all([loadPools(), loadContainerRegistries(), refreshDockerfiles()]);
 
-      const applyAccessToken = async (token) => {
-        accessToken = token;
+      try {
+        accessToken = await getAccessTokenFromSdk(sdk);
         await initializeData();
-      };
-
-      onTokenUpdatedRef.handler = async (token) => {
-        if (!token) {
-          accessToken = undefined;
-          setStatus('Add a personal access token to continue.', true);
-          return;
-        }
-        await applyAccessToken(token);
-      };
-
-      const verifiedToken = await requireVerifiedToken({ hostUri });
-      if (!verifiedToken) {
-        setStatus('Add a personal access token in Settings to continue.', true);
-        VSS.notifyLoadFailed('Personal access token missing or invalid');
+      } catch (tokenError) {
+        console.error('Failed to acquire Azure DevOps access token', tokenError);
+        setStatus('Failed to acquire access token from Azure DevOps. Reload the page and try again.', true);
+        sdk.notifyLoadFailed?.('Access token unavailable');
         return;
       }
-
-      await applyAccessToken(verifiedToken);
 
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -726,9 +514,7 @@
         const payload = Object.fromEntries(new FormData(form).entries());
 
         if (!accessToken) {
-          setStatus('A verified personal access token is required. Open Settings to update it.', true);
-          hidePipelineForm();
-          openSettingsPanel();
+          setStatus('Access token unavailable. Reload the extension and try again.', true);
           form.querySelector('button[type="submit"]').disabled = false;
           return;
         }
@@ -746,14 +532,12 @@
         form.querySelector('button[type="submit"]').disabled = false;
       });
 
-      VSS.notifyLoadSucceeded();
+      sdk.notifyLoadSucceeded();
     } catch (error) {
       console.error('Failed to initialize extension frame', error);
       setStatus('Failed to initialize extension frame. Check extension permissions and reload.', true);
       const sdk = normalizeSdk(window.VSS || window.parent?.VSS);
       sdk?.notifyLoadFailed?.(error?.message || 'Initialization failed');
-      setTokenGateStatus('Failed to initialize extension frame. Open settings after fixing the issue.', true);
-      openSettingsPanel();
     }
   };
 
