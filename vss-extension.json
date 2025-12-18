@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
   "id": "pipeline-generator",
-  "publisher": "localdev",
-  "version": "0.1.12",
+  "publisher": "mohammad-falahat",
+  "version": "0.1.9",
   "name": "Pipeline Generator",
   "description": "Add a Generate Pipeline button next to each branch to bootstrap pipeline repositories.",
   "public": false,
