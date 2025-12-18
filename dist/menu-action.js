@@ -86,6 +86,20 @@ const loadVssSdk = async () => {
   throw lastError || new Error('Failed to load Azure DevOps SDK.');
 };
 
+const waitForSdkReady = async (sdk) => {
+  if (!sdk?.ready) {
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    try {
+      sdk.ready(resolve);
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
+
 const warmupAssets = async () => {
   const assets = [
     new URL('./index.html', window.location.href).toString(),
@@ -249,7 +263,7 @@ const initializeAction = () => {
       sdkInitPromise = (async () => {
         const sdk = await loadVssSdk();
         sdk.init({ usePlatformScripts: true, explicitNotifyLoaded: true });
-        await sdk.ready();
+        await waitForSdkReady(sdk);
         prefetchResources();
         if (!assetWarmupPromise) {
           assetWarmupPromise = warmupAssets().catch((error) => {
