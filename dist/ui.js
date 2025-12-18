@@ -94,15 +94,30 @@
     throw lastError || new Error('Failed to load Azure DevOps SDK.');
   };
 
-  const waitForSdkReady = async (sdk) => {
+  const waitForSdkReady = async (sdk, timeoutMs = 5000) => {
     if (!sdk?.ready) {
       return;
     }
 
     await new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error('Timed out waiting for Azure DevOps host to respond.'));
+      }, timeoutMs);
+
       try {
-        sdk.ready(resolve);
+        sdk.ready(() => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        });
       } catch (error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         reject(error);
       }
     });
@@ -693,10 +708,10 @@
       sdk.notifyLoadSucceeded();
     } catch (error) {
       console.error('Failed to initialize extension frame', error);
-      setStatus(
-        'Failed to initialize extension frame. Check extension permissions and reload, or copy the template below.',
-        true
-      );
+      const fallbackMessage = /Timed out waiting for Azure DevOps host/i.test(error?.message || '')
+        ? 'Could not connect to the Azure DevOps host. If you opened this page directly, use the form to generate the YAML and copy it below.'
+        : 'Failed to initialize extension frame. Check extension permissions and reload, or copy the template below.';
+      setStatus(fallbackMessage, true);
       const sdk = normalizeSdk(window.VSS || window.parent?.VSS);
       sdk?.notifyLoadFailed?.(error?.message || 'Initialization failed');
     } finally {
