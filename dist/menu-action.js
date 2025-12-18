@@ -82,6 +82,28 @@ const loadVssSdk = async () => {
   throw lastError || new Error('Failed to load Azure DevOps SDK.');
 };
 
+const warmupAssets = async () => {
+  const assets = [
+    new URL('./index.html', window.location.href).toString(),
+    new URL('./ui.js', window.location.href).toString(),
+    new URL('./styles.css', window.location.href).toString(),
+    new URL('./lib/VSS.SDK.min.js', window.location.href).toString()
+  ];
+
+  await Promise.all(
+    assets.map(async (href) => {
+      try {
+        const res = await fetch(href, { cache: 'force-cache', mode: 'no-cors' });
+        if (!res || (res.type === 'opaque' ? false : !res.ok)) {
+          return;
+        }
+      } catch (error) {
+        console.warn('Failed to warm up asset', href, error);
+      }
+    })
+  );
+};
+
 const prefetchResources = () => {
   const resources = [
     { href: new URL('./index.html', window.location.href).toString(), as: 'document' },
@@ -215,6 +237,7 @@ const openGenerator = async (context) => {
 
 const initializeAction = () => {
   let sdkInitPromise;
+  let assetWarmupPromise;
 
   const ensureSdkReady = () => {
     if (!sdkInitPromise) {
@@ -223,6 +246,12 @@ const initializeAction = () => {
         sdk.init({ usePlatformScripts: true, explicitNotifyLoaded: true });
         await sdk.ready();
         prefetchResources();
+        if (!assetWarmupPromise) {
+          assetWarmupPromise = warmupAssets().catch((error) => {
+            console.warn('Asset warmup failed', error);
+            return undefined;
+          });
+        }
         sdk.notifyLoadSucceeded();
         return sdk;
       })().catch((error) => {
@@ -243,6 +272,9 @@ const initializeAction = () => {
     sdk.register('generate-pipeline-action', {
       execute: async (context) => {
         await ensureSdkReady();
+        if (assetWarmupPromise) {
+          await assetWarmupPromise.catch(() => {});
+        }
         await openGenerator(context);
       }
     });
