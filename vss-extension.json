@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "pipeline-generator",
   "publisher": "localdev",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "name": "Pipeline Generator",
   "description": "Add a Generate Pipeline button next to each branch to bootstrap pipeline repositories.",
   "public": false,
@@ -37,7 +37,7 @@
     { "id": "Microsoft.VisualStudio.Services.Cloud" },
     { "id": "Microsoft.TeamFoundation.Server", "version": "[16.0,20.0)" }
   ],
-  "scopes": ["vso.code", "vso.project", "vso.release", "vso.build"],
+  "scopes": ["vso.code", "vso.code_manage", "vso.project", "vso.release", "vso.build"],
   "links": {
     "getstarted": {
       "uri": "https://learn.microsoft.com/azure/devops/extend/get-started/node"
