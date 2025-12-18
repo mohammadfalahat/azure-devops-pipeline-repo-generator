@@ -269,24 +269,32 @@ const initializeAction = () => {
   };
 
   const registerAction = async () => {
-    const sdk = normalizeSdk(window.VSS || window.parent?.VSS);
+    let readySdk;
+    try {
+      readySdk = await ensureSdkReady();
+    } catch (error) {
+      console.error('Failed to initialize SDK before registering action', error);
+      return false;
+    }
+
+    const sdk = normalizeSdk(window.VSS || window.parent?.VSS || readySdk);
     if (!sdk?.register) {
+      console.error('Azure DevOps SDK did not expose register after initialization');
       return false;
     }
 
     const action = {
       execute: async (context) => {
-        const readySdk = await ensureSdkReady();
+        const sdkInstance = await ensureSdkReady();
         if (assetWarmupPromise) {
           await assetWarmupPromise.catch(() => {});
         }
         await openGenerator(context);
-        readySdk.notifyLoadSucceeded?.();
+        sdkInstance.notifyLoadSucceeded?.();
       }
     };
 
     try {
-      const readySdk = await ensureSdkReady();
       sdk.register('generate-pipeline-action', action);
       readySdk.notifyLoadSucceeded?.();
     } catch (error) {
