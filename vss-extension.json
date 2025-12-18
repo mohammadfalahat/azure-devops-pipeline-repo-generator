@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "pipeline-generator",
   "publisher": "localdev",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "name": "Pipeline Generator",
   "description": "Add a Generate Pipeline button next to each branch to bootstrap pipeline repositories.",
   "public": false,
@@ -25,7 +25,12 @@
         "ms.vss-code-web.git-branches-toolbar-menu",
         "ms.vss-code-web.repository-branches-menu",
         "ms.vss-code-web.repository-branches-tree-menu",
-        "ms.vss-code-web.repository-branches-toolbar-menu"
+        "ms.vss-code-web.repository-branches-toolbar-menu",
+        "ms.vss-code-web.repository-branches-list-menu",
+        "ms.vss-code-web.repository-branches-list-toolbar-menu",
+        "ms.vss-code-web.vc-branches-menu",
+        "ms.vss-code-web.vc-branches-tree-menu",
+        "ms.vss-code-web.vc-branches-toolbar-menu"
       ],
       "properties": {
         "text": "Generate pipeline",
