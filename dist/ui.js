@@ -445,9 +445,16 @@
 
   const normalizeName = (value) => value?.toString().trim().toLowerCase();
 
+  const extractRepositoryName = (value) => {
+    if (!value) return '';
+    const segments = value.split('/').filter(Boolean);
+    return segments.length ? segments[segments.length - 1] : value;
+  };
+
   const setServiceNameFromRepository = (name, projectName) => {
-    if (!serviceInput || !name) return;
-    const normalizedTarget = normalizeName(name);
+    if (!serviceInput) return;
+    const targetName = extractRepositoryName(name) || projectName;
+    const normalizedTarget = normalizeName(targetName);
     if (!normalizedTarget) return;
 
     const currentValue = normalizeName(serviceInput.value);
