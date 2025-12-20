@@ -73,7 +73,11 @@
     const hostSdk = `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`;
     const localSdk = new URL('./lib/VSS.SDK.min.js', window.location.href).toString();
     const localSdkFallback = new URL('./lib/VSS.SDK.js', window.location.href).toString();
-    const candidates = [hostSdk, localSdk, localSdkFallback];
+    // Prefer bundled SDK assets first because some Azure DevOps hosts block direct downloads
+    // of the platform SDK (e.g., returning an HTML login page with a text/html MIME type).
+    // Trying local files first avoids those MIME-type failures while keeping the host SDK
+    // as a last-resort option for environments that rely on it being served directly.
+    const candidates = [localSdk, localSdkFallback, hostSdk];
 
     let lastError;
     for (const src of candidates) {
