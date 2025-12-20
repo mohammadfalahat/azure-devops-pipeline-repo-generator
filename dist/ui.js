@@ -349,7 +349,7 @@
       if (state.accessTokenError) {
         const needsHostAuth = /HostAuthorizationNotFound/i.test(state.accessTokenError);
         authMessage = needsHostAuth
-          ? 'Azure DevOps could not issue an access token because host authorization was not found. Confirm the extension is installed for this organization/project and that your account can access it, then relaunch the generator.'
+          ? 'Azure DevOps could not issue an access token because host authorization was not found. Confirm the extension is installed and enabled for this collection/project (Organization/Collection settings → Extensions → Manage) and that your account can access it, then relaunch the generator.'
           : `Azure DevOps did not provide an access token (${state.accessTokenError}). Refresh the page or sign in again, then relaunch the generator.`;
       } else {
         authMessage = 'Loaded context from branch action but still waiting for an access token from Azure DevOps. Refresh or try again if this persists.';
@@ -752,7 +752,11 @@
       addOrigin(window.location.origin);
       addOrigin(document.referrer);
       if (window.location.ancestorOrigins) {
-        window.location.ancestorOrigins.forEach(addOrigin);
+        const ancestors =
+          typeof window.location.ancestorOrigins.forEach === 'function'
+            ? window.location.ancestorOrigins
+            : Array.from(window.location.ancestorOrigins);
+        ancestors.forEach(addOrigin);
       }
       if (candidateOrigins.size === 0) return false;
 

@@ -129,6 +129,29 @@ the upload:
    extension validation errors—they often include the specific manifest or file
    issues that the public API hides behind the generic message.
 
+## Troubleshooting access token errors on Azure DevOps Server
+
+The extension depends on the host page to issue a scoped access token. On some
+on-premises Azure DevOps Server deployments the token API can return HTTP 500
+with `HostAuthorizationNotFound` even for collection administrators. To unblock
+the generator:
+
+1. Open **Organization/Collection settings** → **Extensions** → **Manage** and
+   confirm the Pipeline Repo Generator extension is **installed** and **enabled**
+   for the current collection and project. If it is disabled, enable it and
+   retry the branch action.
+2. If the extension shows as installed but still fails, click **Manage** on the
+   extension details page and ensure the project you are using is selected.
+   Removing and re-adding the project can refresh the host authorization entry
+   that Azure DevOps uses to issue access tokens.
+3. If the Manage view already shows your project, toggle the extension to
+   disabled, re-enable it, then reload the Repos page. If that still fails,
+   uninstall and reinstall the VSIX so Azure DevOps recreates the host
+   authorization record for the collection/project.
+4. After updating the extension permissions, reload the Repos page and relaunch
+   the generator. If the error persists, sign out and back in to refresh the
+   host session.
+
 ## Local service hook testing (on-premises friendly)
 
 The Azure DevOps service hook samples (see [official docs](https://learn.microsoft.com/azure/devops/extend/develop/add-service-hook))
