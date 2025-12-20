@@ -188,9 +188,38 @@ const getProject = (context) =>
   getRepository(context)?.project ||
   VSS.getWebContext?.()?.project;
 
+const normalizeRepositoryName = (name) => {
+  if (!name) return undefined;
+  try {
+    return decodeURIComponent(name).trim().toLowerCase();
+  } catch (error) {
+    return name.trim().toLowerCase();
+  }
+};
+
 const getRepositoryNameFromUrl = () => {
   const match = window.location.pathname.match(/\/[_]git\/([^/?]+)/i);
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  return normalizeRepositoryName(match?.[1]);
+};
+
+const getRepositoryName = (context) => {
+  const actionContext = getActionContext(context);
+  const repository = getRepository(actionContext);
+  const candidates = [
+    actionContext?.repositoryName,
+    actionContext?.repoName,
+    repository?.name,
+    VSS.getWebContext?.()?.repository?.name,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeRepositoryName(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return getRepositoryNameFromUrl();
 };
 
 const getRepository = (context) =>
@@ -320,7 +349,7 @@ const openGenerator = async (context, sdk) => {
     const branchName = getBranchName(actionContext);
     const project = getProject(actionContext);
     const repoId = repository?.id;
-    const repoName = repository?.name || getRepositoryNameFromUrl();
+    const repoName = getRepositoryName(actionContext);
     const projectId = project?.id || actionContext?.projectId;
     const projectName = project?.name || projectId;
     const extContext = VSS.getExtensionContext?.();
