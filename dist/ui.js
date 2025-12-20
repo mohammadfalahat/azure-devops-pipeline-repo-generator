@@ -735,7 +735,8 @@
 
   const buildPipelineYaml = (payload, options = {}) => {
     const sourceBranchName = (options.sourceBranch || 'main').replace(/^refs\/heads\//, '');
-    const projectRepoName = `${options.projectName || 'PROJECTNAME'}/${options.repositoryName || 'REPONAME'}`;
+    const sourceRepositoryName = options.repositoryName || options.sourceRepositoryName || 'REPONAME';
+    const projectRepoName = `${options.projectName || 'PROJECTNAME'}/${sourceRepositoryName}`;
     return [
       "trigger: none                      # always none",
       '',
@@ -790,7 +791,8 @@
     const yaml = buildPipelineYaml(payload, {
       sourceBranch: state.sourceBranch,
       projectName: state.projectName,
-      repositoryName: state.repositoryName
+      repositoryName: state.repositoryName,
+      sourceRepositoryName: state.repositoryName || state.projectName
     });
 
     setStatus('Generating pipeline template...');
@@ -869,7 +871,7 @@
     } catch (error) {
       console.error(error);
       const unauthorizedMessage =
-        'Automatic pipeline creation failed: access was denied. Please sign in with an account that can create pipelines in this project and try again from Azure DevOps.';
+        'Automatic pipeline creation failed: access was denied. Even administrators can be blocked by project policies—verify that pipeline creation is allowed for your account in this project and try again from Azure DevOps.';
       const detailMessage = error?.message ? `Automatic pipeline creation failed: ${error.message}` : 'Automatic pipeline creation failed.';
       setStatus(isUnauthorizedError(error) ? unauthorizedMessage : detailMessage, true);
     }
