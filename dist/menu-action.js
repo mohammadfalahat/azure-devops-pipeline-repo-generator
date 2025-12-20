@@ -236,6 +236,14 @@ const getBranchName = (context) => {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const normalizeAccessTokenError = (error) => {
+  const message = error?.message || 'Unknown Azure DevOps authentication error';
+  if (/HostAuthorizationNotFound/i.test(message)) {
+    return 'Host authorization was not found. Ensure the extension is enabled for this collection/project and that your account can access it.';
+  }
+  return message;
+};
+
 const getAccessTokenWithRetry = async (sdk, maxAttempts = 3, delayMs = 800) => {
   if (!sdk?.getAccessToken) {
     return undefined;
@@ -251,6 +259,15 @@ const getAccessTokenWithRetry = async (sdk, maxAttempts = 3, delayMs = 800) => {
       lastError = new Error('Azure DevOps returned an empty access token.');
     } catch (error) {
       lastError = error;
+
+      // Some Azure DevOps Server instances may respond with an internal
+      // error (HTTP 500) from the WebPlatformAuth SessionToken endpoint
+      // when an access token cannot be issued. Retrying those responses
+      // only generates more noisy 500 logs without succeeding, so stop
+      // immediately and surface the error to the UI instead.
+      if (error?.status === 500) {
+        break;
+      }
     }
 
     if (attempt < maxAttempts) {
@@ -322,7 +339,7 @@ const openGenerator = async (context, sdk) => {
       accessToken = await getAccessTokenWithRetry(sdk);
     } catch (tokenError) {
       console.warn('Could not acquire access token before opening generator', tokenError);
-      accessTokenError = tokenError?.message || 'Unknown Azure DevOps authentication error';
+      accessTokenError = normalizeAccessTokenError(tokenError);
     }
 
     const bootstrapPayload = {
