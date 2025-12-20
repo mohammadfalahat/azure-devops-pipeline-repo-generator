@@ -181,7 +181,8 @@
     projectName: null,
     repoId: null,
     repositoryName: null,
-    branch: null
+    branch: SCAFFOLD_BRANCH,
+    sourceBranch: null
   };
   let initializationPromise;
 
@@ -333,7 +334,8 @@
     } = payload;
 
     const normalizedHost = (hostUri || state.hostUri || getHostBase()).replace(/\/+$/, '') + '/';
-    state.branch = branch || state.branch;
+    state.sourceBranch = branch || state.sourceBranch;
+    state.branch = SCAFFOLD_BRANCH;
     state.projectId = projectId || state.projectId;
     state.projectName = projectName || state.projectName;
     state.repoId = repoId || state.repoId;
@@ -343,7 +345,14 @@
     state.accessTokenError = accessTokenError || state.accessTokenError;
 
     const targetBranch = state.branch;
-    branchLabel.textContent = targetBranch ? `Target branch: ${targetBranch}` : 'Loading branch context...';
+    const sourceBranch = state.sourceBranch;
+    const branchDescriptor =
+      sourceBranch && sourceBranch !== targetBranch
+        ? `${targetBranch} (source: ${sourceBranch})`
+        : targetBranch;
+    branchLabel.textContent = branchDescriptor
+      ? `Target branch: ${branchDescriptor}`
+      : 'Loading branch context...';
     if (branchInput && targetBranch) {
       branchInput.value = targetBranch;
       branchInput.disabled = true;
@@ -353,7 +362,7 @@
     if (!serviceInput.value) {
       setServiceNameFromRepository(state.repositoryName || state.projectName);
     }
-    applyDetectedEnvironment(targetBranch);
+    applyDetectedEnvironment(sourceBranch || targetBranch);
     setKomodoServerFromEnvironment(environmentSelect?.value);
 
     if (!state.projectId || !state.accessToken || !state.hostUri) {
@@ -531,6 +540,25 @@
     return createRes.json();
   };
 
+  const ensureDefaultBranch = async ({ hostUri, projectId, repoId, branchName, accessToken }) => {
+    const defaultBranch = `refs/heads/${branchName}`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}?api-version=6.0`;
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        ...authHeaders(accessToken),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ defaultBranch })
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to set default branch (${res.status})`);
+    }
+
+    return res.json();
+  };
+
   const postScaffold = async ({
     hostUri,
     projectId,
@@ -683,6 +711,7 @@
         accessToken: state.accessToken
       });
       const targetBranch = SCAFFOLD_BRANCH;
+      state.branch = targetBranch;
       await postScaffold({
         hostUri: state.hostUri,
         projectId: state.projectId,
@@ -691,6 +720,13 @@
         accessToken: state.accessToken,
         content: yaml,
         pipelineFilename
+      });
+      await ensureDefaultBranch({
+        hostUri: state.hostUri,
+        projectId: state.projectId,
+        repoId: repo.id,
+        branchName: targetBranch,
+        accessToken: state.accessToken
       });
       setStatus(
         `Repository ${repo.name} is ready with ${pipelineFilename} on ${targetBranch}.`,
@@ -805,16 +841,18 @@
     // VSS handshake errors.
     const shouldAttemptSdk = isFramed && hostLooksLikeAzureDevOps;
 
-    state.branch = initialBranch;
+    state.sourceBranch = initialBranch;
     state.projectId = projectIdFromQuery;
     state.projectName = projectNameFromQuery;
     state.repoId = repoIdFromQuery;
     state.repositoryName = repoNameFromQuery;
     state.hostUri = `${getHostBase().replace(/\/+$/, '')}/`;
 
-    branchLabel.textContent = branchFromQuery ? `Target branch: ${initialBranch}` : 'Loading branch context...';
+    branchLabel.textContent = branchFromQuery
+      ? `Target branch: ${SCAFFOLD_BRANCH} (source: ${initialBranch})`
+      : 'Loading branch context...';
     if (branchInput && branchFromQuery) {
-      branchInput.value = initialBranch;
+      branchInput.value = SCAFFOLD_BRANCH;
       branchInput.disabled = true;
     }
     targetRepoInput.value = `${sanitizeProjectName(projectNameFromQuery || 'project')}_Azure_DevOps`;
@@ -841,7 +879,7 @@
         branchFromQuery ||
         context?.repository?.defaultBranch?.replace(/^refs\/heads\//, '') ||
         '(unknown branch)';
-      state.branch = branch;
+      state.sourceBranch = branch;
 
       const projectId = projectIdFromQuery || context?.project?.id;
       const projectName = projectNameFromQuery || context?.project?.name || projectId;
@@ -853,9 +891,9 @@
       state.repoId = repoId;
       state.repositoryName = repositoryName;
 
-      branchLabel.textContent = `Target branch: ${branch}`;
+      branchLabel.textContent = `Target branch: ${SCAFFOLD_BRANCH} (source: ${branch})`;
       if (branchInput) {
-        branchInput.value = branch;
+        branchInput.value = SCAFFOLD_BRANCH;
         branchInput.disabled = true;
       }
       targetRepoInput.value = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
