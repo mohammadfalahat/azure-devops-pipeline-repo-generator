@@ -209,6 +209,33 @@ const getBranchName = (context) => {
   return normalizeBranchName(fallbackBranch) || normalizeBranchName(branchFromWebContext) || 'Unknown branch';
 };
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getAccessTokenWithRetry = async (sdk, maxAttempts = 3, delayMs = 800) => {
+  if (!sdk?.getAccessToken) {
+    return undefined;
+  }
+
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const token = await sdk.getAccessToken();
+      if (token) {
+        return token;
+      }
+      lastError = new Error('Azure DevOps returned an empty access token.');
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < maxAttempts) {
+      await delay(delayMs * attempt);
+    }
+  }
+
+  throw lastError;
+};
+
 const postBootstrapMessage = (targetWindow, targetOrigin, payload) => {
   if (!targetWindow || !targetOrigin) return;
 
@@ -266,7 +293,7 @@ const openGenerator = async (context, sdk) => {
     const hostUri = (VSS.getWebContext?.()?.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
     let accessToken;
     try {
-      accessToken = await sdk.getAccessToken?.();
+      accessToken = await getAccessTokenWithRetry(sdk);
     } catch (tokenError) {
       console.warn('Could not acquire access token before opening generator', tokenError);
     }
