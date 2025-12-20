@@ -680,18 +680,18 @@
         projectName: state.projectName,
         accessToken: state.accessToken
       });
-      const defaultBranch = repo.defaultBranch?.replace(/^refs\/heads\//, '') || state.branch || 'main';
+      const targetBranch = 'main';
       await postScaffold({
         hostUri: state.hostUri,
         projectId: state.projectId,
         repoId: repo.id,
-        branch: defaultBranch,
+        branch: targetBranch,
         accessToken: state.accessToken,
         content: yaml,
         pipelineFilename
       });
       setStatus(
-        `Repository ${repo.name} is ready with ${pipelineFilename} on ${defaultBranch}.`,
+        `Repository ${repo.name} is ready with ${pipelineFilename} on ${targetBranch}.`,
         false
       );
     } catch (error) {
