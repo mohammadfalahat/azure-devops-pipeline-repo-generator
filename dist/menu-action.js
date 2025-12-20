@@ -145,8 +145,8 @@ const warmupAssets = async () => {
 };
 
 const prefetchResources = () => {
+  // Preload only assets with a supported `as` value to avoid browser warnings.
   const resources = [
-    { href: new URL('./index.html', window.location.href).toString(), as: 'document' },
     { href: new URL('./ui.js', window.location.href).toString(), as: 'script' },
     { href: new URL('./styles.css', window.location.href).toString(), as: 'style' },
     { href: new URL('./lib/VSS.SDK.min.js', window.location.href).toString(), as: 'script' }
@@ -317,10 +317,12 @@ const openGenerator = async (context, sdk) => {
 
     const hostUri = (VSS.getWebContext?.()?.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
     let accessToken;
+    let accessTokenError;
     try {
       accessToken = await getAccessTokenWithRetry(sdk);
     } catch (tokenError) {
       console.warn('Could not acquire access token before opening generator', tokenError);
+      accessTokenError = tokenError?.message || 'Unknown Azure DevOps authentication error';
     }
 
     const bootstrapPayload = {
@@ -330,7 +332,8 @@ const openGenerator = async (context, sdk) => {
       repoId,
       repoName,
       hostUri,
-      accessToken
+      accessToken,
+      accessTokenError
     };
 
     try {

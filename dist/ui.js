@@ -173,6 +173,7 @@
   const state = {
     sdk: null,
     accessToken: null,
+    accessTokenError: null,
     hostUri: null,
     projectId: null,
     projectName: null,
@@ -315,7 +316,8 @@
       repoId,
       repoName,
       hostUri,
-      accessToken
+      accessToken,
+      accessTokenError
     } = payload;
 
     const normalizedHost = (hostUri || state.hostUri || getHostBase()).replace(/\/+$/, '') + '/';
@@ -326,6 +328,7 @@
     state.repositoryName = repoName || state.repositoryName;
     state.hostUri = normalizedHost;
     state.accessToken = accessToken || state.accessToken;
+    state.accessTokenError = accessTokenError || state.accessTokenError;
 
     const targetBranch = state.branch;
     branchLabel.textContent = targetBranch ? `Target branch: ${targetBranch}` : 'Loading branch context...';
@@ -342,7 +345,10 @@
     setKomodoServerFromEnvironment(environmentSelect?.value);
 
     if (!state.projectId || !state.accessToken || !state.hostUri) {
-      setStatus('Loaded context from branch action. Waiting for Azure DevOps host to provide an access token...', true);
+      const authMessage = state.accessTokenError
+        ? `Azure DevOps did not provide an access token (${state.accessTokenError}). Refresh the page or sign in again, then relaunch the generator.`
+        : 'Loaded context from branch action but still waiting for an access token from Azure DevOps. Refresh or try again if this persists.';
+      setStatus(authMessage, true);
       setSubmitting(false);
       return;
     }
