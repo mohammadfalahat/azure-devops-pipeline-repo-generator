@@ -8,8 +8,28 @@ const getHostBase = () => {
   return `${referrer.origin}${hasTfsVirtualDir ? '/tfs' : ''}`;
 };
 
-const loadScript = (src) =>
-  new Promise((resolve, reject) => {
+const loadScript = async (src) => {
+  let contentTypeError;
+  try {
+    const response = await fetch(src, { credentials: 'include', cache: 'no-cache', redirect: 'follow' });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const contentType = response.headers.get('content-type')?.toLowerCase() || '';
+    const isJavaScript = /javascript|ecmascript|ms-vssweb/.test(contentType);
+    if (contentType && !isJavaScript) {
+      contentTypeError = new Error(`Unexpected content type ${contentType}`);
+      throw contentTypeError;
+    }
+  } catch (error) {
+    if (contentTypeError) {
+      throw new Error(`Blocked Azure DevOps SDK from ${src}: ${contentTypeError.message}`);
+    }
+    console.warn('Skipping preflight validation failure, trying script tag load next', src, error);
+  }
+
+  return new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.src = src;
     script.async = false;
@@ -18,6 +38,7 @@ const loadScript = (src) =>
     script.onerror = () => reject(new Error(`Failed to load Azure DevOps SDK from ${src}`));
     document.head.appendChild(script);
   });
+};
 
 const hasCoreSdkApis = (sdk) =>
   Boolean(sdk && sdk.init && sdk.ready && sdk.getService && (sdk.getWebContext || sdk.getHostContext));
@@ -65,7 +86,11 @@ const loadVssSdk = async () => {
   const hostSdk = `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`;
   const localSdk = new URL('./lib/VSS.SDK.min.js', window.location.href).toString();
   const localSdkFallback = new URL('./lib/VSS.SDK.js', window.location.href).toString();
-  const candidates = [hostSdk, localSdk, localSdkFallback];
+  // Prefer bundled SDK assets first because some Azure DevOps hosts block direct downloads
+  // of the platform SDK (e.g., returning an HTML login page with a text/html MIME type).
+  // Trying local files first avoids those MIME-type failures while keeping the host SDK
+  // as a last-resort option for environments that rely on it being served directly.
+  const candidates = [localSdk, localSdkFallback, hostSdk];
 
   let lastError;
   for (const src of candidates) {
