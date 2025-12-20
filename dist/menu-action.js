@@ -198,8 +198,18 @@ const normalizeRepositoryName = (name) => {
 };
 
 const getRepositoryNameFromUrl = () => {
-  const match = window.location.pathname.match(/\/[_]git\/([^/?]+)/i);
-  return normalizeRepositoryName(match?.[1]);
+  const extractFrom = (url) => {
+    if (!url) return undefined;
+    try {
+      const { pathname } = new URL(url, window.location.origin);
+      const match = pathname.match(/\/[_]git\/([^/?]+)/i);
+      return normalizeRepositoryName(match?.[1]);
+    } catch {
+      return undefined;
+    }
+  };
+
+  return extractFrom(window.location.href) || extractFrom(document.referrer);
 };
 
 const getRepositoryName = (context) => {
