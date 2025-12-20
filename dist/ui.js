@@ -94,7 +94,7 @@
     throw lastError || new Error('Failed to load Azure DevOps SDK.');
   };
 
-  const waitForSdkReady = async (sdk, timeoutMs = 5000) => {
+  const waitForSdkReady = async (sdk, timeoutMs = 15000) => {
     if (!sdk?.ready) {
       return;
     }
