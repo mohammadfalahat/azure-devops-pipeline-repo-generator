@@ -326,16 +326,20 @@
   const sanitizeProjectName = (name) => name.replace(/[^A-Za-z0-9]/g, '_');
 
   const slugifyName = (value, fallback) => {
-    const slug = value?.toString().trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const slug = value
+      ?.toString()
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '_')
+      .replace(/^[-_]+|[-_]+$/g, '');
     return slug || fallback;
   };
 
-  const buildPipelineFilename = ({ projectName, repositoryName, environment }) => {
+  const buildPipelineFilename = ({ projectName, repositoryName, branchName }) => {
     const projectSlug = slugifyName(projectName, 'project');
     const repoSlug = slugifyName(repositoryName || projectName, 'repo');
-    const environmentSlug = slugifyName(environment, 'env');
-    const repoFolder = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
-    return `${repoFolder}/${projectSlug}-${repoSlug}-${environmentSlug}.yml`;
+    const branchSlug = slugifyName(branchName?.replace(/^refs\/heads\//, ''), 'branch');
+    return `${projectSlug}-${repoSlug}-${branchSlug}.yml`;
   };
 
   const buildPipelineName = ({ projectName, repositoryName, environment }) => {
@@ -600,7 +604,7 @@
     branch,
     accessToken,
     content,
-    pipelineFilename = 'pipeline-template.yml'
+    pipelineFilename = 'project-repo-branch.yml'
   }) => {
     const branchName = SCAFFOLD_BRANCH;
     const branchRef = `refs/heads/${branchName}`;
@@ -738,7 +742,7 @@
 
   const buildPipelineYaml = (payload, options = {}) => {
     const sourceBranchName = (options.sourceBranch || 'main').replace(/^refs\/heads\//, '');
-    const sourceRepositoryName = options.repositoryName || options.sourceRepositoryName || 'REPONAME';
+    const sourceRepositoryName = options.repositoryName || options.sourceRepositoryName || 'repository';
     const projectRepoName = `${options.projectName || 'PROJECTNAME'}/${sourceRepositoryName}`;
     return [
       "trigger: none                      # always none",
@@ -820,7 +824,7 @@
     const pipelineFilename = buildPipelineFilename({
       projectName: state.projectName,
       repositoryName: state.repositoryName,
-      environment: payload.environment
+      branchName: state.sourceBranch || payload.environment
     });
     const pipelineName = buildPipelineName({
       projectName: state.projectName,
@@ -1021,7 +1025,7 @@
       const projectId = projectIdFromQuery || context?.project?.id;
       const projectName = projectNameFromQuery || context?.project?.name || projectId;
       const repoId = repoIdFromQuery || context?.repository?.id;
-      const repositoryName = repoNameFromQuery || context?.repository?.name;
+      let repositoryName = repoNameFromQuery || context?.repository?.name;
       state.sdk = sdk;
       state.projectId = projectId;
       state.projectName = projectName;
@@ -1053,6 +1057,21 @@
       try {
         accessToken = await getAccessTokenFromSdk(sdk);
         state.accessToken = accessToken;
+        if (!repositoryName && repoId) {
+          try {
+            const repoUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${encodeURIComponent(
+              repoId
+            )}?api-version=6.0`;
+            const repoRes = await fetch(repoUrl, { headers: authHeaders(accessToken) });
+            if (repoRes.ok) {
+              const repoPayload = await repoRes.json();
+              repositoryName = repoPayload?.name || repositoryName;
+              state.repositoryName = repositoryName;
+            }
+          } catch (repoError) {
+            console.warn('Failed to fetch repository metadata', repoError);
+          }
+        }
         await Promise.all([
           loadPools({ hostUri, projectId, accessToken }),
           loadContainerRegistries({ hostUri, projectId, accessToken }),

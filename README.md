@@ -14,7 +14,7 @@ The extension uses the scoped Azure DevOps access token provided by the host pag
 
 The manifest scopes include `vso.code_manage` so the extension can create repositories on behalf of the signed-in user (who must also have **Create repository** permission in the project).
 
-Submitting the form ensures a shared repository named `SANITIZEDPROJECTNAME_Azure_DevOps` exists in the current project. If it does not, the extension creates it and pushes a `pipeline-template.yml` containing the submitted settings.
+Submitting the form ensures a shared repository named `SANITIZEDPROJECTNAME_Azure_DevOps` exists in the current project. If it does not, the extension creates it and pushes a YAML template named `lowercase(projectname-reponame-branchname.yml)` (derived from the source branch) containing the submitted settings.
 
 The branch action targets both the legacy (`git-branches-*`) and the newer repository branches menus to tolerate Azure DevOps UI updates where a single menu surface might go missing.
 
