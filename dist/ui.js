@@ -346,7 +346,10 @@
   };
 
   const isUnauthorizedError = (error) =>
-    error?.status === 401 || /TF400813/i.test(error?.detail || '') || /\b401\b/.test(error?.message || '');
+    error?.status === 401 ||
+    error?.status === 403 ||
+    /TF400813/i.test(error?.detail || '') ||
+    /\b401\b/.test(error?.message || '');
 
   const applyBootstrapPayload = async (payload = {}, source = 'message') => {
     const {
@@ -735,7 +738,8 @@
 
   const buildPipelineYaml = (payload, options = {}) => {
     const sourceBranchName = (options.sourceBranch || 'main').replace(/^refs\/heads\//, '');
-    const projectRepoName = `${options.projectName || 'PROJECTNAME'}/${options.repositoryName || 'REPONAME'}`;
+    const sourceRepositoryName = options.repositoryName || options.sourceRepositoryName || 'REPONAME';
+    const projectRepoName = `${options.projectName || 'PROJECTNAME'}/${sourceRepositoryName}`;
     return [
       "trigger: none                      # always none",
       '',
@@ -790,7 +794,8 @@
     const yaml = buildPipelineYaml(payload, {
       sourceBranch: state.sourceBranch,
       projectName: state.projectName,
-      repositoryName: state.repositoryName
+      repositoryName: state.repositoryName,
+      sourceRepositoryName: state.repositoryName || state.projectName
     });
 
     setStatus('Generating pipeline template...');
@@ -829,6 +834,7 @@
       return yaml;
     }
 
+    const targetBranch = SCAFFOLD_BRANCH;
     try {
       const repo = await ensureRepo({
         hostUri: state.hostUri,
@@ -836,7 +842,6 @@
         projectName: state.projectName,
         accessToken: state.accessToken
       });
-      const targetBranch = SCAFFOLD_BRANCH;
       state.branch = targetBranch;
       await postScaffold({
         hostUri: state.hostUri,
@@ -868,8 +873,13 @@
       window.location.href = `${state.hostUri}${encodeURIComponent(state.projectId)}/_build`;
     } catch (error) {
       console.error(error);
+      const detail = sanitizeErrorDetail(error?.detail || error?.message || '');
+      const manualPath = `/${pipelineFilename}`;
       const unauthorizedMessage =
-        'Automatic pipeline creation failed: access was denied. Please sign in with an account that can create pipelines in this project and try again from Azure DevOps.';
+        `Automatic pipeline creation failed: access was denied${detail ? ` (${detail})` : ''}. ` +
+        `${state.accessToken ? 'The token from Azure DevOps may not include pipeline creation rights for this project.' : 'Open the extension from Azure DevOps so we can request a project-scoped token with pipeline creation rights.'} ` +
+        `You can still create the pipeline manually with the generated YAML at ${manualPath}: ` +
+        `Pipelines > New pipeline > Azure Repos Git > Existing Azure Pipelines YAML, then select branch '${targetBranch}' and path '${manualPath}'.`;
       const detailMessage = error?.message ? `Automatic pipeline creation failed: ${error.message}` : 'Automatic pipeline creation failed.';
       setStatus(isUnauthorizedError(error) ? unauthorizedMessage : detailMessage, true);
     }
