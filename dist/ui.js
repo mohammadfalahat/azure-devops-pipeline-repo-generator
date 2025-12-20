@@ -393,9 +393,7 @@
     }
 
     targetRepoInput.value = `${sanitizeProjectName(state.projectName || 'project')}_Azure_DevOps`;
-    if (!serviceInput.value) {
-      setServiceNameFromRepository(state.repositoryName || state.projectName);
-    }
+    setServiceNameFromRepository(state.repositoryName || state.projectName, state.projectName);
     applyDetectedEnvironment(sourceBranch || targetBranch);
     setKomodoServerFromEnvironment(environmentSelect?.value);
 
@@ -439,11 +437,19 @@
     }
   };
 
-  const setServiceNameFromRepository = (name) => {
+  const normalizeName = (value) => value?.toString().trim().toLowerCase();
+
+  const setServiceNameFromRepository = (name, projectName) => {
     if (!serviceInput || !name) return;
-    const normalized = name.toString().trim().toLowerCase();
-    if (normalized) {
-      serviceInput.value = normalized;
+    const normalizedTarget = normalizeName(name);
+    if (!normalizedTarget) return;
+
+    const currentValue = normalizeName(serviceInput.value);
+    const projectDefault = normalizeName(projectName);
+    const shouldUpdate = !currentValue || (projectDefault && currentValue === projectDefault);
+
+    if (shouldUpdate) {
+      serviceInput.value = normalizedTarget;
     }
   };
 
@@ -997,7 +1003,7 @@
       branchInput.disabled = true;
     }
     targetRepoInput.value = `${sanitizeProjectName(projectNameFromQuery || 'project')}_Azure_DevOps`;
-    setServiceNameFromRepository(repoNameFromQuery || projectNameFromQuery);
+    setServiceNameFromRepository(repoNameFromQuery || projectNameFromQuery, projectNameFromQuery);
     applyDetectedEnvironment(initialBranch);
     const hasHostContext = Boolean(isFramed && (hasReferrer || projectIdFromQuery || repoIdFromQuery || hasOpener));
     if (!hasHostContext || !shouldAttemptSdk) {
@@ -1038,9 +1044,7 @@
         branchInput.disabled = true;
       }
       targetRepoInput.value = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
-      if (!serviceInput.value) {
-        setServiceNameFromRepository(repositoryName || projectName);
-      }
+      setServiceNameFromRepository(repositoryName || projectName, projectName);
       applyDetectedEnvironment(branch);
       setKomodoServerFromEnvironment(environmentSelect?.value);
 
@@ -1067,6 +1071,7 @@
               const repoPayload = await repoRes.json();
               repositoryName = repoPayload?.name || repositoryName;
               state.repositoryName = repositoryName;
+              setServiceNameFromRepository(repositoryName, projectName);
             }
           } catch (repoError) {
             console.warn('Failed to fetch repository metadata', repoError);
