@@ -708,7 +708,45 @@
     const hasReferrer = Boolean(document.referrer);
     const isFramed = window.parent !== window;
     const hasOpener = Boolean(window.opener);
-    const shouldAttemptSdk = hasReferrer || isFramed || hasOpener;
+
+    const hostLooksLikeAzureDevOps = (() => {
+      const candidateOrigins = new Set();
+      const addOrigin = (value) => {
+        try {
+          if (value) {
+            candidateOrigins.add(new URL(value).origin);
+          }
+        } catch {
+          /* ignore invalid URLs */
+        }
+      };
+
+      addOrigin(window.location.origin);
+      addOrigin(document.referrer);
+      if (window.location.ancestorOrigins) {
+        window.location.ancestorOrigins.forEach(addOrigin);
+      }
+      if (candidateOrigins.size === 0) return false;
+
+      return Array.from(candidateOrigins).some((origin) => {
+        try {
+          const { hostname } = new URL(origin);
+          return (
+            origin === window.location.origin ||
+            hostname.toLowerCase().endsWith('dev.azure.com') ||
+            hostname.toLowerCase().endsWith('visualstudio.com')
+          );
+        } catch {
+          return false;
+        }
+      });
+    })();
+
+    // Only attempt SDK initialization when the extension is running inside the
+    // Azure DevOps iframe host. Opening the form in a new tab (for example via
+    // the window.open fallback) should remain in offline mode to avoid noisy
+    // VSS handshake errors.
+    const shouldAttemptSdk = isFramed && hostLooksLikeAzureDevOps;
 
     state.branch = initialBranch;
     state.projectId = projectIdFromQuery;
@@ -725,7 +763,7 @@
     targetRepoInput.value = `${sanitizeProjectName(projectNameFromQuery || 'project')}_Azure_DevOps`;
     setServiceNameFromRepository(repoNameFromQuery || projectNameFromQuery);
     applyDetectedEnvironment(initialBranch);
-    const hasHostContext = Boolean(hasReferrer || projectIdFromQuery || repoIdFromQuery || hasOpener);
+    const hasHostContext = Boolean(isFramed && (hasReferrer || projectIdFromQuery || repoIdFromQuery || hasOpener));
     if (!hasHostContext || !shouldAttemptSdk) {
       setStatus(
         'Running outside Azure DevOps. Fill the form to preview the YAML, then copy it below. Open the extension from a branch action to enable automatic push.',
