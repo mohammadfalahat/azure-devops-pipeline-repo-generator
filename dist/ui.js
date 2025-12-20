@@ -266,15 +266,31 @@
     'X-TFS-FedAuthRedirect': 'Suppress'
   });
 
-  const getAccessTokenFromSdk = async (sdk) => {
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const getAccessTokenFromSdk = async (sdk, maxAttempts = 3, delayMs = 800) => {
     if (!sdk?.getAccessToken) {
       throw new Error('Azure DevOps access token API is unavailable.');
     }
-    const token = await sdk.getAccessToken();
-    if (!token) {
-      throw new Error('Azure DevOps did not provide an access token.');
+
+    let lastError;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const token = await sdk.getAccessToken();
+        if (token) {
+          return token;
+        }
+        lastError = new Error('Azure DevOps did not provide an access token.');
+      } catch (error) {
+        lastError = error;
+      }
+
+      if (attempt < maxAttempts) {
+        await delay(delayMs * attempt);
+      }
     }
-    return token;
+
+    throw lastError;
   };
 
   const sanitizeProjectName = (name) => name.replace(/[^A-Za-z0-9]/g, '_');
