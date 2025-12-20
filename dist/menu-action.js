@@ -188,6 +188,11 @@ const getProject = (context) =>
   getRepository(context)?.project ||
   VSS.getWebContext?.()?.project;
 
+const getRepositoryNameFromUrl = () => {
+  const match = window.location.pathname.match(/\/[_]git\/([^/?]+)/i);
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+};
+
 const getRepository = (context) =>
   context?.gitRepository ||
   context?.repository ||
@@ -315,7 +320,7 @@ const openGenerator = async (context, sdk) => {
     const branchName = getBranchName(actionContext);
     const project = getProject(actionContext);
     const repoId = repository?.id;
-    const repoName = repository?.name;
+    const repoName = repository?.name || getRepositoryNameFromUrl();
     const projectId = project?.id || actionContext?.projectId;
     const projectName = project?.name || projectId;
     const extContext = VSS.getExtensionContext?.();
