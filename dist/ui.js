@@ -704,6 +704,10 @@
     const repoIdFromQuery = getQueryValue(query.get('repoId'));
     const repoNameFromQuery = getQueryValue(query.get('repoName'));
     const initialBranch = branchFromQuery || '(unknown branch)';
+    const hasReferrer = Boolean(document.referrer);
+    const isFramed = window.parent !== window;
+    const hasOpener = Boolean(window.opener);
+    const shouldAttemptSdk = hasReferrer || isFramed || hasOpener;
 
     state.branch = initialBranch;
     state.projectId = projectIdFromQuery;
@@ -720,9 +724,12 @@
     targetRepoInput.value = `${sanitizeProjectName(projectNameFromQuery || 'project')}_Azure_DevOps`;
     setServiceNameFromRepository(repoNameFromQuery || projectNameFromQuery);
     applyDetectedEnvironment(initialBranch);
-    const hasHostContext = Boolean(document.referrer || projectIdFromQuery || repoIdFromQuery);
-    if (!hasHostContext) {
-      setStatus('Running outside Azure DevOps. Fill the form to preview the YAML, then copy it below.', true);
+    const hasHostContext = Boolean(hasReferrer || projectIdFromQuery || repoIdFromQuery || hasOpener);
+    if (!hasHostContext || !shouldAttemptSdk) {
+      setStatus(
+        'Running outside Azure DevOps. Fill the form to preview the YAML, then copy it below. Open the extension from a branch action to enable automatic push.',
+        true
+      );
       setSubmitting(false);
       return;
     }
