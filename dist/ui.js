@@ -278,11 +278,22 @@
   const readErrorDetail = async (response) => {
     try {
       const text = await response.text();
-      return sanitizeErrorDetail(text || '');
+      const sanitized = sanitizeErrorDetail(text || '');
+      return sanitized.length > 500 ? `${sanitized.slice(0, 497)}...` : sanitized;
     } catch (error) {
       console.warn('Failed to read error response body', error);
       return '';
     }
+  };
+
+  const buildHttpError = (baseMessage, response, detail) => {
+    const message = `${baseMessage} (${response.status})${detail ? `: ${detail}` : ''}`;
+    const error = new Error(message);
+    error.status = response.status;
+    if (detail) {
+      error.detail = detail;
+    }
+    return error;
   };
 
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -517,7 +528,8 @@
     }
 
     if (!res.ok) {
-      throw new Error(`Failed to query branch (${res.status})`);
+      const detail = await readErrorDetail(res);
+      throw buildHttpError('Failed to query branch', res, detail);
     }
 
     const payload = await res.json();
@@ -534,7 +546,8 @@
       headers: authHeaders(accessToken)
     });
     if (!res.ok) {
-      throw new Error(`Failed to list repositories (${res.status})`);
+      const detail = await readErrorDetail(res);
+      throw buildHttpError('Failed to list repositories', res, detail);
     }
     const payload = await res.json();
     const existing = (payload.value || []).find((repo) => repo.name === targetName);
@@ -551,7 +564,8 @@
       body: JSON.stringify({ name: targetName, project: { id: projectId } })
     });
     if (!createRes.ok) {
-      throw new Error(`Failed to create repository (${createRes.status})`);
+      const detail = await readErrorDetail(createRes);
+      throw buildHttpError('Failed to create repository', createRes, detail);
     }
     return createRes.json();
   };
@@ -569,7 +583,8 @@
     });
 
     if (!res.ok) {
-      throw new Error(`Failed to set default branch (${res.status})`);
+      const detail = await readErrorDetail(res);
+      throw buildHttpError('Failed to set default branch', res, detail);
     }
 
     return res.json();
@@ -690,7 +705,8 @@
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/distributedtask/queues?api-version=6.0`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
-      throw new Error(`Failed to load pools (${res.status})`);
+      const detail = await readErrorDetail(res);
+      throw buildHttpError('Failed to load pools', res, detail);
     }
     const payload = await res.json();
     return Array.from(new Set((payload.value || []).map((queue) => queue.name).filter(Boolean)));
@@ -702,7 +718,8 @@
     )}&api-version=6.0`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
-      throw new Error(`Failed to load container registries (${res.status})`);
+      const detail = await readErrorDetail(res);
+      throw buildHttpError('Failed to load container registries', res, detail);
     }
     const payload = await res.json();
     return (payload.value || []).map((endpoint) => endpoint.name || endpoint.id).filter(Boolean);
@@ -871,7 +888,8 @@
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/items?recursionLevel=Full&includeContentMetadata=true${versionDescriptor}&api-version=6.0`;
     const res = await fetch(url, { headers: { Authorization: getAuthHeader(accessToken) } });
     if (!res.ok) {
-      throw new Error(`Failed to scan repository for Dockerfiles (${res.status})`);
+      const detail = await readErrorDetail(res);
+      throw buildHttpError('Failed to scan repository for Dockerfiles', res, detail);
     }
     const payload = await res.json();
     return (payload.value || [])
