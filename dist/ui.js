@@ -267,10 +267,18 @@
     'X-TFS-FedAuthRedirect': 'Suppress'
   });
 
+  const sanitizeErrorDetail = (detail = '') =>
+    detail
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
   const readErrorDetail = async (response) => {
     try {
       const text = await response.text();
-      return text?.trim();
+      return sanitizeErrorDetail(text || '');
     } catch (error) {
       console.warn('Failed to read error response body', error);
       return '';
@@ -325,6 +333,9 @@
     const environmentSegment = sanitizeProjectName(environment || 'env');
     return `${projectSegment}_${repoSegment}_${environmentSegment}`;
   };
+
+  const isUnauthorizedError = (error) =>
+    error?.status === 401 || /TF400813/i.test(error?.detail || '') || /\b401\b/.test(error?.message || '');
 
   const applyBootstrapPayload = async (payload = {}, source = 'message') => {
     const {
@@ -611,7 +622,10 @@
 
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      throw new Error(`Failed to push scaffold (${res.status})${detail ? `: ${detail}` : ''}`);
+      const error = new Error(`Failed to push scaffold (${res.status})${detail ? `: ${detail}` : ''}`);
+      error.status = res.status;
+      error.detail = detail;
+      throw error;
     }
   };
 
@@ -663,7 +677,10 @@
 
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      throw new Error(`Failed to create pipeline (${res.status})${detail ? `: ${detail}` : ''}`);
+      const error = new Error(`Failed to create pipeline (${res.status})${detail ? `: ${detail}` : ''}`);
+      error.status = res.status;
+      error.detail = detail;
+      throw error;
     }
 
     return res.json();
@@ -834,7 +851,10 @@
       window.location.href = `${state.hostUri}${encodeURIComponent(state.projectId)}/_build`;
     } catch (error) {
       console.error(error);
-      setStatus(`Automatic pipeline creation failed: ${error.message}`, true);
+      const unauthorizedMessage =
+        'Automatic pipeline creation failed: access was denied. Please sign in with an account that can create pipelines in this project and try again from Azure DevOps.';
+      const detailMessage = error?.message ? `Automatic pipeline creation failed: ${error.message}` : 'Automatic pipeline creation failed.';
+      setStatus(isUnauthorizedError(error) ? unauthorizedMessage : detailMessage, true);
     }
 
     setSubmitting(false);
