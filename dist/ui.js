@@ -531,6 +531,25 @@
     return createRes.json();
   };
 
+  const ensureDefaultBranch = async ({ hostUri, projectId, repoId, branchName, accessToken }) => {
+    const defaultBranch = `refs/heads/${branchName}`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}?api-version=6.0`;
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        ...authHeaders(accessToken),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ defaultBranch })
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to set default branch (${res.status})`);
+    }
+
+    return res.json();
+  };
+
   const postScaffold = async ({
     hostUri,
     projectId,
@@ -691,6 +710,13 @@
         accessToken: state.accessToken,
         content: yaml,
         pipelineFilename
+      });
+      await ensureDefaultBranch({
+        hostUri: state.hostUri,
+        projectId: state.projectId,
+        repoId: repo.id,
+        branchName: targetBranch,
+        accessToken: state.accessToken
       });
       setStatus(
         `Repository ${repo.name} is ready with ${pipelineFilename} on ${targetBranch}.`,
