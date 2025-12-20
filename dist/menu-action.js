@@ -251,6 +251,15 @@ const getAccessTokenWithRetry = async (sdk, maxAttempts = 3, delayMs = 800) => {
       lastError = new Error('Azure DevOps returned an empty access token.');
     } catch (error) {
       lastError = error;
+
+      // Some Azure DevOps Server instances may respond with an internal
+      // error (HTTP 500) from the WebPlatformAuth SessionToken endpoint
+      // when an access token cannot be issued. Retrying those responses
+      // only generates more noisy 500 logs without succeeding, so stop
+      // immediately and surface the error to the UI instead.
+      if (error?.status === 500) {
+        break;
+      }
     }
 
     if (attempt < maxAttempts) {
