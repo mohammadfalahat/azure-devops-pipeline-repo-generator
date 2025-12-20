@@ -170,6 +170,8 @@
   const copyYamlButton = document.getElementById('copy-yaml');
   const submitButton = form?.querySelector('button[type="submit"]');
 
+  const SCAFFOLD_BRANCH = 'main';
+
   const state = {
     sdk: null,
     accessToken: null,
@@ -479,7 +481,7 @@
   };
 
   const getBranchObjectId = async ({ hostUri, projectId, repoId, branch, accessToken }) => {
-    const branchName = branch?.replace(/^refs\/heads\//, '') || 'main';
+    const branchName = SCAFFOLD_BRANCH;
     const refUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/refs?filter=${encodeURIComponent(
       `heads/${branchName}`
     )}&api-version=6.0`;
@@ -538,7 +540,7 @@
     content,
     pipelineFilename = 'pipeline-template.yml'
   }) => {
-    const branchName = branch?.replace(/^refs\/heads\//, '') || 'main';
+    const branchName = SCAFFOLD_BRANCH;
     const branchRef = `refs/heads/${branchName}`;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=6.0`;
     const pipelineContent = content || '';
@@ -680,7 +682,7 @@
         projectName: state.projectName,
         accessToken: state.accessToken
       });
-      const targetBranch = 'main';
+      const targetBranch = SCAFFOLD_BRANCH;
       await postScaffold({
         hostUri: state.hostUri,
         projectId: state.projectId,
