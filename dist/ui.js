@@ -267,6 +267,16 @@
     'X-TFS-FedAuthRedirect': 'Suppress'
   });
 
+  const readErrorDetail = async (response) => {
+    try {
+      const text = await response.text();
+      return text?.trim();
+    } catch (error) {
+      console.warn('Failed to read error response body', error);
+      return '';
+    }
+  };
+
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const getAccessTokenFromSdk = async (sdk, maxAttempts = 3, delayMs = 800) => {
@@ -349,7 +359,7 @@
       if (state.accessTokenError) {
         const needsHostAuth = /HostAuthorizationNotFound/i.test(state.accessTokenError);
         authMessage = needsHostAuth
-          ? 'Azure DevOps could not issue an access token because host authorization was not found. Confirm the extension is installed for this organization/project and that your account can access it, then relaunch the generator.'
+          ? 'Azure DevOps could not issue an access token because host authorization was not found. Confirm the extension is installed and enabled for this collection/project (Organization/Collection settings → Extensions → Manage) and that your account can access it, then relaunch the generator.'
           : `Azure DevOps did not provide an access token (${state.accessTokenError}). Refresh the page or sign in again, then relaunch the generator.`;
       } else {
         authMessage = 'Loaded context from branch action but still waiting for an access token from Azure DevOps. Refresh or try again if this persists.';
@@ -472,7 +482,7 @@
     const branchName = branch?.replace(/^refs\/heads\//, '') || 'main';
     const refUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/refs?filter=${encodeURIComponent(
       `heads/${branchName}`
-    )}&api-version=7.1-preview.1`;
+    )}&api-version=6.0`;
     const res = await fetch(refUrl, { headers: authHeaders(accessToken) });
 
     if (res.status === 404) {
@@ -491,7 +501,7 @@
     const sanitized = sanitizeProjectName(projectName);
     const targetName = `${sanitized}_Azure_DevOps`;
     targetRepoInput.value = targetName;
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories?api-version=7.1-preview.1`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories?api-version=6.0`;
 
     const res = await fetch(url, {
       headers: authHeaders(accessToken)
@@ -530,7 +540,7 @@
   }) => {
     const branchName = branch?.replace(/^refs\/heads\//, '') || 'main';
     const branchRef = `refs/heads/${branchName}`;
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=7.1-preview.1`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=6.0`;
     const pipelineContent = content || '';
     const authHeader = getAuthHeader(accessToken);
     const oldObjectId = await getBranchObjectId({ hostUri, projectId, repoId, branch: branchName, accessToken });
@@ -565,12 +575,13 @@
     });
 
     if (!res.ok) {
-      throw new Error(`Failed to push scaffold (${res.status})`);
+      const detail = await readErrorDetail(res);
+      throw new Error(`Failed to push scaffold (${res.status})${detail ? `: ${detail}` : ''}`);
     }
   };
 
   const fetchAgentQueues = async ({ hostUri, projectId, accessToken }) => {
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/distributedtask/queues?api-version=7.1-preview.1`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/distributedtask/queues?api-version=6.0`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       throw new Error(`Failed to load pools (${res.status})`);
@@ -582,7 +593,7 @@
   const fetchContainerRegistries = async ({ hostUri, projectId, accessToken }) => {
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/serviceendpoint/endpoints?type=dockerregistry&projectIds=${encodeURIComponent(
       projectId
-    )}&api-version=7.1-preview.4`;
+    )}&api-version=6.0`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       throw new Error(`Failed to load container registries (${res.status})`);
@@ -710,7 +721,7 @@
     const versionDescriptor = branch
       ? `&versionDescriptor.version=${encodeURIComponent(branch)}&versionDescriptor.versionType=branch`
       : '';
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/items?recursionLevel=Full&includeContentMetadata=true${versionDescriptor}&api-version=7.1-preview.1`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/items?recursionLevel=Full&includeContentMetadata=true${versionDescriptor}&api-version=6.0`;
     const res = await fetch(url, { headers: { Authorization: getAuthHeader(accessToken) } });
     if (!res.ok) {
       throw new Error(`Failed to scan repository for Dockerfiles (${res.status})`);
@@ -752,7 +763,23 @@
       addOrigin(window.location.origin);
       addOrigin(document.referrer);
       if (window.location.ancestorOrigins) {
-        window.location.ancestorOrigins.forEach(addOrigin);
+        try {
+          const rawAncestors = window.location.ancestorOrigins;
+          const ancestors = [];
+
+          if (typeof rawAncestors.forEach === 'function') {
+            rawAncestors.forEach((value) => ancestors.push(value));
+          } else {
+            const length = Number(rawAncestors.length) || 0;
+            for (let i = 0; i < length; i += 1) {
+              ancestors.push(rawAncestors[i]);
+            }
+          }
+
+          ancestors.forEach(addOrigin);
+        } catch (error) {
+          console.warn('Skipping ancestorOrigins inspection', error);
+        }
       }
       if (candidateOrigins.size === 0) return false;
 
