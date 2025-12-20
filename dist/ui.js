@@ -345,9 +345,15 @@
     setKomodoServerFromEnvironment(environmentSelect?.value);
 
     if (!state.projectId || !state.accessToken || !state.hostUri) {
-      const authMessage = state.accessTokenError
-        ? `Azure DevOps did not provide an access token (${state.accessTokenError}). Refresh the page or sign in again, then relaunch the generator.`
-        : 'Loaded context from branch action but still waiting for an access token from Azure DevOps. Refresh or try again if this persists.';
+      let authMessage;
+      if (state.accessTokenError) {
+        const needsHostAuth = /HostAuthorizationNotFound/i.test(state.accessTokenError);
+        authMessage = needsHostAuth
+          ? 'Azure DevOps could not issue an access token because host authorization was not found. Confirm the extension is installed for this organization/project and that your account can access it, then relaunch the generator.'
+          : `Azure DevOps did not provide an access token (${state.accessTokenError}). Refresh the page or sign in again, then relaunch the generator.`;
+      } else {
+        authMessage = 'Loaded context from branch action but still waiting for an access token from Azure DevOps. Refresh or try again if this persists.';
+      }
       setStatus(authMessage, true);
       setSubmitting(false);
       return;

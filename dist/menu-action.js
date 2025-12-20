@@ -236,6 +236,14 @@ const getBranchName = (context) => {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const normalizeAccessTokenError = (error) => {
+  const message = error?.message || 'Unknown Azure DevOps authentication error';
+  if (/HostAuthorizationNotFound/i.test(message)) {
+    return 'Host authorization was not found. Ensure the extension is enabled for this collection/project and that your account can access it.';
+  }
+  return message;
+};
+
 const getAccessTokenWithRetry = async (sdk, maxAttempts = 3, delayMs = 800) => {
   if (!sdk?.getAccessToken) {
     return undefined;
@@ -331,7 +339,7 @@ const openGenerator = async (context, sdk) => {
       accessToken = await getAccessTokenWithRetry(sdk);
     } catch (tokenError) {
       console.warn('Could not acquire access token before opening generator', tokenError);
-      accessTokenError = tokenError?.message || 'Unknown Azure DevOps authentication error';
+      accessTokenError = normalizeAccessTokenError(tokenError);
     }
 
     const bootstrapPayload = {
