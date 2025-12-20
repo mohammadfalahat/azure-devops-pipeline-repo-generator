@@ -21,8 +21,8 @@
 
     <section class="panel" id="pipeline-section">
       <p class="hint">
-        Fill the fields below, then generate the pipeline and bootstrap the shared
-        repository. Defaults match the requested deployment template.
+        Fill the fields below, then generate the pipeline. The generator will push the template and
+        register the pipeline automatically.
       </p>
       <form id="pipeline-form">
         <div class="field">
@@ -55,7 +55,7 @@
         </div>
         <div class="field">
           <label for="dockerfileDir">Dockerfile directory</label>
-          <input id="dockerfileDir" name="dockerfileDir" value="**" required />
+            <input id="dockerfileDir" name="dockerfileDir" value="**" required />
           <small>Enter the relative folder that holds your Dockerfile (for example: . or services/api). Override the default if auto-detection is unavailable.</small>
         </div>
         <div class="field">
@@ -86,21 +86,9 @@
           <input id="targetRepo" name="targetRepo" readonly />
           <small>Auto-generated from the project name using the pattern SANITIZEDPROJECTNAME_Azure_DevOps. The extension will create or reuse this repository.</small>
         </div>
-        <button type="submit" class="primary">Create repository and pipeline scaffold</button>
+        <button type="submit" class="primary">Create repository and pipeline</button>
       </form>
       <div id="status" role="status" aria-live="polite"></div>
-    </section>
-
-    <section class="panel hidden" id="preview-panel" aria-live="polite">
-      <div class="section-header">
-        <p class="eyebrow">Pipeline template</p>
-        <h2>Generated YAML</h2>
-        <p class="hint">The template below matches the values you submitted. Copy it or let the extension push it automatically.</p>
-      </div>
-      <div class="actions">
-        <button type="button" class="secondary" id="copy-yaml">Copy YAML</button>
-      </div>
-      <pre id="yaml-output" class="code-block" aria-label="Generated pipeline YAML"></pre>
     </section>
   </main>
 </body>
