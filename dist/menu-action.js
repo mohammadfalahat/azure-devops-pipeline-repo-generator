@@ -239,7 +239,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const normalizeAccessTokenError = (error) => {
   const message = error?.message || 'Unknown Azure DevOps authentication error';
   if (/HostAuthorizationNotFound/i.test(message)) {
-    return 'Host authorization was not found. Ensure the extension is enabled for this collection/project and that your account can access it.';
+    return 'Host authorization was not found. Re-enable or reinstall the Pipeline Generator extension for this collection and project (Collection Settings → Extensions → Pipeline Generator → Manage), then reload the page.';
   }
   return message;
 };
