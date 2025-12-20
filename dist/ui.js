@@ -165,9 +165,6 @@
   const status = document.getElementById('status');
   const targetRepoInput = document.getElementById('targetRepo');
   const komodoSelect = document.getElementById('komodoServer');
-  const previewPanel = document.getElementById('preview-panel');
-  const yamlOutput = document.getElementById('yaml-output');
-  const copyYamlButton = document.getElementById('copy-yaml');
   const submitButton = form?.querySelector('button[type="submit"]');
 
   const SCAFFOLD_BRANCH = 'main';
@@ -270,10 +267,18 @@
     'X-TFS-FedAuthRedirect': 'Suppress'
   });
 
+  const sanitizeErrorDetail = (detail = '') =>
+    detail
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
   const readErrorDetail = async (response) => {
     try {
       const text = await response.text();
-      return text?.trim();
+      return sanitizeErrorDetail(text || '');
     } catch (error) {
       console.warn('Failed to read error response body', error);
       return '';
@@ -318,8 +323,19 @@
     const projectSlug = slugifyName(projectName, 'project');
     const repoSlug = slugifyName(repositoryName || projectName, 'repo');
     const environmentSlug = slugifyName(environment, 'env');
-    return `${projectSlug}-${repoSlug}-${environmentSlug}.yml`;
+    const repoFolder = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
+    return `${repoFolder}/${projectSlug}-${repoSlug}-${environmentSlug}.yml`;
   };
+
+  const buildPipelineName = ({ projectName, repositoryName, environment }) => {
+    const projectSegment = sanitizeProjectName(projectName || 'project');
+    const repoSegment = sanitizeProjectName(repositoryName || projectName || 'repo');
+    const environmentSegment = sanitizeProjectName(environment || 'env');
+    return `${projectSegment}_${repoSegment}_${environmentSegment}`;
+  };
+
+  const isUnauthorizedError = (error) =>
+    error?.status === 401 || /TF400813/i.test(error?.detail || '') || /\b401\b/.test(error?.message || '');
 
   const applyBootstrapPayload = async (payload = {}, source = 'message') => {
     const {
@@ -606,8 +622,68 @@
 
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      throw new Error(`Failed to push scaffold (${res.status})${detail ? `: ${detail}` : ''}`);
+      const error = new Error(`Failed to push scaffold (${res.status})${detail ? `: ${detail}` : ''}`);
+      error.status = res.status;
+      error.detail = detail;
+      throw error;
     }
+  };
+
+  const getPipelineByName = async ({ hostUri, projectId, pipelineName, accessToken }) => {
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1-preview.1`;
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+    if (!res.ok) {
+      return undefined;
+    }
+    const payload = await res.json();
+    return (payload.value || []).find((pipeline) => pipeline.name === pipelineName);
+  };
+
+  const createPipelineDefinition = async ({ hostUri, projectId, repo, pipelineName, pipelinePath, branch }) => {
+    const existing = await getPipelineByName({
+      hostUri,
+      projectId,
+      pipelineName,
+      accessToken: state.accessToken
+    });
+    if (existing) {
+      return existing;
+    }
+
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1-preview.1`;
+    const repositoryName = `${state.projectName || projectId}/${repo.name}`;
+    const body = {
+      name: pipelineName,
+      configuration: {
+        type: 'yaml',
+        path: `/${pipelinePath}`,
+        repository: {
+          id: repo.id,
+          name: repositoryName,
+          type: 'azureReposGit',
+          defaultBranch: `refs/heads/${branch}`
+        }
+      }
+    };
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(state.accessToken),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      const error = new Error(`Failed to create pipeline (${res.status})${detail ? `: ${detail}` : ''}`);
+      error.status = res.status;
+      error.detail = detail;
+      throw error;
+    }
+
+    return res.json();
   };
 
   const fetchAgentQueues = async ({ hostUri, projectId, accessToken }) => {
@@ -640,24 +716,48 @@
     return trimmed || '.';
   };
 
-  const buildPipelineYaml = (payload) =>
-    [
-      `pool: ${payload.pool || ''}`,
-      `service: ${payload.service || ''}`,
-      `environment: ${payload.environment || ''}`,
-      `dockerfileDir: ${payload.dockerfileDir || ''}`,
-      `repositoryAddress: ${payload.repositoryAddress || ''}`,
-      `containerRegistryService: ${payload.containerRegistryService || ''}`,
-      `komodoServer: ${payload.komodoServer || ''}`,
+  const buildPipelineYaml = (payload, options = {}) => {
+    const sourceBranchName = (options.sourceBranch || 'main').replace(/^refs\/heads\//, '');
+    const projectRepoName = `${options.projectName || 'PROJECTNAME'}/${options.repositoryName || 'REPONAME'}`;
+    return [
+      "trigger: none                      # always none",
+      '',
+      'resources:',
+      '  repositories:',
+      '    - repository: SharedTemplatesRepo',
+      '      type: git',
+      '      endpoint: ShonizCollection',
+      '      name: SharedTemplates/SharedTemplates',
+      '      ref: main',
+      '',
+      `    - repository: otherRepo`,
+      '      type: git',
+      `      name: "${projectRepoName}"             # PROJECTNAME/REPONAME`,
+      `      ref: refs/heads/${sourceBranchName}        # refs/heads/BRANCH`,
+      '      trigger:',
+      '        branches:',
+      '          include:',
+      `            - ${sourceBranchName}                # BRANCH`,
+      '',
+      'variables:',
+      '- group: KomodoAPI',
+      '',
+      'stages:',
+      '- template: build-push-komodo.yml@SharedTemplatesRepo',
+      '  parameters:',
+      `    pool: '${payload.pool || ''}'`,
+      `    service: '${payload.service || ''}'                # service name`,
+      `    environment: '${payload.environment || ''}'           # dev/demo/pro/qa`,
+      `    dockerfileDir: '${payload.dockerfileDir || '**'}'  # path of Dockerfile, Default is '**'`,
+      `    repositoryAddress: '${payload.repositoryAddress || ''}'`,
+      `    containerRegistryService: '${payload.containerRegistryService || ''}'`,
+      "    tag: '1.0.$(Build.BuildId)'",
+      `    komodoServer: '${payload.komodoServer || ''}' # or 'Development-192.168.62.19' or 'Production-31.7.65.195'`,
+      "    komodoApiKey: '$(KOMODO_API_KEY)'",
+      "    komodoApiSecret: '$(KOMODO_API_SECRET)'",
+      '    sourceRepo: otherRepo',
       ''
     ].join('\n');
-
-  const showYamlPreview = (payload) => {
-    if (!yamlOutput) return '';
-    const yaml = buildPipelineYaml(payload);
-    yamlOutput.textContent = yaml;
-    previewPanel?.classList.remove('hidden');
-    return yaml;
   };
 
   const handleSubmit = async (event) => {
@@ -670,7 +770,11 @@
       }
     }
     const payload = Object.fromEntries(new FormData(form).entries());
-    const yaml = showYamlPreview(payload);
+    const yaml = buildPipelineYaml(payload, {
+      sourceBranch: state.sourceBranch,
+      projectName: state.projectName,
+      repositoryName: state.repositoryName
+    });
 
     setStatus('Generating pipeline template...');
     setSubmitting(true);
@@ -696,9 +800,14 @@
       repositoryName: state.repositoryName,
       environment: payload.environment
     });
+    const pipelineName = buildPipelineName({
+      projectName: state.projectName,
+      repositoryName: state.repositoryName,
+      environment: payload.environment
+    });
 
     if (!state.accessToken || !state.projectId) {
-      setStatus('Template generated below. Open the extension from Azure DevOps to save it automatically.', true);
+      setStatus('Open the extension from Azure DevOps to push the template and create the pipeline automatically.', true);
       setSubmitting(false);
       return yaml;
     }
@@ -728,13 +837,24 @@
         branchName: targetBranch,
         accessToken: state.accessToken
       });
-      setStatus(
-        `Repository ${repo.name} is ready with ${pipelineFilename} on ${targetBranch}.`,
-        false
-      );
+
+      await createPipelineDefinition({
+        hostUri: state.hostUri,
+        projectId: state.projectId,
+        repo,
+        pipelineName,
+        pipelinePath: pipelineFilename,
+        branch: targetBranch
+      });
+
+      setStatus(`Pipeline ${pipelineName} created. Redirecting...`, false);
+      window.location.href = `${state.hostUri}${encodeURIComponent(state.projectId)}/_build`;
     } catch (error) {
       console.error(error);
-      setStatus(`Template generated below, but automatic push failed: ${error.message}`, true);
+      const unauthorizedMessage =
+        'Automatic pipeline creation failed: access was denied. Please sign in with an account that can create pipelines in this project and try again from Azure DevOps.';
+      const detailMessage = error?.message ? `Automatic pipeline creation failed: ${error.message}` : 'Automatic pipeline creation failed.';
+      setStatus(isUnauthorizedError(error) ? unauthorizedMessage : detailMessage, true);
     }
 
     setSubmitting(false);
@@ -742,17 +862,6 @@
   };
 
   form?.addEventListener('submit', handleSubmit);
-
-  copyYamlButton?.addEventListener('click', async () => {
-    if (!yamlOutput?.textContent) return;
-    try {
-      await navigator.clipboard?.writeText(yamlOutput.textContent);
-      setStatus('YAML copied to clipboard.');
-    } catch (error) {
-      console.error(error);
-      setStatus('Could not copy YAML. Please copy it manually from the preview.', true);
-    }
-  });
 
   const fetchDockerfileDirectories = async ({ hostUri, projectId, repoId, branch, accessToken }) => {
     if (!repoId) return [];
@@ -861,7 +970,7 @@
     const hasHostContext = Boolean(isFramed && (hasReferrer || projectIdFromQuery || repoIdFromQuery || hasOpener));
     if (!hasHostContext || !shouldAttemptSdk) {
       setStatus(
-        'Running outside Azure DevOps. Fill the form to preview the YAML, then copy it below. Open the extension from a branch action to enable automatic push.',
+        'Running outside Azure DevOps. Open the extension from a branch action to create the repository and pipeline automatically.',
         true
       );
       setSubmitting(false);
