@@ -167,6 +167,12 @@
   const komodoSelect = document.getElementById('komodoServer');
   const submitButton = form?.querySelector('button[type="submit"]');
 
+  if (serviceInput) {
+    serviceInput.addEventListener('input', () => {
+      serviceInput.dataset.autofilled = 'false';
+    });
+  }
+
   const SCAFFOLD_BRANCH = 'main';
 
   const state = {
@@ -446,10 +452,15 @@
 
     const currentValue = normalizeName(serviceInput.value);
     const projectDefault = normalizeName(projectName);
-    const shouldUpdate = !currentValue || (projectDefault && currentValue === projectDefault);
+    const wasAutoFilled = serviceInput.dataset.autofilled === 'true';
+    const shouldUpdate =
+      !currentValue ||
+      wasAutoFilled ||
+      (projectDefault && currentValue === projectDefault);
 
-    if (shouldUpdate) {
+    if (shouldUpdate && currentValue !== normalizedTarget) {
       serviceInput.value = normalizedTarget;
+      serviceInput.dataset.autofilled = 'true';
     }
   };
 
