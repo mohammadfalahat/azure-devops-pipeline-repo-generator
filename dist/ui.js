@@ -159,6 +159,9 @@
   const environmentSelect = document.getElementById('environment');
   const poolSelect = document.getElementById('pool');
   const serviceInput = document.getElementById('service');
+  const personalAccessToken = document.getElementById('personalAccessToken');
+  const rememberPatCheckbox = document.getElementById('rememberPat');
+  const clearPatButton = document.getElementById('clearPat');
   const registrySelect = document.getElementById('containerRegistryService');
   const dockerfileInput = document.getElementById('dockerfileDir');
   const form = document.getElementById('pipeline-form');
@@ -177,7 +180,36 @@
     });
   }
 
+  loadPersistedPat();
+
+  if (personalAccessToken) {
+    personalAccessToken.addEventListener('input', () => {
+      const pat = getPatFromInput();
+      state.accessToken = pat || state.accessToken;
+      if (!pat && rememberPatCheckbox) {
+        rememberPatCheckbox.checked = false;
+      }
+    });
+  }
+
+  if (rememberPatCheckbox) {
+    rememberPatCheckbox.addEventListener('change', () => {
+      const pat = persistPatIfNeeded();
+      if (pat) {
+        state.accessToken = pat;
+      }
+    });
+  }
+
+  if (clearPatButton) {
+    clearPatButton.addEventListener('click', () => {
+      clearStoredPat();
+      setStatus('Cleared the saved access token. The generator will use the Azure DevOps token by default.');
+    });
+  }
+
   const SCAFFOLD_BRANCH = 'main';
+  const PAT_STORAGE_KEY = 'pipeline-generator-pat';
 
   const state = {
     sdk: null,
@@ -198,6 +230,62 @@
   const setStatus = (message, isError = false) => {
     status.textContent = message;
     status.className = isError ? 'status-error' : 'status-success';
+  };
+
+  const getPatFromInput = () => (personalAccessToken?.value || '').trim();
+
+  const persistPatIfNeeded = () => {
+    const pat = getPatFromInput();
+    if (!rememberPatCheckbox) {
+      return pat;
+    }
+
+    try {
+      if (rememberPatCheckbox.checked && pat) {
+        localStorage.setItem(PAT_STORAGE_KEY, pat);
+      } else {
+        localStorage.removeItem(PAT_STORAGE_KEY);
+      }
+    } catch (storageError) {
+      console.warn('Could not update saved PAT preference', storageError);
+    }
+    return pat;
+  };
+
+  const loadPersistedPat = () => {
+    if (!personalAccessToken) return null;
+    try {
+      const savedPat = localStorage.getItem(PAT_STORAGE_KEY);
+      if (savedPat) {
+        personalAccessToken.value = savedPat;
+        if (rememberPatCheckbox) {
+          rememberPatCheckbox.checked = true;
+        }
+        state.accessToken = state.accessToken || savedPat;
+        return savedPat;
+      }
+    } catch (storageError) {
+      console.warn('Could not read saved PAT', storageError);
+    }
+    return null;
+  };
+
+  const clearStoredPat = () => {
+    const currentPat = getPatFromInput();
+    if (personalAccessToken) {
+      personalAccessToken.value = '';
+    }
+    if (rememberPatCheckbox) {
+      rememberPatCheckbox.checked = false;
+    }
+    try {
+      localStorage.removeItem(PAT_STORAGE_KEY);
+    } catch (storageError) {
+      console.warn('Could not clear saved PAT', storageError);
+    }
+    if (state.accessToken === currentPat) {
+      state.accessToken = null;
+    }
   };
 
   const setSubmitting = (isSubmitting) => {
@@ -887,6 +975,11 @@
     setStatus('Generating pipeline template...');
     setSubmitting(true);
 
+    const manualPat = persistPatIfNeeded();
+    if (manualPat) {
+      state.accessToken = manualPat;
+    }
+
     if (!state.accessToken && state.sdk?.getAccessToken) {
       try {
         state.accessToken = await getAccessTokenFromSdk(state.sdk);
@@ -1148,11 +1241,16 @@
 
       const hostUri = (context.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
       state.hostUri = hostUri;
-      let accessToken;
+      let accessToken = state.accessToken || getPatFromInput();
 
       try {
-        accessToken = await getAccessTokenFromSdk(sdk);
+        if (!accessToken) {
+          accessToken = await getAccessTokenFromSdk(sdk);
+        }
         state.accessToken = accessToken;
+        if (getPatFromInput()) {
+          persistPatIfNeeded();
+        }
         if (!repositoryName && repoId) {
           try {
             const repoUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${encodeURIComponent(
