@@ -14,7 +14,7 @@ The extension uses the scoped Azure DevOps access token provided by the host pag
 
 The manifest scopes include `vso.code_manage` so the extension can create repositories on behalf of the signed-in user (who must also have **Create repository** permission in the project).
 
-Submitting the form ensures a shared repository named `SANITIZEDPROJECTNAME_Azure_DevOps` exists in the current project. If it does not, the extension creates it and pushes a YAML template named `lowercase(projectname-reponame-branchname.yml)` (derived from the source branch) containing the submitted settings.
+Submitting the form ensures a shared repository named `<ProjectName>_Azure_DevOps` exists in the current project (using the project name exactly as Azure DevOps reports it). If it does not, the extension creates it and pushes a YAML template named `<ProjectName>-<RepositoryName>-<BranchName>.yml` (preserving the original casing for the project and repository portions) containing the submitted settings.
 
 The branch action targets both the legacy (`git-branches-*`) and the newer repository branches menus to tolerate Azure DevOps UI updates where a single menu surface might go missing.
 
@@ -187,6 +187,26 @@ current project.
    include the pipeline payload in `pipeline.json` (for example the `name` and
    `configuration` object the generator attempted to send). A 401/TF400813
    response here confirms the token still lacks pipeline creation rights.
+
+   A minimal request body looks like this (omit secrets and adjust the
+   repository/path values for your project). Leaving `pipeline.json` empty will
+   return `Value cannot be null. Parameter name: inputParameters` because the
+   API expects these fields:
+
+   ```json
+   {
+     "name": "HRMS_hrms_demo",
+     "configuration": {
+       "type": "yaml",
+       "path": "/HRMS-HRMS_Azure_DevOps-main.yml",
+       "repository": {
+         "type": "azureReposGit",
+         "name": "BulutCollection/HRMS/_git/HRMS_Azure_DevOps",
+         "defaultBranch": "refs/heads/main"
+       }
+     }
+   }
+   ```
 
 ## Local service hook testing (on-premises friendly)
 
