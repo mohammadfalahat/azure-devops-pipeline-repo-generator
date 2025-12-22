@@ -167,6 +167,10 @@
   const komodoSelect = document.getElementById('komodoServer');
   const submitButton = form?.querySelector('button[type="submit"]');
 
+  if (targetRepoInput) {
+    targetRepoInput.disabled = true;
+  }
+
   if (serviceInput) {
     serviceInput.addEventListener('input', () => {
       serviceInput.dataset.autofilled = 'false';
@@ -181,8 +185,10 @@
     accessTokenError: null,
     hostUri: null,
     projectId: null,
+    rawProjectName: null,
     projectName: null,
     repoId: null,
+    rawRepositoryName: null,
     repositoryName: null,
     branch: SCAFFOLD_BRANCH,
     sourceBranch: null
@@ -377,8 +383,10 @@
     state.sourceBranch = branch || state.sourceBranch;
     state.branch = SCAFFOLD_BRANCH;
     state.projectId = projectId || state.projectId;
+    state.rawProjectName = projectName || state.rawProjectName;
     state.projectName = projectName || state.projectName;
     state.repoId = repoId || state.repoId;
+    state.rawRepositoryName = repoName || state.rawRepositoryName;
     state.repositoryName = repoName || state.repositoryName;
     state.hostUri = normalizedHost;
     state.accessToken = accessToken || state.accessToken;
@@ -796,8 +804,10 @@
 
   const buildPipelineYaml = (payload, options = {}) => {
     const sourceBranchName = (options.sourceBranch || 'main').replace(/^refs\/heads\//, '');
-    const sourceRepositoryName = options.repositoryName || options.sourceRepositoryName || 'repository';
-    const projectRepoName = `${options.projectName || 'PROJECTNAME'}/${sourceRepositoryName}`;
+    const sourceRepositoryName =
+      options.rawRepositoryName || options.repositoryName || options.sourceRepositoryName || 'repository';
+    const projectName = options.rawProjectName || options.projectName || 'PROJECTNAME';
+    const projectRepoName = `${projectName}/${sourceRepositoryName}`;
     return [
       "trigger: none                      # always none",
       '',
@@ -851,7 +861,9 @@
     const payload = Object.fromEntries(new FormData(form).entries());
     const yaml = buildPipelineYaml(payload, {
       sourceBranch: state.sourceBranch,
+      rawProjectName: state.rawProjectName,
       projectName: state.projectName,
+      rawRepositoryName: state.rawRepositoryName,
       repositoryName: state.repositoryName,
       sourceRepositoryName: state.repositoryName || state.projectName
     });
@@ -870,9 +882,13 @@
     if (!state.projectId && state.sdk?.getWebContext) {
       const context = state.sdk.getWebContext();
       state.projectId = context?.project?.id || state.projectId;
-      state.projectName = context?.project?.name || state.projectId || state.projectName;
+      const contextProjectName = context?.project?.name;
+      state.rawProjectName = contextProjectName || state.rawProjectName;
+      state.projectName = contextProjectName || state.projectId || state.projectName;
       state.repoId = context?.repository?.id || state.repoId;
-      state.repositoryName = context?.repository?.name || state.repositoryName;
+      const contextRepositoryName = context?.repository?.name;
+      state.rawRepositoryName = contextRepositoryName || state.rawRepositoryName;
+      state.repositoryName = contextRepositoryName || state.repositoryName;
     }
 
     const pipelineFilename = buildPipelineFilename({
