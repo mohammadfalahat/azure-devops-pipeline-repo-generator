@@ -168,7 +168,25 @@ current project.
    repository on the `main` branch. In Azure DevOps, go to **Pipelines** → **New
    pipeline** → **Azure Repos Git** → **Existing Azure Pipelines YAML**, then
    pick the `main` branch and the path shown in the generator status message
-   (for example `/project-repo-env.yml`).
+   (for example `/project-repo-env.yml`). You can also open the same screen
+   directly (as in the screenshot) via
+   `https://YOUR_SERVER/YOUR_COLLECTION/YOUR_PROJECT/_build?view=pipelines`,
+   then choose **Existing Azure Pipelines YAML** in the right-hand panel and set
+   the branch/path.
+3. To verify your credentials outside the extension, call the same REST
+   endpoint the generator uses:
+
+   ```bash
+   curl -u :<PAT_WITH_BUILD_SCOPE> \
+     -H "Content-Type: application/json" \
+     -d @pipeline.json \
+     "https://YOUR_SERVER/YOUR_COLLECTION/YOUR_PROJECT/_apis/pipelines?api-version=7.1-preview.1"
+   ```
+
+   Replace the placeholders with your server, collection, and project, and
+   include the pipeline payload in `pipeline.json` (for example the `name` and
+   `configuration` object the generator attempted to send). A 401/TF400813
+   response here confirms the token still lacks pipeline creation rights.
 
 ## Local service hook testing (on-premises friendly)
 
