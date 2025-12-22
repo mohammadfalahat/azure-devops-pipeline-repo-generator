@@ -711,7 +711,7 @@
   });
 
   const getPipelineByName = async ({ hostUri, projectId, pipelineName, accessToken }) => {
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1-preview.1`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       return undefined;
@@ -721,7 +721,7 @@
   };
 
   const getPipelineById = async ({ hostUri, projectId, pipelineId, accessToken }) => {
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${pipelineId}?api-version=7.1-preview.1`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${pipelineId}?api-version=7.1`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       return undefined;
@@ -750,7 +750,7 @@
         return current || existing;
       }
 
-      const updateUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${existing.id}?api-version=7.1-preview.1`;
+      const updateUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${existing.id}?api-version=7.1`;
       const res = await fetch(updateUrl, {
         method: 'PUT',
         headers: {
@@ -768,16 +768,14 @@
       return res.json();
     }
 
-    const createUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?repositoryId=${encodeURIComponent(
-      repo.id
-    )}&api-version=7.1-preview.1`;
+    const createUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1`;
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: {
         ...authHeaders(accessToken),
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ name: pipelineName, configuration: desiredConfig })
+      body: JSON.stringify({ name: pipelineName, folder: '\\', configuration: desiredConfig })
     });
 
     if (!res.ok) {
@@ -970,8 +968,7 @@
       console.error(error);
       const detail = sanitizeErrorDetail(error?.detail || error?.message || '');
       const manualPath = `/${pipelineFilename}`;
-      const repositoryQuery = state.repoId ? `repositoryId=${encodeURIComponent(state.repoId)}&` : '';
-      const createApiUrl = `${state.hostUri}${encodeURIComponent(state.projectId)}/_apis/pipelines?${repositoryQuery}api-version=7.1-preview.1`;
+      const createApiUrl = `${state.hostUri}${encodeURIComponent(state.projectId)}/_apis/pipelines?api-version=7.1`;
       const curlExample =
         `curl -u :<PAT_WITH_PIPELINE_SCOPE> -H "Content-Type: application/json" ` +
         `-d @pipeline.json "${createApiUrl}"`;
