@@ -352,10 +352,17 @@
 
   const buildPipelineFilename = ({ projectName, repositoryName, branchName }) => {
     const sanitizeSegment = (segment, fallback) => {
-      const value = segment?.toString().trim();
-      if (!value) return fallback;
-      // Preserve original casing but replace path separators to keep the filename valid.
-      return value.replace(/[^\w\s.-]/g, '_').replace(/[\\/]+/g, '-');
+      const fallbackValue = fallback?.toString().toLowerCase() || '';
+      const value = segment?.toString().trim().toLowerCase();
+      const base = value || fallbackValue;
+
+      const cleaned = base
+        .replace(/[\\/]+/g, '-')
+        .replace(/[^\w.-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+
+      return cleaned || fallbackValue || 'segment';
     };
 
     const projectSegment = sanitizeSegment(projectName, 'project');
