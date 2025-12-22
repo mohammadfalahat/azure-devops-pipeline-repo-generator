@@ -965,11 +965,18 @@
       console.error(error);
       const detail = sanitizeErrorDetail(error?.detail || error?.message || '');
       const manualPath = `/${pipelineFilename}`;
+      const createApiUrl = `${state.hostUri}${encodeURIComponent(state.projectId)}/_apis/pipelines?api-version=7.1-preview.1`;
+      const curlExample =
+        `curl -u :<PAT_WITH_PIPELINE_SCOPE> -H "Content-Type: application/json" ` +
+        `-d @pipeline.json "${createApiUrl}"`;
       const unauthorizedMessage =
         `Automatic pipeline creation failed: access was denied${detail ? ` (${detail})` : ''}. ` +
         `${state.accessToken ? 'The token from Azure DevOps may not include pipeline creation rights for this project; ask a project administrator to grant Create pipeline permission or retry with a token that includes that scope.' : 'Open the extension from Azure DevOps so we can request a project-scoped token with pipeline creation rights.'} ` +
         `You can still create the pipeline manually with the generated YAML at ${manualPath}: ` +
-        `Pipelines > New pipeline > Azure Repos Git > Existing Azure Pipelines YAML, then select branch '${targetBranch}' and path '${manualPath}'.`;
+        `Pipelines > New pipeline > Azure Repos Git > Existing Azure Pipelines YAML (or open ${state.hostUri}${encodeURIComponent(
+          state.projectId
+        )}/_build?view=pipelines and choose that option), then select branch '${targetBranch}' and path '${manualPath}'. ` +
+        `If you want to test the REST API directly with your own credentials, POST to ${createApiUrl} (for example: ${curlExample}).`;
       const detailMessage = error?.message ? `Automatic pipeline creation failed: ${error.message}` : 'Automatic pipeline creation failed.';
       setStatus(isUnauthorizedError(error) ? unauthorizedMessage : detailMessage, true);
     }
