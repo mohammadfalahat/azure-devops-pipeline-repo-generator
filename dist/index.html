@@ -31,6 +31,26 @@
           <small>Captured from the branch list action. To change it, reopen the generator from the desired branch.</small>
         </div>
         <div class="field">
+          <label for="personalAccessToken">Access token override (optional)</label>
+          <div class="inline-input">
+            <input
+              id="personalAccessToken"
+              name="personalAccessToken"
+              type="password"
+              autocomplete="off"
+              placeholder="Enter a PAT with the needed scopes"
+            />
+            <button type="button" class="secondary" id="clearPat">Clear</button>
+          </div>
+          <label class="checkbox-inline">
+            <input type="checkbox" id="rememberPat" /> Remember this token on this device
+          </label>
+          <small>
+            Leave blank to use the access token supplied by Azure DevOps. Provide a Personal Access Token if you need broader
+            permissions (for example, pipeline creation) and optionally store it locally.
+          </small>
+        </div>
+        <div class="field">
           <label for="pool">Pool</label>
           <select id="pool" name="pool" required>
             <option value="PublishDockerAgent" selected>PublishDockerAgent</option>
