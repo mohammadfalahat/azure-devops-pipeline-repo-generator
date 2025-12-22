@@ -307,6 +307,8 @@ const getHostBase = () => {
     return null;
   }
 
+  loadPersistedPat();
+
   const clearStoredPat = () => {
     const currentPat = getPatFromInput();
     if (personalAccessToken) {
