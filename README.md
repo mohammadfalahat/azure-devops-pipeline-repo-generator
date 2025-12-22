@@ -177,10 +177,10 @@ current project.
    endpoint the generator uses:
 
    ```bash
-   curl -u :<PAT_WITH_BUILD_SCOPE> \
-     -H "Content-Type: application/json" \
-     -d @pipeline.json \
-     "https://YOUR_SERVER/YOUR_COLLECTION/YOUR_PROJECT/_apis/pipelines?api-version=7.1-preview.1"
+  curl -u :<PAT_WITH_BUILD_SCOPE> \
+    -H "Content-Type: application/json" \
+    -d @pipeline.json \
+    "https://YOUR_SERVER/YOUR_COLLECTION/YOUR_PROJECT/_apis/pipelines?repositoryId=<REPO_GUID>&api-version=7.1-preview.1"
    ```
 
    Replace the placeholders with your server, collection, and project, and
@@ -192,9 +192,10 @@ current project.
    repository/path values for your project). Leaving `pipeline.json` empty will
    return `Value cannot be null. Parameter name: inputParameters` because the
    API expects these fields. The `repository.id` **must** be the GUID of the
-   repository that contains your YAML (for example `HRMS_Azure_DevOps`). You
-   can copy it from **Repos** → **Files** → **Clone** (URI contains `.../_git/<repoId>`)
-   or by calling `/_apis/git/repositories?api-version=6.0`.
+   repository that contains your YAML (for example `HRMS_Azure_DevOps`), and the
+   REST URL itself should include that repository ID as a `repositoryId`
+   parameter. You can copy the GUID from **Repos** → **Files** → **Clone** (URI
+   contains `.../_git/<repoId>`) or by calling `/_apis/git/repositories?api-version=6.0`.
 
    ```json
    {

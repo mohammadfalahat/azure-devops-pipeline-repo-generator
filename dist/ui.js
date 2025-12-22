@@ -768,7 +768,9 @@
       return res.json();
     }
 
-    const createUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1-preview.1`;
+    const createUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?repositoryId=${encodeURIComponent(
+      repo.id
+    )}&api-version=7.1-preview.1`;
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: {
@@ -932,6 +934,8 @@
         projectName: state.projectName,
         accessToken: state.accessToken
       });
+      state.repoId = repo.id || state.repoId;
+      state.repositoryName = repo.name || state.repositoryName;
       state.branch = targetBranch;
       await postScaffold({
         hostUri: state.hostUri,
@@ -966,7 +970,8 @@
       console.error(error);
       const detail = sanitizeErrorDetail(error?.detail || error?.message || '');
       const manualPath = `/${pipelineFilename}`;
-      const createApiUrl = `${state.hostUri}${encodeURIComponent(state.projectId)}/_apis/pipelines?api-version=7.1-preview.1`;
+      const repositoryQuery = state.repoId ? `repositoryId=${encodeURIComponent(state.repoId)}&` : '';
+      const createApiUrl = `${state.hostUri}${encodeURIComponent(state.projectId)}/_apis/pipelines?${repositoryQuery}api-version=7.1-preview.1`;
       const curlExample =
         `curl -u :<PAT_WITH_PIPELINE_SCOPE> -H "Content-Type: application/json" ` +
         `-d @pipeline.json "${createApiUrl}"`;
