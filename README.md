@@ -164,6 +164,10 @@ includes a minimal listener to mimic that flow and to keep your extension compat
    npm run service-hook:listen
    ```
 
+   - Override the port with `npm run service-hook:listen -- --port 8081` (or `-p 8081`).
+   - Disable raw payload logging with `npm run service-hook:listen -- --quiet` or by setting
+     `LOG_PAYLOADS=false`.
+
    The listener logs the `eventType`, `notificationId`, collection, project, and repository values for every POST payload and
    always replies with HTTP 200 so Azure DevOps sees the connection as healthy.
 
