@@ -256,7 +256,7 @@
     return pat;
   };
 
-  const loadPersistedPat = () => {
+  function loadPersistedPat() {
     if (!personalAccessToken) return null;
     try {
       const savedPat = localStorage.getItem(PAT_STORAGE_KEY);
@@ -272,7 +272,7 @@
       console.warn('Could not read saved PAT', storageError);
     }
     return null;
-  };
+  }
 
   const clearStoredPat = () => {
     const currentPat = getPatFromInput();
