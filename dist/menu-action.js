@@ -2,10 +2,21 @@ const getHostBase = () => {
   if (!document.referrer) {
     return window.location.origin;
   }
+
   const referrer = new URL(document.referrer);
   const segments = referrer.pathname.split('/').filter(Boolean);
   const hasTfsVirtualDir = segments[0]?.toLowerCase() === 'tfs';
-  return `${referrer.origin}${hasTfsVirtualDir ? '/tfs' : ''}`;
+  const collectionSegment = hasTfsVirtualDir ? segments[1] : segments[0];
+
+  const pathSegments = [referrer.origin];
+  if (hasTfsVirtualDir) {
+    pathSegments.push('tfs');
+  }
+  if (collectionSegment) {
+    pathSegments.push(collectionSegment);
+  }
+
+  return pathSegments.join('/');
 };
 
 const loadScript = async (src) => {

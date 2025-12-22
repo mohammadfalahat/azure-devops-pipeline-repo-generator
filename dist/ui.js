@@ -1,13 +1,24 @@
 (() => {
-  const getHostBase = () => {
-    if (!document.referrer) {
-      return window.location.origin;
-    }
-    const referrer = new URL(document.referrer);
-    const segments = referrer.pathname.split('/').filter(Boolean);
-    const hasTfsVirtualDir = segments[0]?.toLowerCase() === 'tfs';
-    return `${referrer.origin}${hasTfsVirtualDir ? '/tfs' : ''}`;
-  };
+const getHostBase = () => {
+  if (!document.referrer) {
+    return window.location.origin;
+  }
+
+  const referrer = new URL(document.referrer);
+  const segments = referrer.pathname.split('/').filter(Boolean);
+  const hasTfsVirtualDir = segments[0]?.toLowerCase() === 'tfs';
+  const collectionSegment = hasTfsVirtualDir ? segments[1] : segments[0];
+
+  const pathSegments = [referrer.origin];
+  if (hasTfsVirtualDir) {
+    pathSegments.push('tfs');
+  }
+  if (collectionSegment) {
+    pathSegments.push(collectionSegment);
+  }
+
+  return pathSegments.join('/');
+};
 
   const loadScript = (src) =>
     new Promise((resolve, reject) => {
@@ -238,38 +249,62 @@
 
   const getPatFromInput = () => (personalAccessToken?.value || '').trim();
 
+  const storageBackends = () => [localStorage, sessionStorage].filter(Boolean);
+
+  const readStoredPat = () => {
+    for (const storage of storageBackends()) {
+      try {
+        const value = storage.getItem(PAT_STORAGE_KEY);
+        if (value) {
+          return value;
+        }
+      } catch (error) {
+        console.warn('Could not read saved PAT from storage backend', error);
+      }
+    }
+    return null;
+  };
+
+  const writeStoredPat = (pat) => {
+    let stored = false;
+    for (const storage of storageBackends()) {
+      try {
+        if (pat) {
+          storage.setItem(PAT_STORAGE_KEY, pat);
+        } else {
+          storage.removeItem(PAT_STORAGE_KEY);
+        }
+        stored = true;
+      } catch (error) {
+        console.warn('Could not update saved PAT preference', error);
+      }
+    }
+    return stored;
+  };
+
   const persistPatIfNeeded = () => {
     const pat = getPatFromInput();
     if (!rememberPatCheckbox) {
       return pat;
     }
 
-    try {
-      if (rememberPatCheckbox.checked && pat) {
-        localStorage.setItem(PAT_STORAGE_KEY, pat);
-      } else {
-        localStorage.removeItem(PAT_STORAGE_KEY);
-      }
-    } catch (storageError) {
-      console.warn('Could not update saved PAT preference', storageError);
+    const stored = writeStoredPat(rememberPatCheckbox.checked && pat ? pat : null);
+    if (!stored && rememberPatCheckbox.checked) {
+      setStatus('Could not save the PAT locally. It will only be used for this session.', true);
     }
     return pat;
   };
 
   function loadPersistedPat() {
     if (!personalAccessToken) return null;
-    try {
-      const savedPat = localStorage.getItem(PAT_STORAGE_KEY);
-      if (savedPat) {
-        personalAccessToken.value = savedPat;
-        if (rememberPatCheckbox) {
-          rememberPatCheckbox.checked = true;
-        }
-        state.accessToken = state.accessToken || savedPat;
-        return savedPat;
+    const savedPat = readStoredPat();
+    if (savedPat) {
+      personalAccessToken.value = savedPat;
+      if (rememberPatCheckbox) {
+        rememberPatCheckbox.checked = true;
       }
-    } catch (storageError) {
-      console.warn('Could not read saved PAT', storageError);
+      state.accessToken = state.accessToken || savedPat;
+      return savedPat;
     }
     return null;
   }
@@ -282,11 +317,7 @@
     if (rememberPatCheckbox) {
       rememberPatCheckbox.checked = false;
     }
-    try {
-      localStorage.removeItem(PAT_STORAGE_KEY);
-    } catch (storageError) {
-      console.warn('Could not clear saved PAT', storageError);
-    }
+    writeStoredPat(null);
     if (state.accessToken === currentPat) {
       state.accessToken = null;
     }
