@@ -675,6 +675,17 @@
     }
   };
 
+  const buildPipelineConfiguration = ({ repoId, repositoryName, pipelinePath, branch }) => ({
+    type: 'yaml',
+    path: pipelinePath.startsWith('/') ? pipelinePath : `/${pipelinePath}`,
+    repository: {
+      id: repoId,
+      name: repositoryName,
+      type: 'azureReposGit',
+      defaultBranch: `refs/heads/${branch}`
+    }
+  });
+
   const getPipelineByName = async ({ hostUri, projectId, pipelineName, accessToken }) => {
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1-preview.1`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
@@ -685,48 +696,67 @@
     return (payload.value || []).find((pipeline) => pipeline.name === pipelineName);
   };
 
-  const createPipelineDefinition = async ({ hostUri, projectId, repo, pipelineName, pipelinePath, branch }) => {
-    const existing = await getPipelineByName({
-      hostUri,
-      projectId,
-      pipelineName,
-      accessToken: state.accessToken
+  const getPipelineById = async ({ hostUri, projectId, pipelineId, accessToken }) => {
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${pipelineId}?api-version=7.1-preview.1`;
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+    if (!res.ok) {
+      return undefined;
+    }
+    return res.json();
+  };
+
+  const upsertPipelineDefinition = async ({ hostUri, projectId, repo, pipelineName, pipelinePath, branch, accessToken }) => {
+    const repositoryName = `${state.projectName || projectId}/${repo.name}`;
+    const desiredConfig = buildPipelineConfiguration({
+      repoId: repo.id,
+      repositoryName,
+      pipelinePath,
+      branch
     });
-    if (existing) {
-      return existing;
+
+    const existing = await getPipelineByName({ hostUri, projectId, pipelineName, accessToken });
+    if (existing?.id) {
+      const current = await getPipelineById({ hostUri, projectId, pipelineId: existing.id, accessToken });
+      const needsUpdate =
+        current?.configuration?.path !== desiredConfig.path ||
+        current?.configuration?.repository?.id !== desiredConfig.repository.id ||
+        current?.configuration?.repository?.defaultBranch !== desiredConfig.repository.defaultBranch;
+
+      if (!needsUpdate) {
+        return current || existing;
+      }
+
+      const updateUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${existing.id}?api-version=7.1-preview.1`;
+      const res = await fetch(updateUrl, {
+        method: 'PUT',
+        headers: {
+          ...authHeaders(accessToken),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ name: pipelineName, configuration: desiredConfig })
+      });
+
+      if (!res.ok) {
+        const detail = await readErrorDetail(res);
+        throw buildHttpError('Failed to update pipeline', res, detail);
+      }
+
+      return res.json();
     }
 
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1-preview.1`;
-    const repositoryName = `${state.projectName || projectId}/${repo.name}`;
-    const body = {
-      name: pipelineName,
-      configuration: {
-        type: 'yaml',
-        path: `/${pipelinePath}`,
-        repository: {
-          id: repo.id,
-          name: repositoryName,
-          type: 'azureReposGit',
-          defaultBranch: `refs/heads/${branch}`
-        }
-      }
-    };
-
-    const res = await fetch(url, {
+    const createUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1-preview.1`;
+    const res = await fetch(createUrl, {
       method: 'POST',
       headers: {
-        ...authHeaders(state.accessToken),
+        ...authHeaders(accessToken),
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify({ name: pipelineName, configuration: desiredConfig })
     });
 
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      const error = new Error(`Failed to create pipeline (${res.status})${detail ? `: ${detail}` : ''}`);
-      error.status = res.status;
-      error.detail = detail;
-      throw error;
+      throw buildHttpError('Failed to create pipeline', res, detail);
     }
 
     return res.json();
@@ -888,13 +918,14 @@
         accessToken: state.accessToken
       });
 
-      await createPipelineDefinition({
+      await upsertPipelineDefinition({
         hostUri: state.hostUri,
         projectId: state.projectId,
         repo,
         pipelineName,
         pipelinePath: pipelineFilename,
-        branch: targetBranch
+        branch: targetBranch,
+        accessToken: state.accessToken
       });
 
       setStatus(`Pipeline ${pipelineName} created. Redirecting...`, false);

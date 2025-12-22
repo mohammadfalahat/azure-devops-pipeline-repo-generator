@@ -10,8 +10,21 @@
  */
 const http = require('http');
 
-const port = parseInt(process.env.PORT || '3000', 10);
-const verbose = process.env.LOG_PAYLOADS !== 'false';
+const args = process.argv.slice(2);
+
+const readArg = (flag) => {
+  const index = args.indexOf(flag);
+  return index !== -1 ? args[index + 1] : undefined;
+};
+
+const portFromArgs = readArg('--port') || readArg('-p');
+const portCandidate = parseInt(portFromArgs || process.env.PORT || '3000', 10);
+const port = Number.isFinite(portCandidate) ? portCandidate : 3000;
+
+if (!Number.isFinite(portCandidate)) {
+  console.warn(`Ignoring invalid port input: ${portFromArgs ?? process.env.PORT}`);
+}
+const verbose = args.includes('--quiet') ? false : process.env.LOG_PAYLOADS !== 'false';
 
 const summarizePayload = (payload = {}) => {
   const eventType = payload.eventType || payload?.resource?.eventType || 'unknown';
@@ -59,7 +72,7 @@ const logRequest = (req, body) => {
   }
 };
 
-if (process.argv.includes('--self-test')) {
+if (args.includes('--self-test')) {
   runSelfTest();
   process.exit(0);
 }
