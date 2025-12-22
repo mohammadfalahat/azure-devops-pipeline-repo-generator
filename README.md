@@ -191,7 +191,10 @@ current project.
    A minimal request body looks like this (omit secrets and adjust the
    repository/path values for your project). Leaving `pipeline.json` empty will
    return `Value cannot be null. Parameter name: inputParameters` because the
-   API expects these fields:
+   API expects these fields. The `repository.id` **must** be the GUID of the
+   repository that contains your YAML (for example `HRMS_Azure_DevOps`). You
+   can copy it from **Repos** → **Files** → **Clone** (URI contains `.../_git/<repoId>`)
+   or by calling `/_apis/git/repositories?api-version=6.0`.
 
    ```json
    {
@@ -200,6 +203,7 @@ current project.
        "type": "yaml",
        "path": "/HRMS-HRMS_Azure_DevOps-main.yml",
        "repository": {
+         "id": "<REPO_GUID>",
          "type": "azureReposGit",
          "name": "BulutCollection/HRMS/_git/HRMS_Azure_DevOps",
          "defaultBranch": "refs/heads/main"
