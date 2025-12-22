@@ -10,7 +10,7 @@ A lightweight Azure DevOps extension that adds a **Generate pipeline** action be
 - `containerRegistryService`: `BulutReg`
 - `komodoServer`: `DEMO-192.168.62.91` (with other options available)
 
-The extension uses the scoped Azure DevOps access token provided by the host page to create repositories and scaffold the pipeline template—no extra prompts or saved tokens are required.
+The extension uses the scoped Azure DevOps access token provided by the host page to create repositories and scaffold the pipeline template—no extra prompts or saved tokens are required. When requesting the token, the extension explicitly asks for **Build** (pipeline creation) scope in addition to the Repos scopes to avoid on-premises permission gaps.
 
 The manifest scopes include `vso.code_manage` so the extension can create repositories on behalf of the signed-in user (who must also have **Create repository** permission in the project).
 
@@ -151,6 +151,24 @@ the generator:
 4. After updating the extension permissions, reload the Repos page and relaunch
    the generator. If the error persists, sign out and back in to refresh the
    host session.
+
+## Troubleshooting pipeline creation permission failures (401/TF400813)
+
+If the form reports `Automatic pipeline creation failed: access was denied` or
+the browser console shows `TF400813: The user is not authorized to access this
+resource` when the generator tries to create the pipeline, the scoped token from
+Azure DevOps likely does not include the **Create pipeline** permission for the
+current project.
+
+1. Ask a project administrator to grant your identity (or a security group you
+   belong to) the **Create pipeline** permission under **Project settings** →
+   **Pipelines** → **Security**. Retry after the permission change.
+2. If you cannot obtain the permission immediately, you can still finish the
+   process manually using the YAML that the generator pushed to the scaffold
+   repository on the `main` branch. In Azure DevOps, go to **Pipelines** → **New
+   pipeline** → **Azure Repos Git** → **Existing Azure Pipelines YAML**, then
+   pick the `main` branch and the path shown in the generator status message
+   (for example `/project-repo-env.yml`).
 
 ## Local service hook testing (on-premises friendly)
 
