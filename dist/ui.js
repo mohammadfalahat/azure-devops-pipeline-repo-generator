@@ -240,8 +240,6 @@ const getHostBase = () => {
   };
   let initializationPromise;
 
-  loadPersistedPat();
-
   const setStatus = (message, isError = false) => {
     status.textContent = message;
     status.className = isError ? 'status-error' : 'status-success';
@@ -322,6 +320,8 @@ const getHostBase = () => {
       state.accessToken = null;
     }
   };
+
+  loadPersistedPat();
 
   const setSubmitting = (isSubmitting) => {
     if (submitButton) {
