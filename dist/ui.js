@@ -971,7 +971,8 @@
           state.projectId
         )}/_build?view=pipelines and choose that option), then select branch '${targetBranch}' and path '${manualPath}'. ` +
         `If you want to test the REST API directly with your own credentials, POST to ${createApiUrl} (for example: ${curlExample}). ` +
-        `Include the pipeline body (name + configuration) in pipeline.json; an empty file returns "Value cannot be null. Parameter name: inputParameters".`;
+        `Include the pipeline body (name + configuration) in pipeline.json; an empty file returns "Value cannot be null. Parameter name: inputParameters". ` +
+        `The repository.id in that body must be the GUID of the YAML repository (for example from /_apis/git/repositories); leaving it blank yields "repositoryId must not be Guid.Empty."`;
       const detailMessage = error?.message ? `Automatic pipeline creation failed: ${error.message}` : 'Automatic pipeline creation failed.';
       setStatus(isUnauthorizedError(error) ? unauthorizedMessage : detailMessage, true);
     }
