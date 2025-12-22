@@ -191,9 +191,9 @@ const getProject = (context) =>
 const normalizeRepositoryName = (name) => {
   if (!name) return undefined;
   try {
-    return decodeURIComponent(name).trim().toLowerCase();
+    return decodeURIComponent(name).trim();
   } catch (error) {
-    return name.trim().toLowerCase();
+    return name.trim();
   }
 };
 
@@ -243,22 +243,24 @@ const getRepository = (context) =>
 const getBranchName = (context) => {
   const actionContext = getActionContext(context);
   const branchCandidates = [
-    actionContext?.branch?.name,
     actionContext?.branch?.fullName,
     actionContext?.branch?.refName,
-    actionContext?.gitRef?.name,
+    actionContext?.branch?.path,
+    actionContext?.branch?.name,
     actionContext?.gitRef?.fullName,
     actionContext?.gitRef?.refName,
-    actionContext?.ref?.name,
+    actionContext?.gitRef?.name,
+    actionContext?.ref?.fullName,
     actionContext?.ref?.refName,
+    actionContext?.ref?.name,
     actionContext?.refName,
     actionContext?.selectedItem?.refName,
     actionContext?.selectedItem?.name,
     actionContext?.item?.refName,
     actionContext?.item?.name,
     actionContext?.branchName,
-    actionContext?.name,
-    actionContext?.fullName
+    actionContext?.fullName,
+    actionContext?.name
   ];
 
   const branchFromContext = branchCandidates.find((value) => typeof value === 'string' && value.trim().length > 0);
