@@ -162,12 +162,16 @@
   const personalAccessToken = document.getElementById('personalAccessToken');
   const rememberPatCheckbox = document.getElementById('rememberPat');
   const clearPatButton = document.getElementById('clearPat');
+  const tokenForm = document.getElementById('token-form');
+  const tokenSection = document.getElementById('token-section');
   const registrySelect = document.getElementById('containerRegistryService');
   const dockerfileInput = document.getElementById('dockerfileDir');
   const form = document.getElementById('pipeline-form');
   const status = document.getElementById('status');
   const targetRepoInput = document.getElementById('targetRepo');
   const komodoSelect = document.getElementById('komodoServer');
+  const pipelineSection = document.getElementById('pipeline-section');
+  const tokenContinueButton = document.getElementById('token-continue');
   const submitButton = form?.querySelector('button[type="submit"]');
 
   if (targetRepoInput) {
@@ -179,8 +183,6 @@
       serviceInput.dataset.autofilled = 'false';
     });
   }
-
-  loadPersistedPat();
 
   if (personalAccessToken) {
     personalAccessToken.addEventListener('input', () => {
@@ -226,6 +228,8 @@
     sourceBranch: null
   };
   let initializationPromise;
+
+  loadPersistedPat();
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
@@ -291,6 +295,15 @@
   const setSubmitting = (isSubmitting) => {
     if (submitButton) {
       submitButton.disabled = isSubmitting;
+    }
+  };
+
+  const showPipelineForm = () => {
+    if (tokenSection) {
+      tokenSection.classList.add('hidden');
+    }
+    if (pipelineSection) {
+      pipelineSection.classList.remove('hidden');
     }
   };
 
@@ -1294,11 +1307,35 @@
     }
   };
 
+  const startInitialization = () => {
+    showPipelineForm();
+    if (initializationPromise) {
+      return initializationPromise;
+    }
+    setStatus('Loading Azure DevOps context...');
+    initializationPromise = init();
+    return initializationPromise;
+  };
+
   if (environmentSelect) {
     environmentSelect.addEventListener('change', (event) => {
       setKomodoServerFromEnvironment(event.target.value);
     });
   }
+
+  tokenForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const pat = persistPatIfNeeded();
+    state.accessToken = pat || null;
+    if (tokenContinueButton) {
+      tokenContinueButton.disabled = true;
+    }
+    startInitialization().finally(() => {
+      if (tokenContinueButton) {
+        tokenContinueButton.disabled = false;
+      }
+    });
+  });
 
   window.addEventListener('message', (event) => {
     if (!event?.data || event.origin !== window.location.origin) return;
@@ -1308,5 +1345,7 @@
     }
   });
 
-  initializationPromise = init();
+  if (!tokenForm) {
+    startInitialization();
+  }
 })();
