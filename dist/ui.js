@@ -350,29 +350,24 @@
     throw lastError;
   };
 
-  const sanitizeProjectName = (name) => name.replace(/[^A-Za-z0-9]/g, '_');
-
-  const slugifyName = (value, fallback) => {
-    const slug = value
-      ?.toString()
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, '_')
-      .replace(/^[-_]+|[-_]+$/g, '');
-    return slug || fallback;
-  };
-
   const buildPipelineFilename = ({ projectName, repositoryName, branchName }) => {
-    const projectSlug = slugifyName(projectName, 'project');
-    const repoSlug = slugifyName(repositoryName || projectName, 'repo');
-    const branchSlug = slugifyName(branchName?.replace(/^refs\/heads\//, ''), 'branch');
-    return `${projectSlug}-${repoSlug}-${branchSlug}.yml`;
+    const sanitizeSegment = (segment, fallback) => {
+      const value = segment?.toString().trim();
+      if (!value) return fallback;
+      // Preserve original casing but replace path separators to keep the filename valid.
+      return value.replace(/[^\w\s.-]/g, '_').replace(/[\\/]+/g, '-');
+    };
+
+    const projectSegment = sanitizeSegment(projectName, 'project');
+    const repoSegment = sanitizeSegment(repositoryName || projectName, 'repo');
+    const branchSegment = sanitizeSegment(branchName?.replace(/^refs\/heads\//, ''), 'branch');
+    return `${projectSegment}-${repoSegment}-${branchSegment}.yml`;
   };
 
   const buildPipelineName = ({ projectName, repositoryName, environment }) => {
-    const projectSegment = sanitizeProjectName(projectName || 'project');
-    const repoSegment = sanitizeProjectName(repositoryName || projectName || 'repo');
-    const environmentSegment = sanitizeProjectName(environment || 'env');
+    const projectSegment = projectName || 'project';
+    const repoSegment = repositoryName || projectName || 'repo';
+    const environmentSegment = environment || 'env';
     return `${projectSegment}_${repoSegment}_${environmentSegment}`;
   };
 
@@ -421,7 +416,7 @@
       branchInput.disabled = true;
     }
 
-    targetRepoInput.value = `${sanitizeProjectName(state.projectName || 'project')}_Azure_DevOps`;
+    targetRepoInput.value = `${state.projectName || 'project'}_Azure_DevOps`;
     setServiceNameFromRepository(state.repositoryName || state.projectName, state.projectName);
     applyDetectedEnvironment(sourceBranch || targetBranch);
     setKomodoServerFromEnvironment(environmentSelect?.value);
@@ -591,8 +586,7 @@
   };
 
   const ensureRepo = async ({ hostUri, projectId, projectName, accessToken }) => {
-    const sanitized = sanitizeProjectName(projectName);
-    const targetName = `${sanitized}_Azure_DevOps`;
+    const targetName = `${projectName}_Azure_DevOps`;
     targetRepoInput.value = targetName;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories?api-version=6.0`;
 
@@ -976,7 +970,8 @@
         `Pipelines > New pipeline > Azure Repos Git > Existing Azure Pipelines YAML (or open ${state.hostUri}${encodeURIComponent(
           state.projectId
         )}/_build?view=pipelines and choose that option), then select branch '${targetBranch}' and path '${manualPath}'. ` +
-        `If you want to test the REST API directly with your own credentials, POST to ${createApiUrl} (for example: ${curlExample}).`;
+        `If you want to test the REST API directly with your own credentials, POST to ${createApiUrl} (for example: ${curlExample}). ` +
+        `Include the pipeline body (name + configuration) in pipeline.json; an empty file returns "Value cannot be null. Parameter name: inputParameters".`;
       const detailMessage = error?.message ? `Automatic pipeline creation failed: ${error.message}` : 'Automatic pipeline creation failed.';
       setStatus(isUnauthorizedError(error) ? unauthorizedMessage : detailMessage, true);
     }
@@ -1089,7 +1084,7 @@
       branchInput.value = SCAFFOLD_BRANCH;
       branchInput.disabled = true;
     }
-    targetRepoInput.value = `${sanitizeProjectName(projectNameFromQuery || 'project')}_Azure_DevOps`;
+    targetRepoInput.value = `${projectNameFromQuery || 'project'}_Azure_DevOps`;
     setServiceNameFromRepository(repoNameFromQuery || projectNameFromQuery, projectNameFromQuery);
     applyDetectedEnvironment(initialBranch);
     const hasHostContext = Boolean(isFramed && (hasReferrer || projectIdFromQuery || repoIdFromQuery || hasOpener));
@@ -1130,7 +1125,7 @@
         branchInput.value = SCAFFOLD_BRANCH;
         branchInput.disabled = true;
       }
-      targetRepoInput.value = `${sanitizeProjectName(projectName || 'project')}_Azure_DevOps`;
+      targetRepoInput.value = `${projectName || 'project'}_Azure_DevOps`;
       setServiceNameFromRepository(repositoryName || projectName, projectName);
       applyDetectedEnvironment(branch);
       setKomodoServerFromEnvironment(environmentSelect?.value);
