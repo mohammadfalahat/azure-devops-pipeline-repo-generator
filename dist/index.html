@@ -27,29 +27,27 @@
         <p class="eyebrow">Step 1</p>
         <h2>Provide access token</h2>
         <p class="hint">
-          Enter a Personal Access Token (PAT) with the required scopes or continue without one to use the Azure DevOps token.
-          The generator will use this token to load the selected branch details.
+          Paste a Personal Access Token (PAT) that has the required scopes for this project. The generator will use only this
+          token for the current session and will not store it after you close the page.
         </p>
       </div>
       <form id="token-form">
         <div class="field">
-          <label for="personalAccessToken">Access token override (optional)</label>
+          <label for="personalAccessToken">Access token (required)</label>
           <div class="inline-input">
             <input
               id="personalAccessToken"
               name="personalAccessToken"
               type="password"
               autocomplete="off"
+              required
               placeholder="Enter a PAT with the needed scopes"
             />
             <button type="button" class="secondary" id="clearPat">Clear</button>
           </div>
-          <label class="checkbox-inline">
-            <input type="checkbox" id="rememberPat" /> Remember this token on this device
-          </label>
           <small>
-            Leave blank to use the access token supplied by Azure DevOps. Provide a Personal Access Token if you need broader
-            permissions (for example, pipeline creation) and optionally store it locally.
+            Provide a PAT each time you open the generator. The token stays in memory only for this session and is used for all
+            Azure DevOps calls.
           </small>
         </div>
         <button type="submit" class="primary" id="token-continue">Continue to pipeline form</button>

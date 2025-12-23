@@ -171,7 +171,6 @@ const getHostBase = () => {
   const poolSelect = document.getElementById('pool');
   const serviceInput = document.getElementById('service');
   const personalAccessToken = document.getElementById('personalAccessToken');
-  const rememberPatCheckbox = document.getElementById('rememberPat');
   const clearPatButton = document.getElementById('clearPat');
   const tokenForm = document.getElementById('token-form');
   const tokenSection = document.getElementById('token-section');
@@ -199,18 +198,6 @@ const getHostBase = () => {
     personalAccessToken.addEventListener('input', () => {
       const pat = getPatFromInput();
       state.accessToken = pat || state.accessToken;
-      if (!pat && rememberPatCheckbox) {
-        rememberPatCheckbox.checked = false;
-      }
-    });
-  }
-
-  if (rememberPatCheckbox) {
-    rememberPatCheckbox.addEventListener('change', () => {
-      const pat = persistPatIfNeeded();
-      if (pat) {
-        state.accessToken = pat;
-      }
     });
   }
 
@@ -222,7 +209,6 @@ const getHostBase = () => {
   }
 
   const SCAFFOLD_BRANCH = 'main';
-  const PAT_STORAGE_KEY = 'pipeline-generator-pat';
 
   const state = {
     sdk: null,
@@ -247,81 +233,15 @@ const getHostBase = () => {
 
   const getPatFromInput = () => (personalAccessToken?.value || '').trim();
 
-  const storageBackends = () => [localStorage, sessionStorage].filter(Boolean);
-
-  const readStoredPat = () => {
-    for (const storage of storageBackends()) {
-      try {
-        const value = storage.getItem(PAT_STORAGE_KEY);
-        if (value) {
-          return value;
-        }
-      } catch (error) {
-        console.warn('Could not read saved PAT from storage backend', error);
-      }
-    }
-    return null;
-  };
-
-  const writeStoredPat = (pat) => {
-    let stored = false;
-    for (const storage of storageBackends()) {
-      try {
-        if (pat) {
-          storage.setItem(PAT_STORAGE_KEY, pat);
-        } else {
-          storage.removeItem(PAT_STORAGE_KEY);
-        }
-        stored = true;
-      } catch (error) {
-        console.warn('Could not update saved PAT preference', error);
-      }
-    }
-    return stored;
-  };
-
-  const persistPatIfNeeded = () => {
-    const pat = getPatFromInput();
-    if (!rememberPatCheckbox) {
-      return pat;
-    }
-
-    const stored = writeStoredPat(rememberPatCheckbox.checked && pat ? pat : null);
-    if (!stored && rememberPatCheckbox.checked) {
-      setStatus('Could not save the PAT locally. It will only be used for this session.', true);
-    }
-    return pat;
-  };
-
-  function loadPersistedPat() {
-    if (!personalAccessToken) return null;
-    const savedPat = readStoredPat();
-    if (savedPat) {
-      personalAccessToken.value = savedPat;
-      if (rememberPatCheckbox) {
-        rememberPatCheckbox.checked = true;
-      }
-      state.accessToken = state.accessToken || savedPat;
-      return savedPat;
-    }
-    return null;
-  }
-
   const clearStoredPat = () => {
     const currentPat = getPatFromInput();
     if (personalAccessToken) {
       personalAccessToken.value = '';
     }
-    if (rememberPatCheckbox) {
-      rememberPatCheckbox.checked = false;
-    }
-    writeStoredPat(null);
     if (state.accessToken === currentPat) {
       state.accessToken = null;
     }
   };
-
-  loadPersistedPat();
 
   const setSubmitting = (isSubmitting) => {
     if (submitButton) {
@@ -438,48 +358,6 @@ const getHostBase = () => {
       error.detail = detail;
     }
     return error;
-  };
-
-  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  const getAccessTokenFromSdk = async (sdk, maxAttempts = 3, delayMs = 800) => {
-    if (!sdk?.getAccessToken) {
-      throw new Error('Azure DevOps access token API is unavailable.');
-    }
-
-    // Explicitly request the scopes required to create pipelines so on-premises
-    // servers issue a token that can manage build definitions (TF400813/401
-    // otherwise occur when the returned token only covers Repos).
-    const requestedScope = ['vso.code', 'vso.code_manage', 'vso.project', 'vso.build'].join(' ');
-
-    let lastError;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        let token;
-        try {
-          token = await sdk.getAccessToken({ scope: requestedScope });
-        } catch (scopeError) {
-          // Older SDKs do not support the scoped call; fall back to the default
-          // behavior so the token acquisition still succeeds.
-          token = await sdk.getAccessToken();
-          if (!token) {
-            throw scopeError;
-          }
-        }
-        if (token) {
-          return token;
-        }
-        lastError = new Error('Azure DevOps did not provide an access token.');
-      } catch (error) {
-        lastError = error;
-      }
-
-      if (attempt < maxAttempts) {
-        await delay(delayMs * attempt);
-      }
-    }
-
-    throw lastError;
   };
 
   const buildPipelineFilename = ({ projectName, repositoryName, branchName }) => {
@@ -1019,17 +897,15 @@ const getHostBase = () => {
     setStatus('Generating pipeline template...');
     setSubmitting(true);
 
-    const manualPat = persistPatIfNeeded();
+    const manualPat = getPatFromInput();
     if (manualPat) {
       state.accessToken = manualPat;
     }
 
-    if (!state.accessToken && state.sdk?.getAccessToken) {
-      try {
-        state.accessToken = await getAccessTokenFromSdk(state.sdk);
-      } catch (error) {
-        console.error('Failed to refresh access token during submit', error);
-      }
+    if (!state.accessToken) {
+      setStatus('A Personal Access Token is required to generate the pipeline. Please paste it above.', true);
+      setSubmitting(false);
+      return;
     }
 
     if (!state.projectId && state.sdk?.getWebContext) {
@@ -1285,16 +1161,15 @@ const getHostBase = () => {
 
       const hostUri = (context.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
       state.hostUri = hostUri;
-      let accessToken = state.accessToken || getPatFromInput();
+      const accessToken = state.accessToken || getPatFromInput();
 
       try {
         if (!accessToken) {
-          accessToken = await getAccessTokenFromSdk(sdk);
+          setStatus('Paste a Personal Access Token to continue. The extension does not store tokens between sessions.', true);
+          sdk.notifyLoadFailed?.('Access token unavailable');
+          return;
         }
         state.accessToken = accessToken;
-        if (getPatFromInput()) {
-          persistPatIfNeeded();
-        }
         if (!repositoryName && repoId) {
           try {
             const repoUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${encodeURIComponent(
@@ -1356,8 +1231,12 @@ const getHostBase = () => {
 
   tokenForm?.addEventListener('submit', (event) => {
     event.preventDefault();
-    const pat = persistPatIfNeeded();
-    state.accessToken = pat || null;
+    const pat = getPatFromInput();
+    if (!pat) {
+      setStatus('Please paste a Personal Access Token to continue.', true);
+      return;
+    }
+    state.accessToken = pat;
     if (tokenContinueButton) {
       tokenContinueButton.disabled = true;
     }
