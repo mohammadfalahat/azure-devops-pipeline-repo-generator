@@ -906,7 +906,7 @@
 
     if (!state.accessToken) {
       setStatus(
-        'Access token unavailable from Azure DevOps. Reload the page and reopen the generator from a branch action.',
+        'Access token unavailable from Azure DevOps. Reload the page and reopen the generator from a branch action to push and view the YAML automatically.',
         true
       );
       setSubmitting(false);
@@ -937,7 +937,7 @@
     });
 
     if (!state.accessToken || !state.projectId) {
-      setStatus('Open the extension from Azure DevOps to push the template and create the pipeline automatically.', true);
+      setStatus('Open the extension from Azure DevOps to push the template and open it automatically.', true);
       setSubmitting(false);
       return yaml;
     }
@@ -970,43 +970,21 @@
         accessToken: state.accessToken
       });
 
-      await upsertPipelineDefinition({
-        hostUri: state.hostUri,
-        projectId: state.projectId,
-        repo,
-        pipelineName,
-        pipelinePath: pipelineFilename,
-        branch: targetBranch,
-        accessToken: state.accessToken
-      });
-
       const repoName = state.repositoryName || repo.name;
       const repoPath = `${state.hostUri}${encodeURIComponent(state.projectId)}/_git/${encodeURIComponent(repoName || repo.id)}`;
       const fileQuery = `?path=${encodeURIComponent(`/${pipelineFilename}`)}&version=GB${encodeURIComponent(
         targetBranch
       )}&_a=contents`;
 
-      setStatus(`Pipeline ${pipelineName} created. Redirecting to ${pipelineFilename}...`, false);
+      setStatus(`Pipeline YAML ${pipelineFilename} created for ${pipelineName}. Redirecting to the file...`, false);
       window.location.href = `${repoPath}${fileQuery}`;
     } catch (error) {
       console.error(error);
       const detail = sanitizeErrorDetail(error?.detail || error?.message || '');
-      const manualPath = `/${pipelineFilename}`;
-      const createApiUrl = `${state.hostUri}${encodeURIComponent(state.projectId)}/_apis/pipelines?api-version=7.1`;
-      const curlExample =
-        `curl -u :<PAT_WITH_PIPELINE_SCOPE> -H "Content-Type: application/json" ` +
-        `-d @pipeline.json "${createApiUrl}"`;
+      const detailMessage = error?.message ? `Pipeline YAML creation failed: ${error.message}` : 'Pipeline YAML creation failed.';
       const unauthorizedMessage =
-        `Automatic pipeline creation failed: access was denied${detail ? ` (${detail})` : ''}. ` +
-        `${state.accessToken ? 'The token from Azure DevOps may not include pipeline creation rights for this project; ask a project administrator to grant Create pipeline permission or retry with a token that includes that scope.' : 'Open the extension from Azure DevOps so we can request a project-scoped token with pipeline creation rights.'} ` +
-        `You can still create the pipeline manually with the generated YAML at ${manualPath}: ` +
-        `Pipelines > New pipeline > Azure Repos Git > Existing Azure Pipelines YAML (or open ${state.hostUri}${encodeURIComponent(
-          state.projectId
-        )}/_build?view=pipelines and choose that option), then select branch '${targetBranch}' and path '${manualPath}'. ` +
-        `If you want to test the REST API directly with your own credentials, POST to ${createApiUrl} (for example: ${curlExample}). ` +
-        `Include the pipeline body (name + configuration) in pipeline.json; an empty file returns "Value cannot be null. Parameter name: inputParameters". ` +
-        `The repository.id in that body must be the GUID of the YAML repository (for example from /_apis/git/repositories); leaving it blank yields "repositoryId must not be Guid.Empty."`;
-      const detailMessage = error?.message ? `Automatic pipeline creation failed: ${error.message}` : 'Automatic pipeline creation failed.';
+        `Access was denied while creating or updating the repository${detail ? ` (${detail})` : ''}. ` +
+        'Ask a project administrator to grant you permissions to contribute to the repository, then retry from Azure DevOps.';
       setStatus(isUnauthorizedError(error) ? unauthorizedMessage : detailMessage, true);
     }
 
@@ -1124,7 +1102,7 @@
     const hasHostContext = Boolean(isFramed && (hasReferrer || projectIdFromQuery || repoIdFromQuery || hasOpener));
     if (!hasHostContext || !shouldAttemptSdk) {
       setStatus(
-        'Running outside Azure DevOps. Open the extension from a branch action to create the repository and pipeline automatically.',
+        'Running outside Azure DevOps. Open the extension from a branch action to create the repository and pipeline file automatically.',
         true
       );
       setSubmitting(false);
