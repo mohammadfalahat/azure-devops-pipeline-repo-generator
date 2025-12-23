@@ -179,18 +179,12 @@
   const environmentSelect = document.getElementById('environment');
   const poolSelect = document.getElementById('pool');
   const serviceInput = document.getElementById('service');
-  const personalAccessToken = document.getElementById('personalAccessToken');
-  const clearPatButton = document.getElementById('clearPat');
-  const tokenForm = document.getElementById('token-form');
-  const tokenSection = document.getElementById('token-section');
   const registrySelect = document.getElementById('containerRegistryService');
   const dockerfileInput = document.getElementById('dockerfileDir');
   const form = document.getElementById('pipeline-form');
   const status = document.getElementById('status');
   const targetRepoInput = document.getElementById('targetRepo');
   const komodoSelect = document.getElementById('komodoServer');
-  const pipelineSection = document.getElementById('pipeline-section');
-  const tokenContinueButton = document.getElementById('token-continue');
   const submitButton = form?.querySelector('button[type="submit"]');
 
   if (targetRepoInput) {
@@ -200,20 +194,6 @@
   if (serviceInput) {
     serviceInput.addEventListener('input', () => {
       serviceInput.dataset.autofilled = 'false';
-    });
-  }
-
-  if (personalAccessToken) {
-    personalAccessToken.addEventListener('input', () => {
-      const pat = getPatFromInput();
-      state.accessToken = pat || state.accessToken;
-    });
-  }
-
-  if (clearPatButton) {
-    clearPatButton.addEventListener('click', () => {
-      clearStoredPat();
-      setStatus('Cleared the saved access token. The generator will use the Azure DevOps token by default.');
     });
   }
 
@@ -240,30 +220,9 @@
     status.className = isError ? 'status-error' : 'status-success';
   };
 
-  const getPatFromInput = () => (personalAccessToken?.value || '').trim();
-
-  const clearStoredPat = () => {
-    const currentPat = getPatFromInput();
-    if (personalAccessToken) {
-      personalAccessToken.value = '';
-    }
-    if (state.accessToken === currentPat) {
-      state.accessToken = null;
-    }
-  };
-
   const setSubmitting = (isSubmitting) => {
     if (submitButton) {
       submitButton.disabled = isSubmitting;
-    }
-  };
-
-  const showPipelineForm = () => {
-    if (tokenSection) {
-      tokenSection.classList.add('hidden');
-    }
-    if (pipelineSection) {
-      pipelineSection.classList.remove('hidden');
     }
   };
 
@@ -320,6 +279,45 @@
       setStatus('Could not auto-detect Dockerfile location. Please fill it manually.', true);
       return [];
     }
+  };
+
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const normalizeAccessTokenError = (error) => {
+    const message = error?.message || 'Unknown Azure DevOps authentication error';
+    if (/HostAuthorizationNotFound/i.test(message)) {
+      return 'Host authorization was not found. Re-enable or reinstall the Pipeline Generator extension for this collection and project (Collection Settings → Extensions → Pipeline Generator → Manage), then reload the page.';
+    }
+    return message;
+  };
+
+  const getAccessTokenWithRetry = async (sdk, maxAttempts = 3, delayMs = 800) => {
+    if (!sdk?.getAccessToken) {
+      return undefined;
+    }
+
+    let lastError;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const token = await sdk.getAccessToken();
+        if (token) {
+          return token;
+        }
+        lastError = new Error('Azure DevOps returned an empty access token.');
+      } catch (error) {
+        lastError = error;
+
+        if (error?.status === 500) {
+          break;
+        }
+      }
+
+      if (attempt < maxAttempts) {
+        await delay(delayMs * attempt);
+      }
+    }
+
+    throw lastError;
   };
 
   const getAuthHeader = (token) => {
@@ -906,13 +904,11 @@
     setStatus('Generating pipeline template...');
     setSubmitting(true);
 
-    const manualPat = getPatFromInput();
-    if (manualPat) {
-      state.accessToken = manualPat;
-    }
-
     if (!state.accessToken) {
-      setStatus('A Personal Access Token is required to generate the pipeline. Please paste it above.', true);
+      setStatus(
+        'Access token unavailable from Azure DevOps. Reload the page and reopen the generator from a branch action.',
+        true
+      );
       setSubmitting(false);
       return;
     }
@@ -984,8 +980,14 @@
         accessToken: state.accessToken
       });
 
-      setStatus(`Pipeline ${pipelineName} created. Redirecting...`, false);
-      window.location.href = `${state.hostUri}${encodeURIComponent(state.projectId)}/_build`;
+      const repoName = state.repositoryName || repo.name;
+      const repoPath = `${state.hostUri}${encodeURIComponent(state.projectId)}/_git/${encodeURIComponent(repoName || repo.id)}`;
+      const fileQuery = `?path=${encodeURIComponent(`/${pipelineFilename}`)}&version=GB${encodeURIComponent(
+        targetBranch
+      )}&_a=contents`;
+
+      setStatus(`Pipeline ${pipelineName} created. Redirecting to ${pipelineFilename}...`, false);
+      window.location.href = `${repoPath}${fileQuery}`;
     } catch (error) {
       console.error(error);
       const detail = sanitizeErrorDetail(error?.detail || error?.message || '');
@@ -1170,14 +1172,30 @@
 
       const hostUri = (context.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
       state.hostUri = hostUri;
-      const accessToken = state.accessToken || getPatFromInput();
+      let accessToken = state.accessToken;
+      let accessTokenError = null;
+
+      if (!accessToken) {
+        try {
+          accessToken = await getAccessTokenWithRetry(sdk);
+        } catch (tokenError) {
+          console.error('Failed to acquire Azure DevOps access token', tokenError);
+          accessTokenError = normalizeAccessTokenError(tokenError);
+        }
+      }
+
+      state.accessTokenError = accessTokenError;
+
+      if (!accessToken) {
+        const errorMessage =
+          accessTokenError ||
+          'Failed to acquire access token from Azure DevOps. Reload the page and relaunch the generator from a branch action.';
+        setStatus(errorMessage, true);
+        sdk.notifyLoadFailed?.('Access token unavailable');
+        return;
+      }
 
       try {
-        if (!accessToken) {
-          setStatus('Paste a Personal Access Token to continue. The extension does not store tokens between sessions.', true);
-          sdk.notifyLoadFailed?.('Access token unavailable');
-          return;
-        }
         state.accessToken = accessToken;
         if (!repositoryName && repoId) {
           try {
@@ -1202,8 +1220,10 @@
         ]);
         setStatus('Azure DevOps context ready. Generate the pipeline when you are ready.');
       } catch (tokenError) {
-        console.error('Failed to acquire Azure DevOps access token', tokenError);
-        setStatus('Failed to acquire access token from Azure DevOps. Reload the page and try again.', true);
+        console.error('Failed to initialize Azure DevOps context', tokenError);
+        const detailMessage =
+          accessTokenError || 'Failed to acquire access token from Azure DevOps. Reload the page and try again.';
+        setStatus(detailMessage, true);
         sdk.notifyLoadFailed?.('Access token unavailable');
         return;
       }
@@ -1223,7 +1243,6 @@
   };
 
   const startInitialization = () => {
-    showPipelineForm();
     if (initializationPromise) {
       return initializationPromise;
     }
@@ -1238,24 +1257,6 @@
     });
   }
 
-  tokenForm?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const pat = getPatFromInput();
-    if (!pat) {
-      setStatus('Please paste a Personal Access Token to continue.', true);
-      return;
-    }
-    state.accessToken = pat;
-    if (tokenContinueButton) {
-      tokenContinueButton.disabled = true;
-    }
-    startInitialization().finally(() => {
-      if (tokenContinueButton) {
-        tokenContinueButton.disabled = false;
-      }
-    });
-  });
-
   window.addEventListener('message', (event) => {
     if (!event?.data || event.origin !== window.location.origin) return;
     if (event.data.type === 'pipeline-bootstrap') {
@@ -1264,7 +1265,5 @@
     }
   });
 
-  if (!tokenForm) {
-    startInitialization();
-  }
+  startInitialization();
 })();
