@@ -22,39 +22,7 @@
       </div>
     </header>
 
-    <section class="panel" id="token-section">
-      <div class="section-header">
-        <p class="eyebrow">Step 1</p>
-        <h2>Provide access token</h2>
-        <p class="hint">
-          Paste a Personal Access Token (PAT) that has the required scopes for this project. The generator will use only this
-          token for the current session and will not store it after you close the page.
-        </p>
-      </div>
-      <form id="token-form">
-        <div class="field">
-          <label for="personalAccessToken">Access token (required)</label>
-          <div class="inline-input">
-            <input
-              id="personalAccessToken"
-              name="personalAccessToken"
-              type="password"
-              autocomplete="off"
-              required
-              placeholder="Enter a PAT with the needed scopes"
-            />
-            <button type="button" class="secondary" id="clearPat">Clear</button>
-          </div>
-          <small>
-            Provide a PAT each time you open the generator. The token stays in memory only for this session and is used for all
-            Azure DevOps calls.
-          </small>
-        </div>
-        <button type="submit" class="primary" id="token-continue">Continue to pipeline form</button>
-      </form>
-    </section>
-
-    <section class="panel hidden" id="pipeline-section">
+    <section class="panel" id="pipeline-section">
       <p class="hint">
         Fill the fields below, then generate the pipeline. The generator will push the template and
         register the pipeline automatically.
