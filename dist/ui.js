@@ -1,8 +1,8 @@
 (() => {
-const getHostBase = () => {
-  if (!document.referrer) {
-    return window.location.origin;
-  }
+  const getHostBase = () => {
+    if (!document.referrer) {
+      return window.location.origin;
+    }
 
   const referrer = new URL(document.referrer);
   const segments = referrer.pathname.split('/').filter(Boolean);
@@ -19,6 +19,15 @@ const getHostBase = () => {
 
   return pathSegments.join('/');
 };
+
+  const normalizeHostUri = (hostUri) => {
+    if (!hostUri) return '';
+
+    const trimmed = hostUri.replace(/\/+$/, '');
+    const withoutApis = trimmed.replace(/\/_apis\/?$/i, '');
+
+    return `${withoutApis.replace(/\/+$/, '')}/`;
+  };
 
   const loadScript = (src) =>
     new Promise((resolve, reject) => {
@@ -406,7 +415,7 @@ const getHostBase = () => {
       accessTokenError
     } = payload;
 
-    const normalizedHost = (hostUri || state.hostUri || getHostBase()).replace(/\/+$/, '') + '/';
+    const normalizedHost = normalizeHostUri(hostUri || state.hostUri || getHostBase());
     state.sourceBranch = branch || state.sourceBranch;
     state.branch = SCAFFOLD_BRANCH;
     state.projectId = projectId || state.projectId;
