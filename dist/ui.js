@@ -842,7 +842,7 @@
     const projectName = options.rawProjectName || options.projectName || 'PROJECTNAME';
     const projectRepoName = `${projectName}/${sourceRepositoryName}`;
     return [
-      "trigger: none                      # always none",
+      "trigger: none",
       '',
       'resources:',
       '  repositories:',
@@ -854,12 +854,12 @@
       '',
       `    - repository: otherRepo`,
       '      type: git',
-      `      name: "${projectRepoName}"             # PROJECTNAME/REPONAME`,
-      `      ref: refs/heads/${sourceBranchName}        # refs/heads/BRANCH`,
+      `      name: "${projectRepoName}"`,
+      `      ref: refs/heads/${sourceBranchName}`,
       '      trigger:',
       '        branches:',
       '          include:',
-      `            - ${sourceBranchName}                # BRANCH`,
+      `            - ${sourceBranchName}`,
       '',
       'variables:',
       '- group: KomodoAPI',
