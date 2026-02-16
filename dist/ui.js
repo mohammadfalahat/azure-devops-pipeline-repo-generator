@@ -395,6 +395,11 @@
     return `${projectSegment}_${repoSegment}_${environmentSegment}`;
   };
 
+  const getProjectRouteSegment = () => {
+    const candidate = state.rawProjectName || state.projectName || state.projectId;
+    return candidate ? encodeURIComponent(candidate) : '';
+  };
+
   const isUnauthorizedError = (error) =>
     error?.status === 401 ||
     error?.status === 403 ||
@@ -971,7 +976,8 @@
       });
 
       const repoName = state.repositoryName || repo.name;
-      const repoPath = `${state.hostUri}${encodeURIComponent(state.projectId)}/_git/${encodeURIComponent(repoName || repo.id)}`;
+      const projectRoute = getProjectRouteSegment();
+      const repoPath = `${state.hostUri}${projectRoute}/_git/${encodeURIComponent(repoName || repo.id)}`;
       const fileQuery = `?path=${encodeURIComponent(`/${pipelineFilename}`)}&version=GB${encodeURIComponent(
         targetBranch
       )}&_a=contents`;
@@ -1000,7 +1006,7 @@
       ? `&versionDescriptor.version=${encodeURIComponent(branch)}&versionDescriptor.versionType=branch`
       : '';
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/items?recursionLevel=Full&includeContentMetadata=true${versionDescriptor}&api-version=6.0`;
-    const res = await fetch(url, { headers: { Authorization: getAuthHeader(accessToken) } });
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       const detail = await readErrorDetail(res);
       throw buildHttpError('Failed to scan repository for Dockerfiles', res, detail);
