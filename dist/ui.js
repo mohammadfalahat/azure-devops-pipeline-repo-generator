@@ -325,12 +325,12 @@
     if (!tokenValue) {
       throw new Error('Extension access token was unavailable.');
     }
-    const isLikelyJwt = tokenValue.split('.').length === 3;
-    if (isLikelyJwt) {
-      return `Bearer ${tokenValue}`;
-    }
-    const encoded = btoa(`:${tokenValue}`);
-    return `Basic ${encoded}`;
+
+    // Azure DevOps SDK access tokens are OAuth/session tokens and must be sent
+    // as Bearer credentials. Treating opaque (non-JWT) tokens as PATs and
+    // forcing Basic auth causes repeated browser username/password prompts on
+    // on-prem hosts whenever the server challenges unauthorized requests.
+    return `Bearer ${tokenValue}`;
   };
 
   const authHeaders = (token) => ({
