@@ -34,7 +34,6 @@
       const script = document.createElement('script');
       script.src = src;
       script.async = false;
-      script.crossOrigin = 'use-credentials';
       script.onload = resolve;
       script.onerror = () => reject(new Error(`Failed to load Azure DevOps SDK from ${src}`));
       document.head.appendChild(script);
@@ -90,14 +89,13 @@
       return ambientSdk;
     }
 
-    const hostSdk = `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`;
     const localSdk = new URL('./lib/VSS.SDK.min.js', window.location.href).toString();
     const localSdkFallback = new URL('./lib/VSS.SDK.js', window.location.href).toString();
-    // Prefer bundled SDK assets first because some Azure DevOps hosts block direct downloads
-    // of the platform SDK (e.g., returning an HTML login page with a text/html MIME type).
-    // Trying local files first avoids those MIME-type failures while keeping the host SDK
-    // as a last-resort option for environments that rely on it being served directly.
-    const candidates = [localSdk, localSdkFallback, hostSdk];
+    // Only load bundled SDK assets. Some on-prem Azure DevOps hosts challenge
+    // requests to the platform SDK endpoint with browser-level Basic auth, which
+    // causes repeated username/password popups even when the extension already
+    // has a valid access token.
+    const candidates = [localSdk, localSdkFallback];
 
     let lastError;
     for (const src of candidates) {
@@ -306,6 +304,11 @@
         lastError = new Error('Azure DevOps returned an empty access token.');
       } catch (error) {
         lastError = error;
+        console.warn('[pipeline-generator] getAccessToken failed', {
+          attempt,
+          status: error?.status,
+          message: error?.message
+        });
 
         if (error?.status === 500) {
           break;
@@ -357,7 +360,24 @@
     }
   };
 
+  const logAuthDiagnostics = (response, baseMessage) => {
+    if (!response) return;
+
+    const wwwAuthenticate = response.headers?.get('www-authenticate') || '';
+    const shouldLog = response.status === 401 || response.status === 403 || Boolean(wwwAuthenticate);
+    if (!shouldLog) return;
+
+    console.warn('[pipeline-generator] Authorization challenge detected', {
+      operation: baseMessage,
+      status: response.status,
+      url: response.url,
+      wwwAuthenticate,
+      fedAuthRedirect: response.headers?.get('x-tfs-fedauthredirect') || ''
+    });
+  };
+
   const buildHttpError = (baseMessage, response, detail) => {
+    logAuthDiagnostics(response, baseMessage);
     const message = `${baseMessage} (${response.status})${detail ? `: ${detail}` : ''}`;
     const error = new Error(message);
     error.status = response.status;

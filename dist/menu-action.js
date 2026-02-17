@@ -24,6 +24,15 @@ const loadScript = async (src) => {
   try {
     const response = await fetch(src, { credentials: 'include', cache: 'no-cache', redirect: 'follow' });
     if (!response.ok) {
+      const wwwAuthenticate = response.headers.get('www-authenticate') || '';
+      if (response.status === 401 || response.status === 403 || wwwAuthenticate) {
+        console.warn('[pipeline-generator] SDK preflight authorization challenge', {
+          status: response.status,
+          url: response.url || src,
+          wwwAuthenticate,
+          fedAuthRedirect: response.headers.get('x-tfs-fedauthredirect') || ''
+        });
+      }
       throw new Error(`HTTP ${response.status}`);
     }
 
@@ -44,7 +53,6 @@ const loadScript = async (src) => {
     const script = document.createElement('script');
     script.src = src;
     script.async = false;
-    script.crossOrigin = 'use-credentials';
     script.onload = resolve;
     script.onerror = () => reject(new Error(`Failed to load Azure DevOps SDK from ${src}`));
     document.head.appendChild(script);
@@ -94,14 +102,12 @@ const loadVssSdk = async () => {
     return ambientSdk;
   }
 
-  const hostSdk = `${getHostBase()}/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`;
   const localSdk = new URL('./lib/VSS.SDK.min.js', window.location.href).toString();
   const localSdkFallback = new URL('./lib/VSS.SDK.js', window.location.href).toString();
-  // Prefer bundled SDK assets first because some Azure DevOps hosts block direct downloads
-  // of the platform SDK (e.g., returning an HTML login page with a text/html MIME type).
-  // Trying local files first avoids those MIME-type failures while keeping the host SDK
-  // as a last-resort option for environments that rely on it being served directly.
-  const candidates = [localSdk, localSdkFallback, hostSdk];
+  // Only load bundled SDK assets. Some on-prem Azure DevOps hosts challenge
+  // platform SDK requests with browser-level Basic auth and trigger repeated
+  // login popups despite a valid extension access token.
+  const candidates = [localSdk, localSdkFallback];
 
   let lastError;
   for (const src of candidates) {
@@ -168,14 +174,12 @@ const prefetchResources = () => {
     preload.rel = 'preload';
     preload.as = as || 'script';
     preload.href = href;
-    preload.crossOrigin = 'use-credentials';
     document.head.appendChild(preload);
 
     const prefetch = document.createElement('link');
     prefetch.rel = 'prefetch';
     prefetch.as = as || 'script';
     prefetch.href = href;
-    prefetch.crossOrigin = 'use-credentials';
     document.head.appendChild(prefetch);
   });
 };
@@ -316,6 +320,11 @@ const getAccessTokenWithRetry = async (sdk, maxAttempts = 3, delayMs = 800) => {
       lastError = new Error('Azure DevOps returned an empty access token.');
     } catch (error) {
       lastError = error;
+      console.warn('[pipeline-generator] getAccessToken failed before opening generator', {
+        attempt,
+        status: error?.status,
+        message: error?.message
+      });
 
       // Some Azure DevOps Server instances may respond with an internal
       // error (HTTP 500) from the WebPlatformAuth SessionToken endpoint
