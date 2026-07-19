@@ -196,6 +196,38 @@
   }
 
   const SCAFFOLD_BRANCH = 'main';
+  const ZERO_OBJECT_ID = '0000000000000000000000000000000000000000';
+  const PIPELINE_FOLDER = '\\komodo';
+  const PIPELINE_API_VERSION = '7.1';
+  const RELEASE_API_VERSION = '7.1-preview.4';
+  const BASH_TASK_ID = '6c731c3c-3c68-459a-a5c9-bde6e6595b5b';
+  const DEFAULT_RELEASE_CONFIG = Object.freeze({
+    enabled: true,
+    folder: '\\komodo',
+    environmentName: 'komodo',
+    nameSuffix: '_Release',
+    bashTaskName: 'Run Komodo deployment',
+    scriptSource: { type: 'inline', content: '' }
+  });
+
+  const normalizePipelineFolder = (folder, fallback) => {
+    const candidate = String(folder || fallback || '').trim().replace(/\//g, '\\');
+    if (!candidate || candidate === '\\') return '\\';
+    return `\\${candidate.replace(/^\\+/, '')}`;
+  };
+
+  const getReleaseConfig = () => {
+    const configured = window.PipelineGeneratorReleaseConfig || {};
+    const source = configured.scriptSource || DEFAULT_RELEASE_CONFIG.scriptSource;
+    return {
+      enabled: configured.enabled !== false,
+      folder: normalizePipelineFolder(configured.folder, DEFAULT_RELEASE_CONFIG.folder),
+      environmentName: String(configured.environmentName || DEFAULT_RELEASE_CONFIG.environmentName).trim(),
+      nameSuffix: String(configured.nameSuffix || DEFAULT_RELEASE_CONFIG.nameSuffix),
+      bashTaskName: String(configured.bashTaskName || DEFAULT_RELEASE_CONFIG.bashTaskName).trim(),
+      scriptSource: source
+    };
+  };
 
   const state = {
     sdk: null,
@@ -381,10 +413,30 @@
     const message = `${baseMessage} (${response.status})${detail ? `: ${detail}` : ''}`;
     const error = new Error(message);
     error.status = response.status;
+    error.url = response.url;
     if (detail) {
       error.detail = detail;
     }
     return error;
+  };
+
+  const markErrorDomain = (error, domain) => {
+    if (error && !error.domain) {
+      error.domain = domain;
+    }
+    return error;
+  };
+
+  const runProvisioningStep = async (label, work) => {
+    setStatus(label);
+    try {
+      return await work();
+    } catch (error) {
+      if (error && !error.provisioningStep) {
+        error.provisioningStep = label;
+      }
+      throw error;
+    }
   };
 
   const buildPipelineFilename = ({ projectName, repositoryName, branchName }) => {
@@ -622,7 +674,7 @@
     const res = await fetch(refUrl, { headers: authHeaders(accessToken) });
 
     if (res.status === 404) {
-      return '0000000000000000000000000000000000000000';
+      return ZERO_OBJECT_ID;
     }
 
     if (!res.ok) {
@@ -631,7 +683,26 @@
     }
 
     const payload = await res.json();
-    return payload.value?.[0]?.objectId || '0000000000000000000000000000000000000000';
+    return payload.value?.[0]?.objectId || ZERO_OBJECT_ID;
+  };
+
+  const getRepositoryFileExists = async ({ hostUri, projectId, repoId, branchName, path, accessToken }) => {
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/items?path=${encodeURIComponent(
+      normalizedPath
+    )}&versionDescriptor.version=${encodeURIComponent(branchName)}&versionDescriptor.versionType=branch&api-version=6.0`;
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+
+    if (res.status === 404) {
+      return false;
+    }
+
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw buildHttpError('Failed to check whether the generated YAML already exists', res, detail);
+    }
+
+    return true;
   };
 
   const ensureRepo = async ({ hostUri, projectId, projectName, accessToken }) => {
@@ -700,8 +771,18 @@
     const branchRef = `refs/heads/${branchName}`;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=6.0`;
     const pipelineContent = content || '';
-    const authHeader = getAuthHeader(accessToken);
     const oldObjectId = await getBranchObjectId({ hostUri, projectId, repoId, branch: branchName, accessToken });
+    const filePath = `/${pipelineFilename}`;
+    const fileExists =
+      oldObjectId !== ZERO_OBJECT_ID &&
+      (await getRepositoryFileExists({
+        hostUri,
+        projectId,
+        repoId,
+        branchName,
+        path: filePath,
+        accessToken
+      }));
     const body = {
       refUpdates: [
         {
@@ -711,11 +792,11 @@
       ],
       commits: [
         {
-          comment: 'Add pipeline generator defaults',
+          comment: `${fileExists ? 'Update' : 'Add'} pipeline generator defaults`,
           changes: [
             {
-              changeType: 'add',
-              item: { path: `/${pipelineFilename}` },
+              changeType: fileExists ? 'edit' : 'add',
+              item: { path: filePath },
               newContent: { content: pipelineContent, contentType: 'rawtext' }
             }
           ]
@@ -753,20 +834,22 @@
   });
 
   const getPipelineByName = async ({ hostUri, projectId, pipelineName, accessToken }) => {
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=${PIPELINE_API_VERSION}`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
-      return undefined;
+      const detail = await readErrorDetail(res);
+      throw markErrorDomain(buildHttpError('Failed to list Azure Pipelines', res, detail), 'pipeline');
     }
     const payload = await res.json();
     return (payload.value || []).find((pipeline) => pipeline.name === pipelineName);
   };
 
   const getPipelineById = async ({ hostUri, projectId, pipelineId, accessToken }) => {
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${pipelineId}?api-version=7.1`;
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${pipelineId}?api-version=${PIPELINE_API_VERSION}`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
-      return undefined;
+      const detail = await readErrorDetail(res);
+      throw markErrorDomain(buildHttpError(`Failed to load Azure Pipeline ${pipelineId}`, res, detail), 'pipeline');
     }
     return res.json();
   };
@@ -784,6 +867,7 @@
     if (existing?.id) {
       const current = await getPipelineById({ hostUri, projectId, pipelineId: existing.id, accessToken });
       const needsUpdate =
+        current?.folder !== PIPELINE_FOLDER ||
         current?.configuration?.path !== desiredConfig.path ||
         current?.configuration?.repository?.id !== desiredConfig.repository.id ||
         current?.configuration?.repository?.defaultBranch !== desiredConfig.repository.defaultBranch;
@@ -792,40 +876,303 @@
         return current || existing;
       }
 
-      const updateUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${existing.id}?api-version=7.1`;
+      const updateUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${existing.id}?api-version=${PIPELINE_API_VERSION}`;
       const res = await fetch(updateUrl, {
         method: 'PUT',
         headers: {
           ...authHeaders(accessToken),
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ name: pipelineName, configuration: desiredConfig })
+        body: JSON.stringify({ name: pipelineName, folder: PIPELINE_FOLDER, configuration: desiredConfig })
       });
 
       if (!res.ok) {
         const detail = await readErrorDetail(res);
-        throw buildHttpError('Failed to update pipeline', res, detail);
+        throw markErrorDomain(buildHttpError('Failed to update pipeline', res, detail), 'pipeline');
       }
 
       return res.json();
     }
 
-    const createUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=7.1`;
+    const createUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=${PIPELINE_API_VERSION}`;
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: {
         ...authHeaders(accessToken),
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ name: pipelineName, folder: '\\', configuration: desiredConfig })
+      body: JSON.stringify({ name: pipelineName, folder: PIPELINE_FOLDER, configuration: desiredConfig })
     });
 
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      throw buildHttpError('Failed to create pipeline', res, detail);
+      throw markErrorDomain(buildHttpError('Failed to create pipeline', res, detail), 'pipeline');
     }
 
     return res.json();
+  };
+
+  const getReleaseDefinitionByName = async ({ hostUri, projectId, releaseName, accessToken }) => {
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/release/definitions?api-version=${RELEASE_API_VERSION}`;
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw markErrorDomain(buildHttpError('Failed to list classic Release definitions', res, detail), 'release');
+    }
+    const payload = await res.json();
+    return (payload.value || []).find((definition) => definition.name === releaseName);
+  };
+
+  const resolveReleaseAgentQueue = async ({ hostUri, projectId, queueName, accessToken }) => {
+    if (!queueName) {
+      throw markErrorDomain(new Error('No agent queue was selected for the classic Release job.'), 'release');
+    }
+
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/distributedtask/queues?api-version=6.0`;
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw markErrorDomain(buildHttpError(`Failed to load agent queue ${queueName}`, res, detail), 'release');
+    }
+
+    const payload = await res.json();
+    const queue = (payload.value || []).find((item) => item.name === queueName);
+    if (!queue?.id) {
+      throw markErrorDomain(
+        new Error(`Release agent queue was not found: ${queueName}. Check Project settings → Agent pools/queues.`),
+        'release'
+      );
+    }
+    return queue;
+  };
+
+  const resolveReleaseScriptRepository = async ({ hostUri, source, accessToken }) => {
+    const scriptProject = source.project || state.projectId;
+    const repositoryName = source.repository;
+    const rawPath = source.path;
+    const branch = source.branch || SCAFFOLD_BRANCH;
+    if (!scriptProject || !repositoryName || !rawPath) {
+      throw markErrorDomain(
+        new Error('Release script source is incomplete. azureReposFile requires project, repository, and path.'),
+        'release'
+      );
+    }
+
+    const repositoriesUrl = `${hostUri}${encodeURIComponent(scriptProject)}/_apis/git/repositories?api-version=6.0`;
+    const repositoriesResponse = await fetch(repositoriesUrl, { headers: authHeaders(accessToken) });
+    if (!repositoriesResponse.ok) {
+      const detail = await readErrorDetail(repositoriesResponse);
+      throw markErrorDomain(buildHttpError('Failed to list the configured Release script repository', repositoriesResponse, detail), 'release');
+    }
+
+    const repositories = await repositoriesResponse.json();
+    const scriptRepository = (repositories.value || []).find(
+      (item) => item.id === repositoryName || item.name === repositoryName
+    );
+    if (!scriptRepository?.id) {
+      throw markErrorDomain(
+        new Error(`Release script repository was not found: ${scriptProject}/${repositoryName}.`),
+        'release'
+      );
+    }
+
+    const scriptPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+    const fileUrl = `${hostUri}${encodeURIComponent(scriptProject)}/_apis/git/repositories/${encodeURIComponent(
+      scriptRepository.id
+    )}/items?path=${encodeURIComponent(scriptPath)}&versionDescriptor.version=${encodeURIComponent(
+      branch
+    )}&versionDescriptor.versionType=branch&%24format=text&api-version=6.0`;
+    const fileResponse = await fetch(fileUrl, { headers: authHeaders(accessToken) });
+    if (!fileResponse.ok) {
+      const detail = await readErrorDetail(fileResponse);
+      throw markErrorDomain(buildHttpError(`Failed to load Release Bash script ${scriptPath}`, fileResponse, detail), 'release');
+    }
+
+    const script = await fileResponse.text();
+    if (!script.trim()) {
+      throw markErrorDomain(new Error(`Release Bash script is empty: ${scriptProject}/${repositoryName}${scriptPath}.`), 'release');
+    }
+    return script;
+  };
+
+  const resolveReleaseInlineScript = async ({ releaseConfig, hostUri, accessToken }) => {
+    const source = releaseConfig.scriptSource || {};
+    if (source.type === 'inline') {
+      if (typeof source.content !== 'string' || !source.content.trim()) {
+        throw markErrorDomain(
+          new Error('Release Bash inline script is empty. Set scriptSource.content in dist/release-config.js.'),
+          'release'
+        );
+      }
+      return source.content;
+    }
+    if (source.type === 'azureReposFile') {
+      return resolveReleaseScriptRepository({ hostUri, source, accessToken });
+    }
+    throw markErrorDomain(
+      new Error(`Unsupported Release script source type: ${source.type || 'missing'}. Use inline or azureReposFile.`),
+      'release'
+    );
+  };
+
+  const buildReleaseDefinitionPayload = ({
+    releaseName,
+    releaseConfig,
+    inlineScript,
+    projectId,
+    projectName,
+    repo,
+    pipelineDefinition,
+    pipelineName,
+    branch,
+    agentQueue
+  }) => {
+    const defaultBranch = `refs/heads/${branch}`;
+    const artifactAlias = `_${pipelineName}`;
+    return {
+      name: releaseName,
+      path: releaseConfig.folder,
+      description: 'Generated by Pipeline Generator.',
+      releaseNameFormat: 'Release-$(rev:r)',
+      artifacts: [
+        {
+          sourceId: `${projectId}:${pipelineDefinition.id}`,
+          type: 'Build',
+          alias: artifactAlias,
+          definitionReference: {
+            definition: { id: String(pipelineDefinition.id), name: pipelineName },
+            project: { id: projectId, name: projectName },
+            repository: { id: repo.id, name: repo.name },
+            defaultVersionBranch: { id: defaultBranch, name: defaultBranch },
+            defaultVersionType: { id: 'latestType', name: 'Latest' },
+            defaultVersionSpecific: { id: '', name: '' },
+            defaultVersionTags: { id: '', name: '' },
+            artifactSourceDefinitionUrl: { id: '', name: '' }
+          },
+          isPrimary: true,
+          isRetained: false
+        }
+      ],
+      environments: [
+        {
+          name: releaseConfig.environmentName,
+          rank: 1,
+          variables: {},
+          variableGroups: [],
+          demands: [],
+          conditions: [],
+          executionPolicy: { concurrencyCount: 0, queueDepthCount: 0 },
+          schedules: [],
+          retentionPolicy: { daysToKeep: 30, releasesToKeep: 3, retainBuild: true },
+          processParameters: {},
+          preDeployApprovals: { approvals: [], approvalOptions: null },
+          postDeployApprovals: { approvals: [], approvalOptions: null },
+          deployPhases: [
+            {
+              name: 'Agent job',
+              phaseType: 'agentBasedDeployment',
+              rank: 1,
+              workflowTasks: [
+                {
+                  taskId: BASH_TASK_ID,
+                  version: '3.*',
+                  name: releaseConfig.bashTaskName,
+                  refName: '',
+                  enabled: true,
+                  alwaysRun: false,
+                  continueOnError: false,
+                  timeoutInMinutes: 0,
+                  definitionType: 'task',
+                  condition: 'succeeded()',
+                  inputs: {
+                    targetType: 'inline',
+                    script: inlineScript,
+                    workingDirectory: '',
+                    failOnStderr: 'false',
+                    noProfile: 'true',
+                    noRc: 'true'
+                  }
+                }
+              ],
+              deploymentInput: {
+                queueId: Number(agentQueue.id),
+                queueName: agentQueue.name,
+                demands: [],
+                enableAccessToken: false,
+                skipArtifactsDownload: false,
+                timeoutInMinutes: 0,
+                jobCancelTimeoutInMinutes: 1,
+                condition: 'succeeded()',
+                overrideInputs: {},
+                parallelExecution: { parallelExecutionType: 'none' },
+                artifactsDownloadInput: { downloadInputs: [] }
+              }
+            }
+          ]
+        }
+      ],
+      variables: {},
+      variableGroups: [],
+      triggers: [],
+      properties: {}
+    };
+  };
+
+  const ensureReleaseDefinition = async ({
+    hostUri,
+    projectId,
+    projectName,
+    repo,
+    pipelineDefinition,
+    pipelineName,
+    branch,
+    queueName,
+    accessToken
+  }) => {
+    const releaseConfig = getReleaseConfig();
+    if (!releaseConfig.enabled) {
+      return { skipped: true, reason: 'Release creation is disabled in dist/release-config.js.' };
+    }
+    if (!releaseConfig.environmentName) {
+      throw markErrorDomain(new Error('Release environmentName is empty in dist/release-config.js.'), 'release');
+    }
+
+    const releaseName = `${pipelineName}${releaseConfig.nameSuffix}`;
+    const existing = await getReleaseDefinitionByName({ hostUri, projectId, releaseName, accessToken });
+    if (existing?.id) {
+      return { ...existing, created: false };
+    }
+
+    const [inlineScript, agentQueue] = await Promise.all([
+      resolveReleaseInlineScript({ releaseConfig, hostUri, accessToken }),
+      resolveReleaseAgentQueue({ hostUri, projectId, queueName, accessToken })
+    ]);
+    const body = buildReleaseDefinitionPayload({
+      releaseName,
+      releaseConfig,
+      inlineScript,
+      projectId,
+      projectName,
+      repo,
+      pipelineDefinition,
+      pipelineName,
+      branch,
+      agentQueue
+    });
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/release/definitions?api-version=${RELEASE_API_VERSION}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(accessToken),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw markErrorDomain(buildHttpError(`Failed to create classic Release definition ${releaseName}`, res, detail), 'release');
+    }
+    return { ...(await res.json()), created: true };
   };
 
   const fetchAgentQueues = async ({ hostUri, projectId, accessToken }) => {
@@ -974,48 +1321,91 @@
 
     const targetBranch = SCAFFOLD_BRANCH;
     try {
-      const repo = await ensureRepo({
-        hostUri: state.hostUri,
-        projectId: state.projectId,
-        projectName: state.projectName,
-        accessToken: state.accessToken
-      });
+      const repo = await runProvisioningStep('Step 1/5: creating or reusing the pipeline repository...', () =>
+        ensureRepo({
+          hostUri: state.hostUri,
+          projectId: state.projectId,
+          projectName: state.projectName,
+          accessToken: state.accessToken
+        })
+      );
       state.repoId = repo.id || state.repoId;
       state.repositoryName = repo.name || state.repositoryName;
       state.branch = targetBranch;
-      await postScaffold({
-        hostUri: state.hostUri,
-        projectId: state.projectId,
-        repoId: repo.id,
-        branch: targetBranch,
-        accessToken: state.accessToken,
-        content: yaml,
-        pipelineFilename
-      });
-      await ensureDefaultBranch({
-        hostUri: state.hostUri,
-        projectId: state.projectId,
-        repoId: repo.id,
-        branchName: targetBranch,
-        accessToken: state.accessToken
-      });
+      await runProvisioningStep(`Step 2/5: saving YAML file /${pipelineFilename}...`, () =>
+        postScaffold({
+          hostUri: state.hostUri,
+          projectId: state.projectId,
+          repoId: repo.id,
+          branch: targetBranch,
+          accessToken: state.accessToken,
+          content: yaml,
+          pipelineFilename
+        })
+      );
+      await runProvisioningStep('Step 3/5: setting the generated repository default branch...', () =>
+        ensureDefaultBranch({
+          hostUri: state.hostUri,
+          projectId: state.projectId,
+          repoId: repo.id,
+          branchName: targetBranch,
+          accessToken: state.accessToken
+        })
+      );
 
-      const repoName = state.repositoryName || repo.name;
+      const pipelineDefinition = await runProvisioningStep(
+        `Step 4/5: creating or updating Pipeline ${pipelineName} in ${PIPELINE_FOLDER}...`,
+        () =>
+          upsertPipelineDefinition({
+            hostUri: state.hostUri,
+            projectId: state.projectId,
+            repo,
+            pipelineName,
+            pipelinePath: `/${pipelineFilename}`,
+            branch: targetBranch,
+            accessToken: state.accessToken
+          })
+      );
+
+      const releaseDefinition = await runProvisioningStep(
+        `Step 5/5: creating or reusing the classic Release definition for ${pipelineName}...`,
+        () =>
+          ensureReleaseDefinition({
+            hostUri: state.hostUri,
+            projectId: state.projectId,
+            projectName: state.rawProjectName || state.projectName,
+            repo,
+            pipelineDefinition,
+            pipelineName,
+            branch: targetBranch,
+            queueName: payload.pool,
+            accessToken: state.accessToken
+          })
+      );
+
+      const releaseMessage = releaseDefinition.skipped
+        ? `Release skipped: ${releaseDefinition.reason}`
+        : `Release definition ${releaseDefinition.created ? 'created' : 'already exists'} (ID: ${releaseDefinition.id}).`;
+      setStatus(
+        `Done. Pipeline ${pipelineName} is linked to /${pipelineFilename} in ${PIPELINE_FOLDER} (ID: ${pipelineDefinition?.id || 'unknown'}). ${releaseMessage} Opening Pipelines...`,
+        false
+      );
       const projectRoute = getProjectRouteSegment();
-      const repoPath = `${state.hostUri}${projectRoute}/_git/${encodeURIComponent(repoName || repo.id)}`;
-      const fileQuery = `?path=${encodeURIComponent(`/${pipelineFilename}`)}&version=GB${encodeURIComponent(
-        targetBranch
-      )}&_a=contents`;
-
-      setStatus(`Pipeline YAML ${pipelineFilename} created for ${pipelineName}. Redirecting to the file...`, false);
-      window.location.href = `${repoPath}${fileQuery}`;
+      window.setTimeout(() => {
+        window.location.href = `${state.hostUri}${projectRoute}/_build?definitionId=${encodeURIComponent(pipelineDefinition.id)}`;
+      }, 700);
     } catch (error) {
       console.error(error);
       const detail = sanitizeErrorDetail(error?.detail || error?.message || '');
-      const detailMessage = error?.message ? `Pipeline YAML creation failed: ${error.message}` : 'Pipeline YAML creation failed.';
-      const unauthorizedMessage =
-        `Access was denied while creating or updating the repository${detail ? ` (${detail})` : ''}. ` +
-        'Ask a project administrator to grant you permissions to contribute to the repository, then retry from Azure DevOps.';
+      const step = error?.provisioningStep || 'Provisioning';
+      const permissionHint =
+        error?.domain === 'release'
+          ? ' Ask a project administrator to grant Manage release definitions, View releases, and Use the selected agent queue.'
+          : error?.domain === 'pipeline'
+            ? ' Ask a project administrator to grant Create/Edit pipeline permission under Project settings → Pipelines → Security.'
+            : ' Ask a project administrator to grant the required Repos permissions.';
+      const unauthorizedMessage = `Access denied during ${step}.${detail ? ` Details: ${detail}.` : ''}${permissionHint}`;
+      const detailMessage = `Failed during ${step}.${detail ? ` Details: ${detail}` : ' No error details were returned by Azure DevOps.'}`;
       setStatus(isUnauthorizedError(error) ? unauthorizedMessage : detailMessage, true);
     }
 

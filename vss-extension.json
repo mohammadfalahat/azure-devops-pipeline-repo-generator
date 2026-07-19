@@ -2,9 +2,9 @@
   "manifestVersion": 1,
   "id": "pipeline-generator",
   "publisher": "mohammad-falahat",
-  "version": "0.1.15",
+  "version": "0.1.19",
   "name": "Pipeline Generator",
-  "description": "Add a Generate Pipeline button next to each branch to bootstrap pipeline repositories.",
+  "description": "Create a YAML pipeline and its classic Komodo release definition from a branch.",
   "public": false,
   "categories": ["Azure Pipelines", "Azure Repos"],
   "icons": {
@@ -45,7 +45,7 @@
     { "id": "Microsoft.VisualStudio.Services.Cloud" },
     { "id": "Microsoft.TeamFoundation.Server", "version": "[16.0,20.0)" }
   ],
-  "scopes": ["vso.code", "vso.code_manage", "vso.project", "vso.release", "vso.build"],
+  "scopes": ["vso.code", "vso.code_manage", "vso.project", "vso.build", "vso.build_execute", "vso.release", "vso.release_manage"],
   "links": {
     "getstarted": {
       "uri": "https://learn.microsoft.com/azure/devops/extend/get-started/node"

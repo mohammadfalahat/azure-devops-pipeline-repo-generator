@@ -5,8 +5,11 @@
   "main": "index.js",
   "scripts": {
     "build": "echo \"Static extension: no build step required\"",
-    "test": "node scripts/service-hook-listener.js --self-test",
-    "service-hook:listen": "node scripts/service-hook-listener.js"
+    "test": "node scripts/validate-extension.js && node scripts/service-hook-listener.js --self-test && bash scripts/provision-pipeline-release.sh --self-test",
+    "service-hook:listen": "node scripts/service-hook-listener.js",
+    "pipeline:provision-release": "bash scripts/provision-pipeline-release.sh",
+    "extension:package": "npx --yes tfx-cli extension create --manifest-globs vss-extension.json --rev-version",
+    "extension:publish": "npx --yes tfx-cli extension publish --service-url \"$ADO_SERVICE_URL\" --token \"$AZP_TOKEN\" --vsix"
   },
   "keywords": [
     "azure-devops",
