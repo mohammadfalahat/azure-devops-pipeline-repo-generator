@@ -3,12 +3,12 @@
  *
  * This file is packaged with the extension and is deliberately free of tokens,
  * passwords, and other credentials. All REST calls use the short-lived Azure
- * DevOps access token issued to the signed-in user by VSS.getAccessToken().
+ * DevOps host token issued to the signed-in user by VSS.getAccessToken().
  *
- * To use your existing deployment script, either replace `content` below, or
- * change `scriptSource` to `azureReposFile`. The source repository must be in
- * the same Azure DevOps collection and the person running the generator must
- * have permission to read it.
+ * The packaged Bash wrapper is loaded at definition-generation time and stored
+ * as inline text in the classic Release task. No credential values are stored
+ * in this file or in the packaged script; Azure DevOps expands variables from
+ * the linked KomodoAPI variable group at Release execution time.
  */
 window.PipelineGeneratorReleaseConfig = Object.freeze({
   enabled: true,
@@ -16,17 +16,13 @@ window.PipelineGeneratorReleaseConfig = Object.freeze({
   environmentName: 'komodo',
   nameSuffix: '_Release',
   bashTaskName: 'Run Komodo deployment',
+  variableGroupName: 'KomodoAPI',
+  requiredVariableNames: Object.freeze(['AZP_TOKEN', 'KOMODO_API_KEY', 'KOMODO_API_SECRET']),
   scriptSource: {
-    type: 'inline',
-    content: `#!/usr/bin/env bash
-set -euo pipefail
+    type: 'packagedFile',
+    path: 'release-inline-task.sh'
 
-# Replace this placeholder with your predefined Komodo deployment commands.
-echo "Komodo release job started."
-echo "Build artifact directory: \${SYSTEM_ARTIFACTSDIRECTORY:-not-set}"
-`
-
-    // To load the Bash content from an Azure Repos file instead, replace the
+    // To load different Bash content from Azure Repos instead, replace the
     // block above with this (keep it in the same collection):
     // type: 'azureReposFile',
     // project: 'Tools',

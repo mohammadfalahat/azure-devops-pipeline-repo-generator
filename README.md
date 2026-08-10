@@ -1,472 +1,197 @@
 # Azure DevOps Pipeline Repo Generator
 
-A lightweight Azure DevOps extension that adds a **Generate pipeline** action beside each branch. When invoked, it opens a form pre-populated with the required deployment settings:
+Pipeline Generator is a static Azure DevOps extension that adds a **Generate
+pipeline** action to Azure Repos branch menus. From a selected source branch it
+creates or reuses a project-level repository, writes a generated YAML file,
+registers a YAML Pipeline that points to that file, and creates a classic
+Release definition that consumes the Pipeline as a Build artifact.
 
-- `pool`: `PublishDockerAgent`
-- `service`: `api`
-- `environment`: `demo`
-- `dockerfileDir`: `src/TMS.API`
-- `repositoryAddress`: `registry.buluttakin.com`
-- `containerRegistryService`: `BulutReg`
-- `komodoServer`: `DEMO-192.168.62.91` (with other options available)
+The manifest version documented here is **0.1.32**. The manifest targets Azure
+DevOps Services and Azure DevOps Server range `[16.0,20.0)`. The complete live
+workflow has been verified on the documented on-premises Server environment;
+the Azure DevOps Services Release API route still requires a separate
+compatibility test.
 
-The extension uses the short-lived, scoped Azure DevOps access token provided by the host page to create repositories, scaffold the YAML, register the pipeline, and create the classic Release definition—no extra prompts or saved tokens are required. The token represents the signed-in user, so Azure DevOps permission checks are applied to that user; it does **not** bypass repository, pipeline, release, or agent-queue security.
+## What the program creates
 
-The manifest scopes include `vso.code_manage` so the extension can create repositories on behalf of the signed-in user (who must also have **Create repository** permission in the project).
+```text
+selected source repository + branch
+        |
+        | generates a branch-specific YAML document
+        v
+<ProjectName>_Azure_DevOps @ main
+        |
+        | YAML configuration points to this repository and file
+        v
+YAML Pipeline in \komodo
+        |
+        | primary Build artifact
+        v
+Classic Release definition in \komodo
+        | links project Variable Group KomodoAPI
+        |
+        v
+one agent-based Bash@3 deployment job with packaged wrapper stored Inline
+```
 
-Submitting the form ensures a shared repository named `<ProjectName>_Azure_DevOps` exists in the current project (using the project name exactly as Azure DevOps reports it). If it does not, the extension creates it and pushes a YAML template named `<ProjectName>-<RepositoryName>-<BranchName>.yml` (preserving the original casing for the project and repository portions) containing the submitted settings.
+The browser workflow performs five visible steps:
 
-The branch action targets both the legacy (`git-branches-*`) and the newer repository branches menus to tolerate Azure DevOps UI updates where a single menu surface might go missing.
+1. Create or reuse `<ProjectName>_Azure_DevOps`.
+2. Add or edit the generated YAML file on `main`.
+3. set `refs/heads/main` as the generated repository's default branch.
+4. Create or update the YAML Pipeline under `\komodo`.
+5. Create or reconcile the classic Release definition under `\komodo`, embed
+   the packaged Bash wrapper Inline, and link Variable Group `KomodoAPI`.
 
-## Structure
+After all enabled steps succeed, the page redirects to the real Pipeline. It
+does not redirect merely because the YAML file was created. The extension does
+not queue a Pipeline run and does not create a Release instance.
 
-- `vss-extension.json`: Extension manifest defining the branch action and a hub entry.
-- `dist/index.html`: Form UI loaded from the action or the hub.
-- `dist/ui.js`: Client-side logic that creates the repository/YAML, registers the YAML pipeline, and creates the classic Release definition.
-- `dist/release-config.js`: Versioned, token-free configuration for the Release folder/job and predefined inline Bash code (or a Bash file read from Azure Repos).
-- `dist/menu-action.js`: Registers the branch menu action and opens the UI with branch context.
-- `dist/styles.css`: Lightweight styling for the form.
+## Important concepts
 
-## Packaging (creating the VSIX)
+- The **source repository** is the repository from whose branch menu the user
+  launches the extension.
+- The **source branch** is embedded in the generated YAML as the `otherRepo`
+  repository resource.
+- The **generated repository** is the shared project repository named
+  `<ProjectName>_Azure_DevOps`.
+- The **scaffold branch** is always `main`; generated YAML files and Pipeline
+  definitions point to this branch.
+- The Pipeline display name is exactly the generated YAML filename, including
+  its `.yml` suffix. This makes the file/Pipeline relationship visible and
+  keeps different source branches independently named.
 
-The extension is static (HTML/CSS/JS only), so packaging is just zipping the manifest and `dist` folder into a VSIX. You can do
-this manually or with the official `tfx-cli` utility.
+## Documentation map
 
-> If you install a new VSIX but do not see the **Generate pipeline** action beside your branches, refresh the Repos page and
-> check both the branch context menu and the toolbar menu. The manifest targets multiple branch menus to align with Azure
-> DevOps UI variations, so the action should appear in at least one of those locations after the page reloads.
+| Document | Use it for |
+| --- | --- |
+| [Architecture and runtime flow](docs/architecture.md) | Components, state transfer, generated YAML, provisioning sequence, reconciliation, naming, and design constraints |
+| [Azure DevOps REST contracts](docs/rest-api-contracts.md) | Authentication, scopes, permissions, endpoints, API versions, payload invariants, and on-premises behavior |
+| [Development and operations](docs/development-and-operations.md) | Local setup, configuration, testing, packaging, installation, shell automation, release procedure, and troubleshooting |
+| [Verified E2E context](docs/azure-devops-e2e-context.md) | Layered findings and forensic history from the real on-premises environment |
+| [E2E state snapshot](docs/azure-devops-e2e-state.yaml) | Machine-readable IDs, versions, links, and last verified state |
 
-### Prerequisites
+Maintainers and coding agents must read the E2E context and state snapshot
+before repeating live provisioning tests. They contain resources that must not
+be deleted during routine cleanup.
 
-- Node.js 18+ (for `npm` and `tfx-cli`).
-  - Optional: run `npm install` to pull the Azure DevOps SDK (`vss-web-extension-sdk`) into
-    `node_modules/vss-web-extension-sdk/lib`, then copy it to `dist/lib` if you want to bundle the SDK
-    with the VSIX for fully offline deployments. If you skip this step, the extension automatically
-    loads the SDK from the published extension asset
-    (`https://azure.buluttakin.com/_apis/public/gallery/publisher/localdev/extension/pipeline-generator/0.1.11/assetbyname/dist/lib/VSS.SDK.min.js`),
-    then falls back to the platform-hosted path `/_content/MS.VSS.SDK/scripts/VSS.SDK.min.js`.
-- A publisher ID and display name to embed in `vss-extension.json` (`publisher` and `name` fields). For on-premises servers you
-  can use any unique publisher ID (it is not tied to the public marketplace).
-- An icon at `dist/images/icon.svg` (a 128x128 SVG) if you want to replace the placeholder.
-- The manifest `targets` already include Azure DevOps Services (`Microsoft.VisualStudio.Services.Cloud`) and on-premises
-  Azure DevOps Server (`Microsoft.TeamFoundation.Server` with a version range of `[16.0,20.0)` to cover 2019, 2020, and
-  2022). If you are targeting an older or newer server release and see a `versionCheckError`, adjust the range accordingly
-  before packing.
+## Repository layout
 
-### Using `tfx-cli`
+| Path | Responsibility |
+| --- | --- |
+| `vss-extension.json` | Extension identity, version, branch action, Dialog and Azure Repos Hub contributions, host compatibility, requested scopes, and packaged assets |
+| `dist/menu-action.html` | Minimal host page for the branch action contribution |
+| `dist/menu-action.js` | Registers the action, extracts branch context, and opens a host Dialog or navigates to the in-host Azure Repos Hub |
+| `dist/index.html` | Generator form hosted by both the Dialog control and Azure Repos Hub contributions |
+| `dist/ui.js` | Form hydration, YAML rendering, Azure DevOps REST orchestration, error handling, and redirect |
+| `dist/release-config.js` | Token-free classic Release settings, required Variable Group, and packaged Bash source selection |
+| `dist/release-inline-task.sh` | Bash wrapper embedded as inline task text in each generated/reconciled Release definition |
+| `dist/lib/VSS.SDK*.js` | Bundled legacy VSS Web Extension SDK used by the on-premises host |
+| `dist/styles.css` | Generator page styling |
+| `scripts/validate-extension.js` | Offline static contract validation |
+| `scripts/validate-action-behavior.js` | Mocked regression test for Dialog/Hub launch and token-free hosted context |
+| `scripts/validate-ui-behavior.js` | Mocked REST regression tests for exact naming and non-destructive Pipeline/Release migration |
+| `scripts/provision-pipeline-release.sh` | Terminal fallback for provisioning a Pipeline and classic Release after YAML already exists |
+| `scripts/service-hook-listener.js` | Development-only listener for inspecting Azure DevOps Service Hook payloads |
+| `scripts/release-inline-task.example.sh` | Example Bash source for the shell provisioner |
 
-1. Install the CLI: `npm install -g tfx-cli` (or download the release ZIP if your server blocks npm registry traffic).
-2. Bump the `version` in `vss-extension.json` as needed.
-3. Run the pack command from the repo root:
+There is no compilation or bundling stage. The files in `dist/` are the actual
+runtime assets packaged into the VSIX.
 
-   ```bash
-   tfx extension create --manifest-globs vss-extension.json --rev-version
-   ```
+## Developer quick start
 
-   This outputs a `*.vsix` file in the current directory.
-
-> You can also zip the contents of `vss-extension.json` and the `dist/` directory yourself; just rename the archive to
-> `*.vsix`.
-
-## Uploading to Azure DevOps Server (on-premises)
-
-1. Sign in to your Azure DevOps Server (for this deployment: `https://azure.buluttakin.com`).
-2. Open **Organization settings** (or **Collection settings** in Azure DevOps Server) → **Extensions** → **Manage extensions**.
-3. Choose **Upload new extension**, select the generated `.vsix`, and upload it.
-4. After upload, choose **Install** for the target project collection. The branch menu action will appear once installed.
-
-> Tip for `azure.buluttakin.com`: if you are publishing from another machine, ensure the hostname is resolvable/reachable from
-> that machine (for example via VPN or hosts file) before running any `tfx` command.
-
-### Publishing with `tfx-cli` (alternative)
-
-If you prefer the CLI, create a Personal Access Token (PAT) with the **Manage** extension permission. Then run:
+Requirements: Node.js 18 or newer and npm. The shell automation additionally
+requires Bash, `curl`, and `jq`; its Git script-source mode also requires Git.
 
 ```bash
-tfx extension publish \
-  --service-url https://azure.buluttakin.com \
-  --token YOUR_PAT \
-  --vsix <path-to-generated-file>.vsix
-```
-
-Use `--update` when pushing a new version, and increment `version` in `vss-extension.json` each time.
-
-## Troubleshooting extension validation failures
-
-If the Azure DevOps gallery reports `Error` or shows a validation message such as
-`Something went wrong, please retry after sometime.`, use these steps to diagnose
-the upload:
-
-1. Capture the validation details from the gallery REST API. Replace
-   `PUBLISHER`, `EXTENSIONNAME`, and `VERSION` with your values:
-
-   ```bash
-   curl -s \
-     "https://azure.buluttakin.com/_apis/public/gallery/publisher/PUBLISHER/extension/EXTENSIONNAME/VERSION" \
-     | jq .versions[0]
-   ```
-
-   Look for `validationResultMessage` and any missing `files` entries in the
-   response. A message that stays generic after multiple retries usually means
-   the package failed server-side validation (for example due to an unexpected
-   manifest format or missing assets).
-
-2. Verify that the VSIX contains both `Microsoft.VisualStudio.Services.VsixManifest`
-   and `Microsoft.VisualStudio.Services.Manifest` assets. If you zipped the
-   extension manually, ensure you included `vss-extension.json`, the entire
-   `dist/` directory, and that the VSIX file name is unique for each version.
-
-3. Confirm that the `version` field in `vss-extension.json` was incremented
-   before packing. Azure DevOps rejects re-uploads with the same version even if
-   the previous attempt failed.
-
-4. For on-premises servers, double-check the `targets` version range. The
-   manifest currently allows `[16.0,20.0)` (Azure DevOps Server 2019–2022).
-   Older or newer servers may require adjusting this range to avoid
-   `versionCheckError` validation failures.
-
-5. After making fixes, regenerate the VSIX (`tfx extension create --rev-version`)
-   and retry the upload. If the error persists, review the server event logs for
-   extension validation errors—they often include the specific manifest or file
-   issues that the public API hides behind the generic message.
-
-## Troubleshooting access token errors on Azure DevOps Server
-
-The extension depends on the host page to issue a scoped access token. On some
-on-premises Azure DevOps Server deployments the token API can return HTTP 500
-with `HostAuthorizationNotFound` even for collection administrators. To unblock
-the generator:
-
-1. Open **Organization/Collection settings** → **Extensions** → **Manage** and
-   confirm the Pipeline Repo Generator extension is **installed** and **enabled**
-   for the current collection and project. If it is disabled, enable it and
-   retry the branch action.
-2. If the extension shows as installed but still fails, click **Manage** on the
-   extension details page and ensure the project you are using is selected.
-   Removing and re-adding the project can refresh the host authorization entry
-   that Azure DevOps uses to issue access tokens.
-3. If the Manage view already shows your project, toggle the extension to
-   disabled, re-enable it, then reload the Repos page. If that still fails,
-   uninstall and reinstall the VSIX so Azure DevOps recreates the host
-   authorization record for the collection/project.
-4. After updating the extension permissions, reload the Repos page and relaunch
-   the generator. If the error persists, sign out and back in to refresh the
-   host session.
-
-## Troubleshooting pipeline creation permission failures (401/TF400813)
-
-If the form reports `Automatic pipeline creation failed: access was denied` or
-the browser console shows `TF400813: The user is not authorized to access this
-resource` when the generator tries to create the pipeline, the scoped token from
-Azure DevOps likely does not include the **Create pipeline** permission for the
-current project.
-
-1. Ask a project administrator to grant your identity (or a security group you
-   belong to) the **Create pipeline** permission under **Project settings** →
-   **Pipelines** → **Security**. Retry after the permission change.
-2. If you cannot obtain the permission immediately, you can still finish the
-   process manually using the YAML that the generator pushed to the scaffold
-   repository on the `main` branch. In Azure DevOps, go to **Pipelines** → **New
-   pipeline** → **Azure Repos Git** → **Existing Azure Pipelines YAML**, then
-   pick the `main` branch and the path shown in the generator status message
-   (for example `/project-repo-env.yml`). You can also open the same screen
-   directly (as in the screenshot) via
-   `https://YOUR_SERVER/YOUR_COLLECTION/YOUR_PROJECT/_build?view=pipelines`,
-   then choose **Existing Azure Pipelines YAML** in the right-hand panel and set
-   the branch/path.
-3. To verify your credentials outside the extension, call the same REST
-   endpoint the generator uses:
-
-   ```bash
-  curl -u :<PAT_WITH_BUILD_SCOPE> \
-    -H "Content-Type: application/json" \
-    -d @pipeline.json \
-    "https://YOUR_SERVER/YOUR_COLLECTION/YOUR_PROJECT/_apis/pipelines?repositoryId=<REPO_GUID>&api-version=7.1-preview.1"
-   ```
-
-   Replace the placeholders with your server, collection, and project, and
-   include the pipeline payload in `pipeline.json` (for example the `name` and
-   `configuration` object the generator attempted to send). A 401/TF400813
-   response here confirms the token still lacks pipeline creation rights.
-
-   A minimal request body looks like this (omit secrets and adjust the
-   repository/path values for your project). Leaving `pipeline.json` empty will
-   return `Value cannot be null. Parameter name: inputParameters` because the
-   API expects these fields. The `repository.id` **must** be the GUID of the
-   repository that contains your YAML (for example `HRMS_Azure_DevOps`), and the
-   REST URL itself should include that repository ID as a `repositoryId`
-   parameter. You can copy the GUID from **Repos** → **Files** → **Clone** (URI
-   contains `.../_git/<repoId>`) or by calling `/_apis/git/repositories?api-version=6.0`.
-
-   ```json
-   {
-     "name": "HRMS_hrms_demo",
-     "configuration": {
-       "type": "yaml",
-       "path": "/HRMS-HRMS_Azure_DevOps-main.yml",
-       "repository": {
-         "id": "<REPO_GUID>",
-         "type": "azureReposGit",
-         "name": "BulutCollection/HRMS/_git/HRMS_Azure_DevOps",
-         "defaultBranch": "refs/heads/main"
-       }
-     }
-   }
-   ```
-
-## Local service hook testing (on-premises friendly)
-
-The Azure DevOps service hook samples (see [official docs](https://learn.microsoft.com/azure/devops/extend/develop/add-service-hook))
-recommend validating your webhook endpoint locally before wiring it to your organization or collection. This repository now
-includes a minimal listener to mimic that flow and to keep your extension compatible with on-premises Azure DevOps Server.
-
-1. Start the local listener (defaults to port `3000`):
-
-   ```bash
-   npm run service-hook:listen
-   ```
-
-   - Override the port with `npm run service-hook:listen -- --port 8081` (or `-p 8081`).
-   - Disable raw payload logging with `npm run service-hook:listen -- --quiet` or by setting
-     `LOG_PAYLOADS=false`.
-
-   The listener logs the `eventType`, `notificationId`, collection, project, and repository values for every POST payload and
-   always replies with HTTP 200 so Azure DevOps sees the connection as healthy.
-
-2. If your Azure DevOps Server cannot reach `localhost`, expose the listener with a tunnel such as `ssh -R`, `Cloudflared`, or
-   `ngrok`, and use the public URL in the next step. For the `azure.buluttakin.com` server, this makes it easy to send test
-   payloads from your collection to a laptop listener.
-
-3. In Azure DevOps (either Services or Server), open **Project settings** → **Service hooks** → **Create subscription** and pick
-   **Web Hooks**. Use the listener URL (for example `http://localhost:3000/` or your tunnel URL) and click **Test** to send a
-   sample payload. When the Azure DevOps Server at `https://azure.buluttakin.com` sends the request you will see the remote
-   address in the listener output, confirming connectivity from that host.
-
-4. Observe the console output from the listener to verify the payload shape before you depend on it in your extension or other
-   downstream tooling.
-
-5. When you are satisfied, package the extension with `tfx extension create --manifest-globs vss-extension.json --rev-version`
-   and upload it to your on-premises collection as described above. Because the listener uses only Azure DevOps-standard fields
-   (`eventType`, `notificationId`, `resourceContainers`, etc.), the same payload contract will be honored after deployment.
-
-## Automatic provisioning from the extension
-
-The extension now completes the workflow from the **Generate pipeline** button. After it writes the YAML to
-`<ProjectName>_Azure_DevOps` on `main`, it runs these user-visible steps:
-
-1. Create/reuse the generated repository.
-2. Save/update the generated YAML.
-3. Set `main` as that repository's default branch.
-4. Create/update the YAML pipeline under `\komodo`, linked to that exact YAML path and `refs/heads/main`.
-5. Create/reuse a classic Release definition named `<PipelineName>_Release` in `\komodo`. Its primary **Build** artifact is the pipeline from step 4 and its single agent job runs `Bash@3` using the selected pool and an inline script.
-
-The UI stays on the form until all five stages complete, shows the precise failed stage, and then opens the generated Pipeline—not merely the YAML file. A failure in Release creation leaves the YAML pipeline available; correct the permission/configuration issue and run the generator again. Existing pipeline/release definitions are reused by name.
-
-### Configure the Release Bash job
-
-Edit `dist/release-config.js` **before packaging**. This file is included in the VSIX and must never contain a PAT, password, client secret, or other credential.
-
-To keep the Bash code directly in the generated Release definition, replace the `content` value:
-
-```js
-scriptSource: {
-  type: 'inline',
-  content: `#!/usr/bin/env bash
-set -euo pipefail
-
-echo "Deploying $SERVICE_NAME"
-# Your predefined Komodo commands go here.
-`
-}
-```
-
-To source the inline text from a file in a **same-collection Azure Repos** repository at generation time, replace `scriptSource` with the following. The running user needs read permission to that project/repository, and the retrieved text is still stored as the Release task's inline script:
-
-```js
-scriptSource: {
-  type: 'azureReposFile',
-  project: 'Tools',
-  repository: 'deployment-scripts',
-  branch: 'main',
-  path: '/komodo/release-task.sh'
-}
-```
-
-For the automatic workflow, the selected **Pool** must also be available as a project agent queue and the user must have permission to use it in Releases. The extension does not automatically create a release *instance*; it creates the reusable Release **definition**, as requested.
-
-### Required Azure DevOps permissions for people using the button
-
-The extension manifest requests `vso.code`, `vso.code_manage`, `vso.build`, `vso.build_execute`, `vso.release`, and `vso.release_manage`. These are requested scopes, not blanket authorization. A project administrator should grant users/groups only the permissions they need:
-
-- **Repos:** Read/Contribute; additionally **Create repository** if the shared `<ProjectName>_Azure_DevOps` repository does not yet exist.
-- **Pipelines:** View, **Create pipeline**, and Edit pipeline. The generated pipeline is created under `\komodo`.
-- **Releases (Classic):** View releases and **Manage release definitions**. If your server has Release folder security, grant access to `\komodo`.
-- **Agent queue:** **Use** permission on the queue selected in the form (for example `PublishDockerAgent`).
-- **External script repository (optional):** Read access for the project/repository configured in `dist/release-config.js`.
-
-If a user lacks one of these rights, Azure DevOps returns 401/403/TF400813 and the generator displays the failed stage and server response. This is intentional: the user cannot create a pipeline/release merely because an administrator published the extension.
-
-### Do I need `AZP_TOKEN` while creating the extension?
-
-**No.** Do not put `AZP_TOKEN` in `vss-extension.json`, JavaScript, HTML, VSIX packaging variables, or `release-config.js`. At runtime the extension calls `VSS.getAccessToken()` and sends the returned short-lived token as `Authorization: Bearer ...`; Azure DevOps issues it for the current signed-in user and enforces that user's permissions.
-
-`AZP_TOKEN`/PAT is only needed outside the browser in these two administrative cases:
-
-1. running `scripts/provision-pipeline-release.sh` from a terminal (legacy/automation path), or
-2. publishing the completed VSIX through `tfx-cli`.
-
-Use a separate, least-privileged **extension-management PAT** for publishing. Never reuse it as an application runtime token.
-
-## Terminal provisioning fallback
-
-After the YAML file has been pushed to the target repository, run the provisioning script to create:
-
-1. a YAML pipeline connected to that file under the `komodo` pipeline folder, and
-2. a classic Release definition that uses the created pipeline as its Build artifact and contains one inline `Bash@3` task.
-
-Example:
-
-```bash
-export AZP_TOKEN="YOUR_PAT_OR_SCOPED_TOKEN"
-export ADO_URL="https://azure.buluttakin.com"
-export COLLECTION="ShonizCollection"
-export PROJECT="Locanit"
-export PIPELINE_NAME="Locanit_QA_Tester_qa"
-export REPO_NAME="Locanit_QA"
-export YAML_PATH="/qa/pipeline.yml"
-
-# Required for the classic release agent job. Use either an ID or a name.
-export RELEASE_AGENT_QUEUE_NAME="PublishDockerAgent"
-
-# Your predefined inline Bash code can be read from a local file...
-export RELEASE_BASH_SCRIPT_FILE="./scripts/release-inline-task.example.sh"
-
-npm run pipeline:provision-release
-```
-
-The script is idempotent by name: if the pipeline or release definition already exists, it reuses the existing ID. Defaults:
-
-- `PIPELINE_FOLDER=komodo` creates the pipeline under `\komodo`.
-- `RELEASE_NAME=${PIPELINE_NAME}_Release`.
-- `RELEASE_FOLDER=komodo` creates the release definition under `\komodo`.
-- `RELEASE_ENVIRONMENT_NAME=komodo`.
-- `DEFAULT_BRANCH=refs/heads/main`.
-
-To load the Bash task from another repository instead of a local file:
-
-```bash
-export RELEASE_BASH_SCRIPT_GIT_URL="https://azure.buluttakin.com/ShonizCollection/Tools/_git/deployment-scripts"
-export RELEASE_BASH_SCRIPT_GIT_REF="main"
-export RELEASE_BASH_SCRIPT_GIT_PATH="komodo/release-task.sh"
-npm run pipeline:provision-release
-```
-
-If you also want to create an actual Release run immediately after creating/reusing the definition, set:
-
-```bash
-export CREATE_RELEASE_INSTANCE=true
-```
-
-### Error handling and diagnostics
-
-`scripts/provision-pipeline-release.sh` prints a `[STEP]` line before each major action and returns clear `[ERROR]` messages for
-the failed step. REST API errors include the method, URL, HTTP status code, and response body so permission, endpoint, and payload
-issues can be diagnosed without re-running with extra debug flags.
-
-### If the generator only created the YAML file and redirected to it
-
-Older extension builds could push the YAML file and immediately redirect to the file page before registering the Azure Pipeline.
-Install version `0.1.17` or later, then run **Generate pipeline** again for the same branch. The generator now:
-
-1. creates or updates the YAML file in `<ProjectName>_Azure_DevOps`,
-2. creates or updates the Azure Pipeline under `\komodo`, and
-3. redirects only after the pipeline API returns successfully.
-
-If pipeline registration fails, the form stays open and shows the REST/API error instead of redirecting. Check that the user has
-**Create pipeline** and **Edit pipeline** permissions in **Project settings → Pipelines → Security**.
-
-## Build and upload the extension to on-premises Azure DevOps Server
-
-The extension can be packaged with `tfx-cli`. You can run it through `npx` without installing a global package.
-
-> Before packaging, make sure every path referenced by `vss-extension.json` exists in the repository. In this manifest that means
-> the `dist/` folder, `dist/images/icon.svg`, and `README.md` must be present. If `dist/` is generated or copied from another
-> source, place it in the repo root before running the package command.
-
-1. Update the release Bash configuration in `dist/release-config.js`, and validate all local assets:
-
-   ```bash
-   npm test
-   ```
-
-2. Package the VSIX (this uses `npx`; no global installation is required):
-
-   ```bash
-   npm run extension:package
-   ```
-
-   Equivalent direct command:
-
-   ```bash
-   npx --yes tfx-cli extension create \
-     --manifest-globs vss-extension.json \
-     --rev-version
-   ```
-
-3. Locate the package and upload/publish the generated VSIX to your on-premises Azure DevOps Server gallery. Use a separate PAT that has **extension management** permission only:
-
-   ```bash
-    export ADO_SERVICE_URL="https://azure.buluttakin.com"
-    export AZP_TOKEN="YOUR_EXTENSION_MANAGEMENT_PAT"
-    export VSIX_FILE="$(find . -maxdepth 1 -type f -name 'mohammad-falahat.pipeline-generator-*.vsix' -print -quit)"
-    test -n "$VSIX_FILE" || { echo "VSIX was not created" >&2; exit 1; }
-
-   npx --yes tfx-cli extension publish \
-     --service-url "$ADO_SERVICE_URL" \
-     --token "$AZP_TOKEN" \
-     --vsix $VSIX_FILE
-   ```
-
-    Or with the npm script (the package file is passed after `--`):
-
-   ```bash
-   export ADO_SERVICE_URL="https://azure.buluttakin.com"
-   export AZP_TOKEN="YOUR_EXTENSION_MANAGEMENT_PAT"
-    npm run extension:publish -- "$VSIX_FILE"
-   ```
-
-4. If your server requires manual installation after upload, open:
-
-   ```text
-   https://azure.buluttakin.com/_gallery/manage
-   ```
-
-    Then install/enable the uploaded extension for the target collection/project. Reload the Repos page (hard refresh if needed), then use **Generate pipeline** on a test branch.
-
-### Copy/paste build and upload commands for `azure.buluttakin.com`
-
-```bash
-cd /home/falahat/azure-devops-pipeline-repo-generator
-
-# 1) Edit dist/release-config.js with the real Bash content or Azure Repos source.
-# 2) Run static/offline checks. No token is needed here.
+npm ci
 npm test
-
-# 3) Generate a versioned VSIX. --rev-version increments the manifest version.
-npm run extension:package
-
-# 4) Publish only with an extension-management PAT; this PAT is NOT bundled in the VSIX.
-export ADO_SERVICE_URL='https://azure.buluttakin.com'
-read -rsp 'Extension-management PAT: ' AZP_TOKEN; echo
-export AZP_TOKEN
-export VSIX_FILE="$(find . -maxdepth 1 -type f -name 'mohammad-falahat.pipeline-generator-*.vsix' -print -quit)"
-test -n "$VSIX_FILE" || { echo 'VSIX was not created' >&2; exit 1; }
-npx --yes tfx-cli extension publish \
-  --service-url "$ADO_SERVICE_URL" \
-  --token "$AZP_TOKEN" \
-  --vsix "$VSIX_FILE"
-
-# 5) In Collection Settings → Extensions, install/enable it for ShonizCollection,
-#    then test it in a project such as Area or Locanit.
-unset AZP_TOKEN
+npm run build
 ```
+
+`npm run build` intentionally performs no transformation. Before packaging,
+configure the Release task in `dist/release-config.js` and rerun `npm test`.
+
+Create a VSIX with:
+
+```bash
+npm run extension:package
+```
+
+The packaging script invokes `tfx-cli extension create --rev-version`. Inspect
+the resulting manifest/version changes and the generated VSIX before publishing.
+See [Development and operations](docs/development-and-operations.md) for the
+complete release procedure.
+
+## Runtime authentication and permissions
+
+The browser extension has no backend and persists no credential. The branch
+action first asks Azure DevOps to open `dist/index.html` through
+`openCustomDialog`. If an older Azure DevOps Server does not expose that
+service, the action navigates the current host page to the extension's
+`pipeline-generator-hub` under Azure Repos. It never opens the Generator in a
+new tab. Dialog context is passed through `VSS.getConfiguration()`; Hub context
+is read from host navigation state. After its own iframe SDK handshake, the
+Generator calls `VSS.getAccessToken()` and sends that short-lived current-user
+token as a Bearer credential. The action neither obtains nor transfers a token.
+
+If an on-premises host cannot issue the token (for example,
+`HostAuthorizationNotFound`), the form offers an explicit **Sign out and
+authenticate again** action plus a direct **Open extension authorization**
+action. `HostAuthorizationNotFound` requires a Collection Administrator to
+authorize the requested extension scopes in Collection Settings → Extensions;
+signing in again cannot create missing extension authorization by itself. The
+browser extension never asks for or accepts a PAT.
+
+The manifest requests these scopes:
+
+- `vso.code` and `vso.code_manage`
+- `vso.project`
+- `vso.build` and `vso.build_execute`
+- `vso.release` and `vso.release_manage`
+- `vso.agentpools` to resolve the selected Release agent queue
+- `vso.serviceendpoint` to list Docker Registry service connections
+- `vso.variablegroups_read` to resolve and link `KomodoAPI` to the Release
+
+Scopes do not grant project permissions by themselves. The user also needs
+repository Read/Contribute and possibly Create repository, Pipeline
+Create/Edit, classic Release definition management, and Use permission on the
+selected agent queue. Details are in
+[Authentication and authorization](docs/rest-api-contracts.md#authentication-and-authorization).
+
+Never hard-code a PAT, password, cookie, service secret, registry credential,
+or API key in JavaScript, HTML, the manifest, `release-config.js`,
+documentation, or a VSIX. The generated YAML and classic Release reference
+Komodo credentials through the `KomodoAPI` Variable Group rather than embedding
+their values.
+
+## Configuration summary
+
+The form defaults are declared in `dist/ui.js`. Release definition behavior is
+declared in `dist/release-config.js`. The default deployment mapping is:
+
+| Environment | Komodo target |
+| --- | --- |
+| `dev` | `Development-192.168.62.19` |
+| `demo` | `DEMO-192.168.62.91` |
+| `qa` | `QA-192.168.62.153` |
+| `pro` | `Production-31.7.65.195` |
+
+The generated YAML consumes `build-push-komodo.yml` from
+`SharedTemplates/SharedTemplates` through the `ShonizCollection` service
+endpoint and uses variable group `KomodoAPI`. These names are current
+implementation contracts, not environment variables.
+
+## Verification
+
+Run the complete offline suite with:
+
+```bash
+npm test
+```
+
+It validates the manifest/runtime contract, mocked UI reconciliation behavior,
+the Service Hook parser, and shell JSON payload construction. It does not
+contact Azure DevOps and is not a replacement for a published-extension E2E
+test. The last live result and its authentication boundary are recorded in the
+E2E context documents.

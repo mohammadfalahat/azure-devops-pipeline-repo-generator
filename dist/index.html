@@ -29,6 +29,21 @@
         register it as a YAML pipeline in <code>\komodo</code>, and create its classic Release definition.
       </p>
       <form id="pipeline-form">
+        <section id="reauth-panel" class="auth-fallback hidden" aria-labelledby="reauth-title">
+          <h2 id="reauth-title">Extension authorization is required</h2>
+          <p id="reauth-message">
+            Azure DevOps could not issue an extension access token. A Collection Administrator must authorize the
+            Pipeline Generator scopes in Collection Settings → Extensions.
+          </p>
+          <div class="auth-actions">
+            <button id="authorize-extension" type="button" class="primary-inline">Open extension authorization</button>
+            <button id="reauthenticate" type="button" class="secondary">Sign out and authenticate again</button>
+          </div>
+          <small class="auth-warning">
+            Authorize the requested scopes first. If no authorization action is shown, reinstall the same published
+            version, then return to the target branch and run Generate pipeline again.
+          </small>
+        </section>
         <div class="field">
           <label for="branch">Selected branch</label>
           <input id="branch" name="branch" disabled />

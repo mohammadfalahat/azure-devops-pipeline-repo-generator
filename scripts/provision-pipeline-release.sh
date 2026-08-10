@@ -64,6 +64,7 @@ Optional environment variables:
   RELEASE_NAME=${PIPELINE_NAME}_Release
   RELEASE_FOLDER=komodo
   RELEASE_ENVIRONMENT_NAME=komodo
+  RELEASE_VARIABLE_GROUP_NAME=KomodoAPI
   RELEASE_ARTIFACT_ALIAS=_${PIPELINE_NAME}
   RELEASE_BASH_TASK_NAME='Run inline Bash'
   RELEASE_BASH_SCRIPT_GIT_REF=main
@@ -92,6 +93,19 @@ require_env() {
   fi
 }
 
+curl_with_basic_auth() {
+  # Feed curl's Basic-auth setting over stdin instead of expanding the PAT in
+  # curl's command-line arguments. This keeps the secret out of shell history
+  # and process listings while avoiding a credential file on disk.
+  local escaped_token="$AZP_TOKEN"
+  if [[ "$escaped_token" == *$'\n'* || "$escaped_token" == *$'\r'* ]]; then
+    fail "AZP_TOKEN contains a newline." "Use the PAT exactly as issued by Azure DevOps."
+  fi
+  escaped_token="${escaped_token//\\/\\\\}"
+  escaped_token="${escaped_token//\"/\\\"}"
+  printf 'user = ":%s"\n' "$escaped_token" | curl --config - "$@"
+}
+
 collection_api_url() {
   local area_path="$1"
   local api_version="$2"
@@ -104,6 +118,11 @@ project_api_url() {
   printf '%s/%s/%s/%s?api-version=%s' "${ADO_URL%/}" "$COLLECTION" "$PROJECT" "$area_path" "$api_version"
 }
 
+pipeline_collection_url() {
+  local api_version="$1"
+  printf '%s&repositoryId=%s' "$(project_api_url '_apis/pipelines' "$api_version")" "$REPO_ID"
+}
+
 api_request() {
   local method="$1"
   local url="$2"
@@ -113,17 +132,15 @@ api_request() {
   curl_exit=0
 
   if [[ "$method" == "GET" ]]; then
-    http_code="$(curl -sS \
-      -u ":$AZP_TOKEN" \
+    http_code="$(curl_with_basic_auth -sS \
       -H 'Accept: application/json' \
       -o "$response_file" \
       -w '%{http_code}' \
       "$url")" || curl_exit=$?
   else
     [[ -n "$payload_file" && -f "$payload_file" ]] || fail "Payload file is missing for $method request." "URL: $url\nPayload file: ${payload_file:-not-set}"
-    http_code="$(curl -sS \
+    http_code="$(curl_with_basic_auth -sS \
       -X "$method" \
-      -u ":$AZP_TOKEN" \
       -H 'Content-Type: application/json' \
       -H 'Accept: application/json' \
       --data-binary "@$payload_file" \
@@ -248,6 +265,7 @@ build_release_definition_payload() {
     --arg defaultBranch "$DEFAULT_BRANCH" \
     --arg queueId "$RELEASE_AGENT_QUEUE_ID" \
     --arg queueName "$RELEASE_AGENT_QUEUE_NAME" \
+    --arg variableGroupId "$RELEASE_VARIABLE_GROUP_ID" \
     --arg taskName "$RELEASE_BASH_TASK_NAME" \
     --arg inlineScript "$inline_script" \
     '{
@@ -278,13 +296,33 @@ build_release_definition_payload() {
         variables: {},
         variableGroups: [],
         demands: [],
-        conditions: [],
+        conditions: [{ name: "ReleaseStarted", conditionType: "event", value: "", result: null }],
         executionPolicy: { concurrencyCount: 0, queueDepthCount: 0 },
         schedules: [],
         retentionPolicy: { daysToKeep: 30, releasesToKeep: 3, retainBuild: true },
         processParameters: {},
-        preDeployApprovals: { approvals: [], approvalOptions: null },
-        postDeployApprovals: { approvals: [], approvalOptions: null },
+        preDeployApprovals: {
+          approvals: [{ rank: 1, isAutomated: true, isNotificationOn: false }],
+          approvalOptions: {
+            requiredApproverCount: null,
+            releaseCreatorCanBeApprover: false,
+            autoTriggeredAndPreviousEnvironmentApprovedCanBeSkipped: false,
+            enforceIdentityRevalidation: false,
+            timeoutInMinutes: 0,
+            executionOrder: "beforeGates"
+          }
+        },
+        postDeployApprovals: {
+          approvals: [{ rank: 1, isAutomated: true, isNotificationOn: false }],
+          approvalOptions: {
+            requiredApproverCount: null,
+            releaseCreatorCanBeApprover: false,
+            autoTriggeredAndPreviousEnvironmentApprovedCanBeSkipped: false,
+            enforceIdentityRevalidation: false,
+            timeoutInMinutes: 0,
+            executionOrder: "afterSuccessfulGates"
+          }
+        },
         deployPhases: [{
           name: "Agent job",
           phaseType: "agentBasedDeployment",
@@ -325,7 +363,7 @@ build_release_definition_payload() {
         }]
       }],
       variables: {},
-      variableGroups: [],
+      variableGroups: [($variableGroupId | tonumber)],
       triggers: [],
       properties: {}
     }'
@@ -359,6 +397,35 @@ resolve_agent_queue() {
   fi
 }
 
+resolve_release_variable_group() {
+  require_env RELEASE_VARIABLE_GROUP_NAME
+  echo "[INFO] Resolving release variable group: $RELEASE_VARIABLE_GROUP_NAME"
+
+  local encoded_group_name group_url group_response variable_name
+  encoded_group_name="$(jq -rn --arg value "$RELEASE_VARIABLE_GROUP_NAME" '$value | @uri')"
+  group_url="$(project_api_url '_apis/distributedtask/variablegroups' "$API_VERSION")&groupName=${encoded_group_name}&actionFilter=Use"
+  group_response="$(api_get "$group_url")"
+  RELEASE_VARIABLE_GROUP_ID="$(
+    echo "$group_response" |
+      jq -r --arg name "$RELEASE_VARIABLE_GROUP_NAME" '.value[] | select(.name == $name) | .id' |
+      sort -n |
+      head -n 1
+  )"
+  if [[ -z "$RELEASE_VARIABLE_GROUP_ID" || "$RELEASE_VARIABLE_GROUP_ID" == "null" ]]; then
+    fail "Release variable group was not found or cannot be used." "RELEASE_VARIABLE_GROUP_NAME=$RELEASE_VARIABLE_GROUP_NAME\nCheck Pipelines > Library and the caller's variable-group permissions."
+  fi
+
+  for variable_name in AZP_TOKEN KOMODO_API_KEY KOMODO_API_SECRET; do
+    if ! echo "$group_response" | jq -e \
+      --arg groupName "$RELEASE_VARIABLE_GROUP_NAME" \
+      --arg variableName "$variable_name" \
+      '.value[] | select(.name == $groupName) | .variables | has($variableName)' >/dev/null; then
+      fail "Release variable group is missing a required variable." "RELEASE_VARIABLE_GROUP_NAME=$RELEASE_VARIABLE_GROUP_NAME\nMissing variable: $variable_name"
+    fi
+  done
+  echo "[INFO] Release variable group ID: $RELEASE_VARIABLE_GROUP_ID"
+}
+
 self_test() {
   require_command jq
   ADO_URL="${ADO_URL:-https://azure.example.local}"
@@ -374,6 +441,8 @@ self_test() {
   RELEASE_ENVIRONMENT_NAME="${RELEASE_ENVIRONMENT_NAME:-komodo}"
   RELEASE_AGENT_QUEUE_ID="${RELEASE_AGENT_QUEUE_ID:-1}"
   RELEASE_AGENT_QUEUE_NAME="${RELEASE_AGENT_QUEUE_NAME:-Default}"
+  RELEASE_VARIABLE_GROUP_NAME="${RELEASE_VARIABLE_GROUP_NAME:-KomodoAPI}"
+  RELEASE_VARIABLE_GROUP_ID="${RELEASE_VARIABLE_GROUP_ID:-7}"
   RELEASE_ARTIFACT_ALIAS="${RELEASE_ARTIFACT_ALIAS:-_${PIPELINE_NAME}}"
   RELEASE_BASH_TASK_NAME="${RELEASE_BASH_TASK_NAME:-Run inline Bash}"
   REPO_ID="00000000-0000-0000-0000-000000000001"
@@ -383,7 +452,14 @@ self_test() {
   local release_payload
   build_pipeline_payload | jq -e '.folder == "\\komodo" and .configuration.path == "/demo/pipeline.yml"' >/dev/null
   release_payload="$(build_release_definition_payload $'#!/usr/bin/env bash\necho self-test')"
-  echo "$release_payload" | jq -e '.artifacts[0].definitionReference.definition.id == "123" and .environments[0].deployPhases[0].workflowTasks[0].inputs.targetType == "inline"' >/dev/null
+  echo "$release_payload" | jq -e '
+    .artifacts[0].definitionReference.definition.id == "123" and
+    .environments[0].deployPhases[0].workflowTasks[0].inputs.targetType == "inline" and
+    .environments[0].conditions[0].name == "ReleaseStarted" and
+    .environments[0].preDeployApprovals.approvals[0].isAutomated == true and
+    .environments[0].postDeployApprovals.approvals[0].isAutomated == true and
+    .variableGroups == [7]
+  ' >/dev/null
   echo "Self-test passed. Pipeline and release payloads are valid JSON."
 }
 
@@ -411,6 +487,7 @@ PIPELINE_FOLDER="$(normalize_folder "${PIPELINE_FOLDER:-komodo}")"
 RELEASE_NAME="${RELEASE_NAME:-${PIPELINE_NAME}_Release}"
 RELEASE_FOLDER="$(normalize_folder "${RELEASE_FOLDER:-komodo}")"
 RELEASE_ENVIRONMENT_NAME="${RELEASE_ENVIRONMENT_NAME:-komodo}"
+RELEASE_VARIABLE_GROUP_NAME="${RELEASE_VARIABLE_GROUP_NAME:-KomodoAPI}"
 RELEASE_ARTIFACT_ALIAS="${RELEASE_ARTIFACT_ALIAS:-_${PIPELINE_NAME}}"
 RELEASE_BASH_TASK_NAME="${RELEASE_BASH_TASK_NAME:-Run inline Bash}"
 CREATE_RELEASE_INSTANCE="${CREATE_RELEASE_INSTANCE:-false}"
@@ -428,6 +505,9 @@ if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "null" ]]; then
   fail "Project was not found in the collection." "PROJECT=$PROJECT\nCOLLECTION=$COLLECTION\nADO_URL=$ADO_URL"
 fi
 echo "[INFO] Project ID: $PROJECT_ID"
+
+step "Resolve Release variable group"
+resolve_release_variable_group
 
 step "Get target repository ID"
 REPO_RESPONSE="$(api_get "$(project_api_url '_apis/git/repositories' "$API_VERSION")")"
@@ -448,7 +528,9 @@ else
   echo "[INFO] Creating pipeline in folder: $PIPELINE_FOLDER"
   PIPELINE_PAYLOAD_FILE="$(mktemp)"
   build_pipeline_payload > "$PIPELINE_PAYLOAD_FILE"
-  PIPELINE_RESPONSE="$(api_post "$(project_api_url '_apis/pipelines' "$API_VERSION")" "$PIPELINE_PAYLOAD_FILE")"
+  # Azure DevOps Server requires repositoryId on pipeline creation even though
+  # the repository GUID is also present in the JSON body.
+  PIPELINE_RESPONSE="$(api_post "$(pipeline_collection_url "$API_VERSION")" "$PIPELINE_PAYLOAD_FILE")"
   rm -f "$PIPELINE_PAYLOAD_FILE"
   echo "$PIPELINE_RESPONSE" | jq .
   PIPELINE_ID="$(echo "$PIPELINE_RESPONSE" | jq -r '.id')"

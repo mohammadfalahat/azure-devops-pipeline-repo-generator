@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "echo \"Static extension: no build step required\"",
-    "test": "node scripts/validate-extension.js && node scripts/service-hook-listener.js --self-test && bash scripts/provision-pipeline-release.sh --self-test",
+    "test": "node scripts/validate-extension.js && node scripts/validate-action-behavior.js && node scripts/validate-ui-behavior.js && node scripts/service-hook-listener.js --self-test && bash scripts/provision-pipeline-release.sh --self-test",
     "service-hook:listen": "node scripts/service-hook-listener.js",
     "pipeline:provision-release": "bash scripts/provision-pipeline-release.sh",
     "extension:package": "npx --yes tfx-cli extension create --manifest-globs vss-extension.json --rev-version",

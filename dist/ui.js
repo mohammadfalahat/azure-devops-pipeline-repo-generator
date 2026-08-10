@@ -172,6 +172,41 @@
 
   const getQueryValue = (value) => (value && value !== 'undefined' && value !== 'null' ? value : undefined);
 
+  const getDialogConfiguration = (sdk) => {
+    const configuration = sdk?.getConfiguration?.();
+    if (!configuration || typeof configuration !== 'object') return {};
+
+    // Current hosts return the object supplied to openCustomDialog directly.
+    // Accept the nested shapes as well for compatibility with older wrappers.
+    return configuration.pipelineBootstrap || configuration.configuration || configuration;
+  };
+
+  const getHostNavigationState = async (sdk) => {
+    const serviceIds = [
+      sdk?.ServiceIds?.Navigation,
+      'ms.vss-features.host-navigation-service'
+    ].filter((value, index, values) => value && values.indexOf(value) === index);
+
+    for (const serviceId of serviceIds) {
+      try {
+        const navigationService = await sdk.getService(serviceId);
+        if (navigationService?.getCurrentState) {
+          return navigationService.getCurrentState() || {};
+        }
+        if (navigationService?.getQueryParams) {
+          return (await navigationService.getQueryParams()) || {};
+        }
+      } catch (error) {
+        console.warn('Could not read Pipeline Generator context from host navigation state', {
+          serviceId,
+          message: error?.message
+        });
+      }
+    }
+
+    return {};
+  };
+
   const branchLabel = document.getElementById('branch-label');
   const branchInput = document.getElementById('branch');
   const environmentSelect = document.getElementById('environment');
@@ -183,6 +218,10 @@
   const status = document.getElementById('status');
   const targetRepoInput = document.getElementById('targetRepo');
   const komodoSelect = document.getElementById('komodoServer');
+  const reauthPanel = document.getElementById('reauth-panel');
+  const reauthMessage = document.getElementById('reauth-message');
+  const authorizeExtensionButton = document.getElementById('authorize-extension');
+  const reauthenticateButton = document.getElementById('reauthenticate');
   const submitButton = form?.querySelector('button[type="submit"]');
 
   if (targetRepoInput) {
@@ -198,7 +237,12 @@
   const SCAFFOLD_BRANCH = 'main';
   const ZERO_OBJECT_ID = '0000000000000000000000000000000000000000';
   const PIPELINE_FOLDER = '\\komodo';
-  const PIPELINE_API_VERSION = '7.1';
+  // The Pipelines API remains a preview contract on supported Azure DevOps
+  // Server versions. Keep the repositoryId query parameter on create: without
+  // it, some on-prem servers accept the YAML commit but reject pipeline
+  // registration because they cannot resolve the input repository.
+  const PIPELINE_API_VERSION = '7.1-preview.1';
+  const BUILD_API_VERSION = '7.1';
   const RELEASE_API_VERSION = '7.1-preview.4';
   const BASH_TASK_ID = '6c731c3c-3c68-459a-a5c9-bde6e6595b5b';
   const DEFAULT_RELEASE_CONFIG = Object.freeze({
@@ -207,6 +251,8 @@
     environmentName: 'komodo',
     nameSuffix: '_Release',
     bashTaskName: 'Run Komodo deployment',
+    variableGroupName: 'KomodoAPI',
+    requiredVariableNames: Object.freeze(['AZP_TOKEN', 'KOMODO_API_KEY', 'KOMODO_API_SECRET']),
     scriptSource: { type: 'inline', content: '' }
   });
 
@@ -225,6 +271,12 @@
       environmentName: String(configured.environmentName || DEFAULT_RELEASE_CONFIG.environmentName).trim(),
       nameSuffix: String(configured.nameSuffix || DEFAULT_RELEASE_CONFIG.nameSuffix),
       bashTaskName: String(configured.bashTaskName || DEFAULT_RELEASE_CONFIG.bashTaskName).trim(),
+      variableGroupName: String(
+        configured.variableGroupName || DEFAULT_RELEASE_CONFIG.variableGroupName
+      ).trim(),
+      requiredVariableNames: Array.isArray(configured.requiredVariableNames)
+        ? configured.requiredVariableNames.map((name) => String(name).trim()).filter(Boolean)
+        : [...DEFAULT_RELEASE_CONFIG.requiredVariableNames],
       scriptSource: source
     };
   };
@@ -240,6 +292,8 @@
     repoId: null,
     rawRepositoryName: null,
     repositoryName: null,
+    generatedRepoId: null,
+    generatedRepositoryName: null,
     branch: SCAFFOLD_BRANCH,
     sourceBranch: null
   };
@@ -253,6 +307,17 @@
   const setSubmitting = (isSubmitting) => {
     if (submitButton) {
       submitButton.disabled = isSubmitting;
+    }
+  };
+
+  const setReauthenticationVisibility = (isVisible, message) => {
+    if (!reauthPanel) return;
+    if (message && reauthMessage) {
+      reauthMessage.textContent = message;
+    }
+    reauthPanel.classList?.toggle('hidden', !isVisible);
+    if (!reauthPanel.classList) {
+      reauthPanel.className = isVisible ? 'auth-fallback' : 'auth-fallback hidden';
     }
   };
 
@@ -316,10 +381,18 @@
   const normalizeAccessTokenError = (error) => {
     const message = error?.message || 'Unknown Azure DevOps authentication error';
     if (/HostAuthorizationNotFound/i.test(message)) {
-      return 'Host authorization was not found. Re-enable or reinstall the Pipeline Generator extension for this collection and project (Collection Settings → Extensions → Pipeline Generator → Manage), then reload the page.';
+      return 'HostAuthorizationNotFound: A Collection Administrator must open Collection Settings → Extensions, select Pipeline Generator, and authorize its requested scopes. If no authorization action is available, reinstall the same published extension version.';
     }
     return message;
   };
+
+  const isHostAuthorizationError = (value) =>
+    /HostAuthorizationNotFound|Host authorization was not found/i.test(value?.message || value || '');
+
+  const buildTokenRecoveryMessage = (errorMessage) =>
+    isHostAuthorizationError(errorMessage)
+      ? `${errorMessage} Use Open extension authorization below; signing out cannot create the missing extension authorization.`
+      : `${errorMessage} Sign out and authenticate again below to rebuild the Azure DevOps host session.`;
 
   const getAccessTokenWithRetry = async (sdk, maxAttempts = 3, delayMs = 800) => {
     if (!sdk?.getAccessToken) {
@@ -427,6 +500,13 @@
     return error;
   };
 
+  const markRequiredExtensionScope = (error, scope) => {
+    if (error && !error.requiredExtensionScope) {
+      error.requiredExtensionScope = scope;
+    }
+    return error;
+  };
+
   const runProvisioningStep = async (label, work) => {
     setStatus(label);
     try {
@@ -460,12 +540,7 @@
     return `${projectSegment}-${repoSegment}-${branchSegment}.yml`;
   };
 
-  const buildPipelineName = ({ projectName, repositoryName, environment }) => {
-    const projectSegment = projectName || 'project';
-    const repoSegment = repositoryName || projectName || 'repo';
-    const environmentSegment = environment || 'env';
-    return `${projectSegment}_${repoSegment}_${environmentSegment}`;
-  };
+  const buildPipelineName = (pipelineFilename) => pipelineFilename;
 
   const getProjectRouteSegment = () => {
     const candidate = state.rawProjectName || state.projectName || state.projectId;
@@ -477,6 +552,62 @@
     error?.status === 403 ||
     /TF400813/i.test(error?.detail || '') ||
     /\b401\b/.test(error?.message || '');
+
+  const buildSignOutUrl = (hostUri) => `${normalizeHostUri(hostUri || state.hostUri || getHostBase())}_signout`;
+
+  const buildExtensionManagementUrl = (hostUri) =>
+    `${normalizeHostUri(hostUri || state.hostUri || getHostBase())}_settings/extensions?tab=installed`;
+
+  const navigateHost = async (url) => {
+    const sdk = state.sdk || normalizeSdk(window.VSS || window.parent?.VSS);
+    const navigationServiceId = sdk?.ServiceIds?.Navigation;
+    if (sdk?.getService && navigationServiceId) {
+      try {
+        const navigationService = await sdk.getService(navigationServiceId);
+        if (navigationService?.navigate) {
+          navigationService.navigate(url);
+          return;
+        }
+      } catch (error) {
+        console.warn('Azure DevOps host navigation service could not open the sign-out page', error);
+      }
+    }
+
+    try {
+      window.top.location.assign(url);
+    } catch (error) {
+      console.warn('Top-level navigation was unavailable; opening sign-out in the current window', error);
+      window.location.assign(url);
+    }
+  };
+
+  const restartAzureDevOpsSession = async () => {
+    if (!state.hostUri) {
+      setStatus('Azure DevOps host context is unavailable. Reopen the generator from the target branch.', true);
+      return;
+    }
+    state.accessToken = null;
+    state.accessTokenError = null;
+    if (reauthenticateButton) {
+      reauthenticateButton.disabled = true;
+    }
+    setStatus('Signing out of Azure DevOps. Complete the login flow, then reopen Generate pipeline from the branch.');
+    await navigateHost(buildSignOutUrl(state.hostUri));
+  };
+
+  const openExtensionAuthorization = async () => {
+    if (!state.hostUri) {
+      setStatus('Azure DevOps host context is unavailable. Reopen the generator from the target branch.', true);
+      return;
+    }
+    state.accessToken = null;
+    state.accessTokenError = null;
+    if (authorizeExtensionButton) {
+      authorizeExtensionButton.disabled = true;
+    }
+    setStatus('Opening Collection Settings → Extensions. Authorize Pipeline Generator, then reopen it from the branch.');
+    await navigateHost(buildExtensionManagementUrl(state.hostUri));
+  };
 
   const applyBootstrapPayload = async (payload = {}, source = 'message') => {
     const {
@@ -500,8 +631,13 @@
     state.rawRepositoryName = repoName || state.rawRepositoryName;
     state.repositoryName = repoName || state.repositoryName;
     state.hostUri = normalizedHost;
-    state.accessToken = accessToken || state.accessToken;
-    state.accessTokenError = accessTokenError || state.accessTokenError;
+    if (accessToken) {
+      state.accessToken = accessToken;
+      state.accessTokenError = null;
+      setReauthenticationVisibility(false);
+    } else {
+      state.accessTokenError = accessTokenError || state.accessTokenError;
+    }
 
     const targetBranch = state.branch;
     const sourceBranch = state.sourceBranch;
@@ -525,13 +661,17 @@
     if (!state.projectId || !state.accessToken || !state.hostUri) {
       let authMessage;
       if (state.accessTokenError) {
-        const needsHostAuth = /HostAuthorizationNotFound/i.test(state.accessTokenError);
+        const needsHostAuth = isHostAuthorizationError(state.accessTokenError);
         authMessage = needsHostAuth
-          ? 'Azure DevOps could not issue an access token because host authorization was not found. Confirm the extension is installed and enabled for this collection/project (Organization/Collection settings → Extensions → Manage) and that your account can access it, then relaunch the generator.'
+          ? 'Azure DevOps could not issue an access token because extension authorization is missing. A Collection Administrator must authorize Pipeline Generator in Collection Settings → Extensions; if no authorization action is available, reinstall this same published version.'
           : `Azure DevOps did not provide an access token (${state.accessTokenError}). Refresh the page or sign in again, then relaunch the generator.`;
       } else {
         authMessage = 'Loaded context from branch action but still waiting for an access token from Azure DevOps. Refresh or try again if this persists.';
       }
+      setReauthenticationVisibility(
+        true,
+        buildTokenRecoveryMessage(authMessage)
+      );
       setStatus(authMessage, true);
       setSubmitting(false);
       return;
@@ -545,7 +685,7 @@
           hostUri: state.hostUri,
           projectId: state.projectId,
           repoId: state.repoId,
-          branch: targetBranch,
+          branch: sourceBranch || targetBranch,
           accessToken: state.accessToken
         })
       ]);
@@ -686,23 +826,25 @@
     return payload.value?.[0]?.objectId || ZERO_OBJECT_ID;
   };
 
-  const getRepositoryFileExists = async ({ hostUri, projectId, repoId, branchName, path, accessToken }) => {
+  const getRepositoryFileContent = async ({ hostUri, projectId, repoId, branchName, path, accessToken }) => {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/items?path=${encodeURIComponent(
       normalizedPath
-    )}&versionDescriptor.version=${encodeURIComponent(branchName)}&versionDescriptor.versionType=branch&api-version=6.0`;
+    )}&versionDescriptor.version=${encodeURIComponent(
+      branchName
+    )}&versionDescriptor.versionType=branch&%24format=text&api-version=6.0`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
 
     if (res.status === 404) {
-      return false;
+      return null;
     }
 
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      throw buildHttpError('Failed to check whether the generated YAML already exists', res, detail);
+      throw buildHttpError('Failed to read the existing generated YAML', res, detail);
     }
 
-    return true;
+    return res.text();
   };
 
   const ensureRepo = async ({ hostUri, projectId, projectName, accessToken }) => {
@@ -773,16 +915,21 @@
     const pipelineContent = content || '';
     const oldObjectId = await getBranchObjectId({ hostUri, projectId, repoId, branch: branchName, accessToken });
     const filePath = `/${pipelineFilename}`;
-    const fileExists =
-      oldObjectId !== ZERO_OBJECT_ID &&
-      (await getRepositoryFileExists({
-        hostUri,
-        projectId,
-        repoId,
+    const existingContent =
+      oldObjectId === ZERO_OBJECT_ID
+        ? null
+        : await getRepositoryFileContent({
+          hostUri,
+          projectId,
+          repoId,
         branchName,
         path: filePath,
-        accessToken
-      }));
+          accessToken
+        });
+    const fileExists = existingContent !== null;
+    if (fileExists && existingContent === pipelineContent) {
+      return { skipped: true, unchanged: true, path: filePath, branch: branchRef };
+    }
     const body = {
       refUpdates: [
         {
@@ -833,8 +980,34 @@
     }
   });
 
+  const buildPipelinesApiUrl = ({ hostUri, projectId, pipelineId, repositoryId }) => {
+    const pipelineSegment = pipelineId ? `/${encodeURIComponent(pipelineId)}` : '';
+    const searchParams = new URLSearchParams();
+    if (repositoryId) {
+      searchParams.set('repositoryId', repositoryId);
+    }
+    searchParams.set('api-version', PIPELINE_API_VERSION);
+    return `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines${pipelineSegment}?${searchParams.toString()}`;
+  };
+
+  const readPipelineResponse = async (res, failureMessage) => {
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw markErrorDomain(buildHttpError(failureMessage, res, detail), 'pipeline');
+    }
+
+    const pipeline = await res.json();
+    if (!pipeline?.id) {
+      throw markErrorDomain(
+        new Error(`${failureMessage.replace(/^Failed to /, 'Azure DevOps reported success for ')} but returned no pipeline ID.`),
+        'pipeline'
+      );
+    }
+    return pipeline;
+  };
+
   const getPipelineByName = async ({ hostUri, projectId, pipelineName, accessToken }) => {
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=${PIPELINE_API_VERSION}`;
+    const url = buildPipelinesApiUrl({ hostUri, projectId });
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       const detail = await readErrorDetail(res);
@@ -844,14 +1017,145 @@
     return (payload.value || []).find((pipeline) => pipeline.name === pipelineName);
   };
 
-  const getPipelineById = async ({ hostUri, projectId, pipelineId, accessToken }) => {
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${pipelineId}?api-version=${PIPELINE_API_VERSION}`;
+  const normalizeComparableFolder = (folder) => normalizePipelineFolder(folder, '\\').toLowerCase();
+
+  const normalizeComparableYamlPath = (path = '') => {
+    const normalized = String(path || '').trim().replace(/\\/g, '/');
+    return normalized.startsWith('/') ? normalized : `/${normalized}`;
+  };
+
+  const buildDefinitionsApiUrl = ({ hostUri, projectId, definitionId, query = {} }) => {
+    const definitionSegment = definitionId ? `/${encodeURIComponent(definitionId)}` : '';
+    const searchParams = new URLSearchParams(query);
+    searchParams.set('api-version', BUILD_API_VERSION);
+    return `${hostUri}${encodeURIComponent(projectId)}/_apis/build/definitions${definitionSegment}?${searchParams.toString()}`;
+  };
+
+  const readBuildDefinitionResponse = async (res, failureMessage) => {
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw markErrorDomain(buildHttpError(failureMessage, res, detail), 'pipeline');
+    }
+
+    const definition = await res.json();
+    if (!definition?.id) {
+      throw markErrorDomain(new Error(`${failureMessage} but Azure DevOps returned no Build Definition ID.`), 'pipeline');
+    }
+    return definition;
+  };
+
+  const getBuildDefinitionById = async ({ hostUri, projectId, definitionId, accessToken }) => {
+    const url = buildDefinitionsApiUrl({ hostUri, projectId, definitionId });
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+    return readBuildDefinitionResponse(res, `Failed to load Build Definition ${definitionId}`);
+  };
+
+  const getBuildDefinitionByYamlPath = async ({
+    hostUri,
+    projectId,
+    repoId,
+    pipelinePath,
+    accessToken
+  }) => {
+    const desiredPath = normalizeComparableYamlPath(pipelinePath);
+    const url = buildDefinitionsApiUrl({
+      hostUri,
+      projectId,
+      query: {
+        repositoryId: repoId,
+        repositoryType: 'TfsGit',
+        yamlFilename: desiredPath,
+        includeAllProperties: 'true'
+      }
+    });
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      throw markErrorDomain(buildHttpError(`Failed to load Azure Pipeline ${pipelineId}`, res, detail), 'pipeline');
+      throw markErrorDomain(buildHttpError('Failed to find a Pipeline by its YAML path', res, detail), 'pipeline');
     }
-    return res.json();
+
+    const payload = await res.json();
+    const references = [...(payload.value || [])].sort((left, right) => Number(left.id) - Number(right.id));
+    for (const reference of references) {
+      const definition =
+        reference?.process?.yamlFilename && reference?.repository?.id
+          ? reference
+          : await getBuildDefinitionById({
+              hostUri,
+              projectId,
+              definitionId: reference.id,
+              accessToken
+            });
+      const samePath = normalizeComparableYamlPath(definition?.process?.yamlFilename) === desiredPath;
+      const sameRepository = String(definition?.repository?.id || '') === String(repoId);
+      if (samePath && sameRepository) {
+        return definition;
+      }
+    }
+    return undefined;
+  };
+
+  const updateBuildDefinition = async ({
+    hostUri,
+    projectId,
+    definition,
+    repo,
+    pipelineName,
+    desiredConfig,
+    accessToken
+  }) => {
+    // Azure DevOps requires the current revision and recommends GET-modify-PUT
+    // with the complete Build Definition document. A list response can include
+    // a revision without containing every field, so always fetch the full
+    // definition immediately before the update.
+    const current = await getBuildDefinitionById({
+      hostUri,
+      projectId,
+      definitionId: definition.id,
+      accessToken
+    });
+    const updated = {
+      ...current,
+      name: pipelineName,
+      path: PIPELINE_FOLDER,
+      comment: 'Updated by Pipeline Generator.',
+      process: {
+        ...(current.process || {}),
+        type: current.process?.type ?? 2,
+        yamlFilename: desiredConfig.path
+      },
+      repository: {
+        ...(current.repository || {}),
+        id: desiredConfig.repository.id,
+        name: repo.name,
+        type: current.repository?.type || 'TfsGit',
+        defaultBranch: desiredConfig.repository.defaultBranch
+      }
+    };
+    const url = buildDefinitionsApiUrl({ hostUri, projectId, definitionId: current.id });
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        ...authHeaders(accessToken),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(updated)
+    });
+    return readBuildDefinitionResponse(res, `Failed to update Build Definition ${current.id}`);
+  };
+
+  const pipelineBindingMatches = ({ pipeline, pipelineName, desiredConfig }) => {
+    const configuration = pipeline?.configuration;
+    const repository = configuration?.repository || pipeline?.repository;
+    const yamlPath = configuration?.path || pipeline?.process?.yamlFilename;
+    const folder = pipeline?.folder || pipeline?.path;
+    return (
+      pipeline?.name === pipelineName &&
+      normalizeComparableFolder(folder) === normalizeComparableFolder(PIPELINE_FOLDER) &&
+      normalizeComparableYamlPath(yamlPath) === normalizeComparableYamlPath(desiredConfig.path) &&
+      String(repository?.id || '') === String(desiredConfig.repository.id) &&
+      repository?.defaultBranch === desiredConfig.repository.defaultBranch
+    );
   };
 
   const upsertPipelineDefinition = async ({ hostUri, projectId, repo, pipelineName, pipelinePath, branch, accessToken }) => {
@@ -865,36 +1169,63 @@
 
     const existing = await getPipelineByName({ hostUri, projectId, pipelineName, accessToken });
     if (existing?.id) {
-      const current = await getPipelineById({ hostUri, projectId, pipelineId: existing.id, accessToken });
-      const needsUpdate =
-        current?.folder !== PIPELINE_FOLDER ||
-        current?.configuration?.path !== desiredConfig.path ||
-        current?.configuration?.repository?.id !== desiredConfig.repository.id ||
-        current?.configuration?.repository?.defaultBranch !== desiredConfig.repository.defaultBranch;
-
-      if (!needsUpdate) {
+      // The Pipelines API's by-ID response can omit repository.defaultBranch
+      // on Azure DevOps Server. Treating that sparse response as a mismatch
+      // caused a no-op rerun to PUT the Build Definition and increment its
+      // revision. Read the canonical full Build Definition before deciding
+      // whether migration is necessary.
+      const current = await getBuildDefinitionById({
+        hostUri,
+        projectId,
+        definitionId: existing.id,
+        accessToken
+      });
+      if (pipelineBindingMatches({ pipeline: current, pipelineName, desiredConfig })) {
         return current || existing;
       }
-
-      const updateUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines/${existing.id}?api-version=${PIPELINE_API_VERSION}`;
-      const res = await fetch(updateUrl, {
-        method: 'PUT',
-        headers: {
-          ...authHeaders(accessToken),
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ name: pipelineName, folder: PIPELINE_FOLDER, configuration: desiredConfig })
+      return updateBuildDefinition({
+        hostUri,
+        projectId,
+        definition: existing,
+        repo,
+        pipelineName,
+        desiredConfig,
+        accessToken
       });
-
-      if (!res.ok) {
-        const detail = await readErrorDetail(res);
-        throw markErrorDomain(buildHttpError('Failed to update pipeline', res, detail), 'pipeline');
-      }
-
-      return res.json();
     }
 
-    const createUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/pipelines?api-version=${PIPELINE_API_VERSION}`;
+    const existingForYaml = await getBuildDefinitionByYamlPath({
+      hostUri,
+      projectId,
+      repoId: repo.id,
+      pipelinePath: desiredConfig.path,
+      accessToken
+    });
+    if (existingForYaml?.id) {
+      const alreadyDesired = pipelineBindingMatches({
+        pipeline: existingForYaml,
+        pipelineName,
+        desiredConfig
+      });
+      if (alreadyDesired) {
+        return existingForYaml;
+      }
+      return updateBuildDefinition({
+        hostUri,
+        projectId,
+        definition: existingForYaml,
+        repo,
+        pipelineName,
+        desiredConfig,
+        accessToken
+      });
+    }
+
+    const createUrl = buildPipelinesApiUrl({
+      hostUri,
+      projectId,
+      repositoryId: repo.id
+    });
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: {
@@ -904,16 +1235,42 @@
       body: JSON.stringify({ name: pipelineName, folder: PIPELINE_FOLDER, configuration: desiredConfig })
     });
 
+    return readPipelineResponse(res, 'Failed to create pipeline');
+  };
+
+  const buildReleaseDefinitionsApiUrl = ({ hostUri, projectId, definitionId, query = {} }) => {
+    const definitionSegment = definitionId ? `/${encodeURIComponent(definitionId)}` : '';
+    const searchParams = new URLSearchParams(query);
+    searchParams.set('api-version', RELEASE_API_VERSION);
+    return `${hostUri}${encodeURIComponent(projectId)}/_apis/release/definitions${definitionSegment}?${searchParams.toString()}`;
+  };
+
+  const readReleaseDefinitionResponse = async (res, failureMessage) => {
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      throw markErrorDomain(buildHttpError('Failed to create pipeline', res, detail), 'pipeline');
+      const error = markErrorDomain(buildHttpError(failureMessage, res, detail), 'release');
+      error.responseDetail = detail;
+      throw error;
     }
-
-    return res.json();
+    const definition = await res.json();
+    if (!definition?.id) {
+      throw markErrorDomain(new Error(`${failureMessage} but Azure DevOps returned no Release Definition ID.`), 'release');
+    }
+    return definition;
   };
 
   const getReleaseDefinitionByName = async ({ hostUri, projectId, releaseName, accessToken }) => {
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/release/definitions?api-version=${RELEASE_API_VERSION}`;
+    const searchParams = new URLSearchParams({
+      searchText: releaseName,
+      isExactNameMatch: 'true',
+      searchTextContainsFolderName: 'false',
+      '$top': '100'
+    });
+    const url = buildReleaseDefinitionsApiUrl({
+      hostUri,
+      projectId,
+      query: Object.fromEntries(searchParams.entries())
+    });
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       const detail = await readErrorDetail(res);
@@ -921,6 +1278,41 @@
     }
     const payload = await res.json();
     return (payload.value || []).find((definition) => definition.name === releaseName);
+  };
+
+  const getReleaseDefinitionById = async ({ hostUri, projectId, definitionId, accessToken }) => {
+    const url = buildReleaseDefinitionsApiUrl({ hostUri, projectId, definitionId });
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+    return readReleaseDefinitionResponse(res, `Failed to load classic Release definition ${definitionId}`);
+  };
+
+  const getReleaseDefinitionByPipelineId = async ({
+    hostUri,
+    projectId,
+    pipelineId,
+    accessToken
+  }) => {
+    const url = buildReleaseDefinitionsApiUrl({
+      hostUri,
+      projectId,
+      query: {
+        '$expand': 'Artifacts',
+        artifactType: 'Build',
+        artifactSourceId: `${projectId}:${pipelineId}`,
+        '$top': '100'
+      }
+    });
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw markErrorDomain(buildHttpError('Failed to find a Release definition by Pipeline artifact', res, detail), 'release');
+    }
+    const payload = await res.json();
+    return (payload.value || []).find((definition) =>
+      (definition.artifacts || []).some(
+        (artifact) => String(artifact?.definitionReference?.definition?.id || '') === String(pipelineId)
+      )
+    );
   };
 
   const resolveReleaseAgentQueue = async ({ hostUri, projectId, queueName, accessToken }) => {
@@ -932,7 +1324,10 @@
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      throw markErrorDomain(buildHttpError(`Failed to load agent queue ${queueName}`, res, detail), 'release');
+      throw markRequiredExtensionScope(
+        markErrorDomain(buildHttpError(`Failed to load agent queue ${queueName}`, res, detail), 'release'),
+        'vso.agentpools'
+      );
     }
 
     const payload = await res.json();
@@ -1006,13 +1401,89 @@
       }
       return source.content;
     }
+    if (source.type === 'packagedFile') {
+      const packagedPath = String(source.path || '').trim();
+      if (!packagedPath) {
+        throw markErrorDomain(
+          new Error('Release Bash packagedFile path is empty in dist/release-config.js.'),
+          'release'
+        );
+      }
+      const packagedUrl = new URL(packagedPath, window.location.href).toString();
+      const packagedResponse = await fetch(packagedUrl, { cache: 'no-store' });
+      if (!packagedResponse.ok) {
+        const detail = await readErrorDetail(packagedResponse);
+        throw markErrorDomain(
+          buildHttpError(`Failed to load packaged Release Bash script ${packagedPath}`, packagedResponse, detail),
+          'release'
+        );
+      }
+      const script = await packagedResponse.text();
+      if (!script.trim()) {
+        throw markErrorDomain(new Error(`Packaged Release Bash script is empty: ${packagedPath}.`), 'release');
+      }
+      return script;
+    }
     if (source.type === 'azureReposFile') {
       return resolveReleaseScriptRepository({ hostUri, source, accessToken });
     }
     throw markErrorDomain(
-      new Error(`Unsupported Release script source type: ${source.type || 'missing'}. Use inline or azureReposFile.`),
+      new Error(
+        `Unsupported Release script source type: ${source.type || 'missing'}. Use inline, packagedFile, or azureReposFile.`
+      ),
       'release'
     );
+  };
+
+  const resolveReleaseVariableGroup = async ({
+    hostUri,
+    projectId,
+    groupName,
+    requiredVariableNames,
+    accessToken
+  }) => {
+    if (!groupName) {
+      throw markErrorDomain(new Error('Release variableGroupName is empty in dist/release-config.js.'), 'release');
+    }
+    const searchParams = new URLSearchParams({
+      groupName,
+      actionFilter: 'Use',
+      'api-version': '7.1'
+    });
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/distributedtask/variablegroups?${searchParams}`;
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw markRequiredExtensionScope(
+        markErrorDomain(buildHttpError(`Failed to load Release variable group ${groupName}`, res, detail), 'release'),
+        'vso.variablegroups_read'
+      );
+    }
+
+    const payload = await res.json();
+    const group = (payload.value || [])
+      .filter((item) => item?.name === groupName && item?.id != null)
+      .sort((left, right) => Number(left.id) - Number(right.id))[0];
+    if (!group) {
+      throw markErrorDomain(
+        new Error(`Release variable group was not found or cannot be used: ${groupName}. Check Pipelines → Library.`),
+        'release'
+      );
+    }
+
+    const variables = group.variables || {};
+    const missingVariables = (requiredVariableNames || []).filter(
+      (name) => !Object.prototype.hasOwnProperty.call(variables, name)
+    );
+    if (missingVariables.length) {
+      throw markErrorDomain(
+        new Error(
+          `Release variable group ${groupName} is missing required variables: ${missingVariables.join(', ')}.`
+        ),
+        'release'
+      );
+    }
+    return { id: Number(group.id), name: group.name };
   };
 
   const buildReleaseDefinitionPayload = ({
@@ -1025,7 +1496,8 @@
     pipelineDefinition,
     pipelineName,
     branch,
-    agentQueue
+    agentQueue,
+    variableGroup
   }) => {
     const defaultBranch = `refs/heads/${branch}`;
     const artifactAlias = `_${pipelineName}`;
@@ -1060,13 +1532,33 @@
           variables: {},
           variableGroups: [],
           demands: [],
-          conditions: [],
+          conditions: [{ name: 'ReleaseStarted', conditionType: 'event', value: '', result: null }],
           executionPolicy: { concurrencyCount: 0, queueDepthCount: 0 },
           schedules: [],
           retentionPolicy: { daysToKeep: 30, releasesToKeep: 3, retainBuild: true },
           processParameters: {},
-          preDeployApprovals: { approvals: [], approvalOptions: null },
-          postDeployApprovals: { approvals: [], approvalOptions: null },
+          preDeployApprovals: {
+            approvals: [{ rank: 1, isAutomated: true, isNotificationOn: false }],
+            approvalOptions: {
+              requiredApproverCount: null,
+              releaseCreatorCanBeApprover: false,
+              autoTriggeredAndPreviousEnvironmentApprovedCanBeSkipped: false,
+              enforceIdentityRevalidation: false,
+              timeoutInMinutes: 0,
+              executionOrder: 'beforeGates'
+            }
+          },
+          postDeployApprovals: {
+            approvals: [{ rank: 1, isAutomated: true, isNotificationOn: false }],
+            approvalOptions: {
+              requiredApproverCount: null,
+              releaseCreatorCanBeApprover: false,
+              autoTriggeredAndPreviousEnvironmentApprovedCanBeSkipped: false,
+              enforceIdentityRevalidation: false,
+              timeoutInMinutes: 0,
+              executionOrder: 'afterSuccessfulGates'
+            }
+          },
           deployPhases: [
             {
               name: 'Agent job',
@@ -1112,10 +1604,113 @@
         }
       ],
       variables: {},
-      variableGroups: [],
+      variableGroups: [Number(variableGroup.id)],
       triggers: [],
       properties: {}
     };
+  };
+
+  const getReleaseWorkflowTask = (definition) =>
+    definition?.environments?.[0]?.deployPhases?.[0]?.workflowTasks?.[0];
+
+  const getReleaseDeploymentInput = (definition) =>
+    definition?.environments?.[0]?.deployPhases?.[0]?.deploymentInput;
+
+  const releaseDefinitionMatches = ({ current, desired }) => {
+    const currentArtifact = current?.artifacts?.[0];
+    const desiredArtifact = desired?.artifacts?.[0];
+    const currentEnvironment = current?.environments?.[0];
+    const desiredEnvironment = desired?.environments?.[0];
+    const currentTask = getReleaseWorkflowTask(current);
+    const desiredTask = getReleaseWorkflowTask(desired);
+    const currentDeployment = getReleaseDeploymentInput(current);
+    const desiredDeployment = getReleaseDeploymentInput(desired);
+    const currentVariableGroupIds = new Set(
+      (current?.variableGroups || []).map((groupId) => String(groupId))
+    );
+    const hasDesiredVariableGroups = (desired?.variableGroups || []).every((groupId) =>
+      currentVariableGroupIds.has(String(groupId))
+    );
+    return (
+      current?.name === desired?.name &&
+      normalizeComparableFolder(current?.path) === normalizeComparableFolder(desired?.path) &&
+      String(currentArtifact?.definitionReference?.definition?.id || '') ===
+        String(desiredArtifact?.definitionReference?.definition?.id || '') &&
+      String(currentArtifact?.definitionReference?.repository?.id || '') ===
+        String(desiredArtifact?.definitionReference?.repository?.id || '') &&
+      currentEnvironment?.name === desiredEnvironment?.name &&
+      Number(currentDeployment?.queueId) === Number(desiredDeployment?.queueId) &&
+      currentTask?.taskId === desiredTask?.taskId &&
+      currentTask?.version === desiredTask?.version &&
+      currentTask?.name === desiredTask?.name &&
+      currentTask?.inputs?.targetType === 'inline' &&
+      currentTask?.inputs?.script === desiredTask?.inputs?.script &&
+      hasDesiredVariableGroups &&
+      currentEnvironment?.conditions?.some((condition) => condition?.name === 'ReleaseStarted') &&
+      currentEnvironment?.preDeployApprovals?.approvals?.some((approval) => approval?.isAutomated === true) &&
+      currentEnvironment?.postDeployApprovals?.approvals?.some((approval) => approval?.isAutomated === true)
+    );
+  };
+
+  const updateReleaseDefinition = async ({
+    hostUri,
+    projectId,
+    definition,
+    desired,
+    accessToken
+  }) => {
+    const current = await getReleaseDefinitionById({
+      hostUri,
+      projectId,
+      definitionId: definition.id,
+      accessToken
+    });
+    if (releaseDefinitionMatches({ current, desired })) {
+      return { ...current, created: false, updated: false };
+    }
+    const mergedEnvironments = (desired.environments || []).map((desiredEnvironment, index) => {
+      const currentEnvironment = current.environments?.[index] || {};
+      const mergedDeployPhases = (desiredEnvironment.deployPhases || []).map((desiredPhase, phaseIndex) => ({
+        ...(currentEnvironment.deployPhases?.[phaseIndex] || {}),
+        ...desiredPhase
+      }));
+      return {
+        ...currentEnvironment,
+        ...desiredEnvironment,
+        ...(currentEnvironment.id ? { id: currentEnvironment.id } : {}),
+        deployPhases: mergedDeployPhases
+      };
+    });
+    const mergedVariableGroups = Array.from(
+      new Set(
+        [...(current.variableGroups || []), ...(desired.variableGroups || [])]
+          .map((groupId) => Number(groupId))
+          .filter(Number.isFinite)
+      )
+    );
+    const updated = {
+      ...current,
+      ...desired,
+      id: current.id,
+      revision: current.revision,
+      comment: 'Updated by Pipeline Generator.',
+      environments: mergedEnvironments,
+      variableGroups: mergedVariableGroups
+    };
+    const url = buildReleaseDefinitionsApiUrl({ hostUri, projectId });
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        ...authHeaders(accessToken),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(updated)
+    });
+    const result = await readReleaseDefinitionResponse(
+      res,
+      `Failed to update classic Release definition ${current.id}`
+    );
+    return { ...result, created: false, updated: true };
   };
 
   const ensureReleaseDefinition = async ({
@@ -1136,16 +1731,31 @@
     if (!releaseConfig.environmentName) {
       throw markErrorDomain(new Error('Release environmentName is empty in dist/release-config.js.'), 'release');
     }
-
-    const releaseName = `${pipelineName}${releaseConfig.nameSuffix}`;
-    const existing = await getReleaseDefinitionByName({ hostUri, projectId, releaseName, accessToken });
-    if (existing?.id) {
-      return { ...existing, created: false };
+    if (!releaseConfig.variableGroupName) {
+      throw markErrorDomain(new Error('Release variableGroupName is empty in dist/release-config.js.'), 'release');
     }
 
-    const [inlineScript, agentQueue] = await Promise.all([
+    const releaseName = `${pipelineName}${releaseConfig.nameSuffix}`;
+    const existingByName = await getReleaseDefinitionByName({ hostUri, projectId, releaseName, accessToken });
+    const existingByPipeline = existingByName?.id
+      ? undefined
+      : await getReleaseDefinitionByPipelineId({
+          hostUri,
+          projectId,
+          pipelineId: pipelineDefinition.id,
+          accessToken
+        });
+
+    const [inlineScript, agentQueue, variableGroup] = await Promise.all([
       resolveReleaseInlineScript({ releaseConfig, hostUri, accessToken }),
-      resolveReleaseAgentQueue({ hostUri, projectId, queueName, accessToken })
+      resolveReleaseAgentQueue({ hostUri, projectId, queueName, accessToken }),
+      resolveReleaseVariableGroup({
+        hostUri,
+        projectId,
+        groupName: releaseConfig.variableGroupName,
+        requiredVariableNames: releaseConfig.requiredVariableNames,
+        accessToken
+      })
     ]);
     const body = buildReleaseDefinitionPayload({
       releaseName,
@@ -1157,9 +1767,21 @@
       pipelineDefinition,
       pipelineName,
       branch,
-      agentQueue
+      agentQueue,
+      variableGroup
     });
-    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/release/definitions?api-version=${RELEASE_API_VERSION}`;
+    const existing = existingByName || existingByPipeline;
+    if (existing?.id) {
+      return updateReleaseDefinition({
+        hostUri,
+        projectId,
+        definition: existing,
+        desired: body,
+        accessToken
+      });
+    }
+
+    const url = buildReleaseDefinitionsApiUrl({ hostUri, projectId });
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -1170,9 +1792,21 @@
     });
     if (!res.ok) {
       const detail = await readErrorDetail(res);
+      if (res.status === 409 || /already exists|same name|duplicate/i.test(detail)) {
+        const duplicate = await getReleaseDefinitionByName({ hostUri, projectId, releaseName, accessToken });
+        if (duplicate?.id) {
+          return updateReleaseDefinition({
+            hostUri,
+            projectId,
+            definition: duplicate,
+            desired: body,
+            accessToken
+          });
+        }
+      }
       throw markErrorDomain(buildHttpError(`Failed to create classic Release definition ${releaseName}`, res, detail), 'release');
     }
-    return { ...(await res.json()), created: true };
+    return { ...(await res.json()), created: true, updated: false };
   };
 
   const fetchAgentQueues = async ({ hostUri, projectId, accessToken }) => {
@@ -1275,17 +1909,17 @@
       projectName: state.projectName,
       rawRepositoryName: state.rawRepositoryName,
       repositoryName: state.repositoryName,
-      sourceRepositoryName: state.repositoryName || state.projectName
+      sourceRepositoryName: state.rawRepositoryName || state.repositoryName || state.projectName
     });
 
     setStatus('Generating pipeline template...');
     setSubmitting(true);
 
     if (!state.accessToken) {
-      setStatus(
-        'Access token unavailable from Azure DevOps. Reload the page and reopen the generator from a branch action to push and view the YAML automatically.',
-        true
-      );
+      const errorMessage = state.accessTokenError || 'Azure DevOps did not issue an extension access token.';
+      const message = buildTokenRecoveryMessage(errorMessage);
+      setReauthenticationVisibility(true, message);
+      setStatus(message, true);
       setSubmitting(false);
       return;
     }
@@ -1302,16 +1936,13 @@
       state.repositoryName = contextRepositoryName || state.repositoryName;
     }
 
+    const sourceRepositoryName = state.rawRepositoryName || state.repositoryName || state.projectName;
     const pipelineFilename = buildPipelineFilename({
       projectName: state.projectName,
-      repositoryName: state.repositoryName,
+      repositoryName: sourceRepositoryName,
       branchName: state.sourceBranch || payload.environment
     });
-    const pipelineName = buildPipelineName({
-      projectName: state.projectName,
-      repositoryName: state.repositoryName,
-      environment: payload.environment
-    });
+    const pipelineName = buildPipelineName(pipelineFilename);
 
     if (!state.accessToken || !state.projectId) {
       setStatus('Open the extension from Azure DevOps to push the template and open it automatically.', true);
@@ -1329,8 +1960,8 @@
           accessToken: state.accessToken
         })
       );
-      state.repoId = repo.id || state.repoId;
-      state.repositoryName = repo.name || state.repositoryName;
+      state.generatedRepoId = repo.id || state.generatedRepoId;
+      state.generatedRepositoryName = repo.name || state.generatedRepositoryName;
       state.branch = targetBranch;
       await runProvisioningStep(`Step 2/5: saving YAML file /${pipelineFilename}...`, () =>
         postScaffold({
@@ -1385,27 +2016,39 @@
 
       const releaseMessage = releaseDefinition.skipped
         ? `Release skipped: ${releaseDefinition.reason}`
-        : `Release definition ${releaseDefinition.created ? 'created' : 'already exists'} (ID: ${releaseDefinition.id}).`;
+        : `Release definition ${
+            releaseDefinition.created ? 'created' : releaseDefinition.updated ? 'updated' : 'already up to date'
+          } (ID: ${releaseDefinition.id}).`;
       setStatus(
         `Done. Pipeline ${pipelineName} is linked to /${pipelineFilename} in ${PIPELINE_FOLDER} (ID: ${pipelineDefinition?.id || 'unknown'}). ${releaseMessage} Opening Pipelines...`,
         false
       );
       const projectRoute = getProjectRouteSegment();
       window.setTimeout(() => {
-        window.location.href = `${state.hostUri}${projectRoute}/_build?definitionId=${encodeURIComponent(pipelineDefinition.id)}`;
+        navigateHost(`${state.hostUri}${projectRoute}/_build?definitionId=${encodeURIComponent(pipelineDefinition.id)}`);
       }, 700);
     } catch (error) {
       console.error(error);
       const detail = sanitizeErrorDetail(error?.detail || error?.message || '');
       const step = error?.provisioningStep || 'Provisioning';
-      const permissionHint =
-        error?.domain === 'release'
+      const permissionHint = error?.requiredExtensionScope
+        ? ` The installed extension token is missing or has not been reauthorized for ${error.requiredExtensionScope}. A Collection Administrator must authorize the updated Pipeline Generator scopes.`
+        : error?.domain === 'release'
           ? ' Ask a project administrator to grant Manage release definitions, View releases, and Use the selected agent queue.'
           : error?.domain === 'pipeline'
             ? ' Ask a project administrator to grant Create/Edit pipeline permission under Project settings → Pipelines → Security.'
             : ' Ask a project administrator to grant the required Repos permissions.';
       const unauthorizedMessage = `Access denied during ${step}.${detail ? ` Details: ${detail}.` : ''}${permissionHint}`;
       const detailMessage = `Failed during ${step}.${detail ? ` Details: ${detail}` : ' No error details were returned by Azure DevOps.'}`;
+      if (isUnauthorizedError(error)) {
+        state.accessToken = null;
+        setReauthenticationVisibility(
+          true,
+          error?.requiredExtensionScope
+            ? `The installed extension token cannot access ${error.requiredExtensionScope}. Use Open extension authorization as a Collection Administrator, authorize the updated scopes, then reopen the generator from the branch.`
+            : 'The Azure DevOps host token was denied. Sign out and authenticate again, then reopen the generator from the branch.'
+        );
+      }
       setStatus(isUnauthorizedError(error) ? unauthorizedMessage : detailMessage, true);
     }
 
@@ -1444,9 +2087,7 @@
     const repoIdFromQuery = getQueryValue(query.get('repoId'));
     const repoNameFromQuery = getQueryValue(query.get('repoName'));
     const initialBranch = branchFromQuery || '(unknown branch)';
-    const hasReferrer = Boolean(document.referrer);
     const isFramed = window.parent !== window;
-    const hasOpener = Boolean(window.opener);
 
     const hostLooksLikeAzureDevOps = (() => {
       const candidateOrigins = new Set();
@@ -1498,15 +2139,16 @@
     })();
 
     // Only attempt SDK initialization when the extension is running inside the
-    // Azure DevOps iframe host. Opening the form in a new tab (for example via
-    // the window.open fallback) should remain in offline mode to avoid noisy
-    // VSS handshake errors.
+    // Azure DevOps dialog or hub iframe. Direct asset URLs remain in offline
+    // mode to avoid noisy VSS handshake errors.
     const shouldAttemptSdk = isFramed && hostLooksLikeAzureDevOps;
 
     state.sourceBranch = initialBranch;
     state.projectId = projectIdFromQuery;
+    state.rawProjectName = projectNameFromQuery;
     state.projectName = projectNameFromQuery;
     state.repoId = repoIdFromQuery;
+    state.rawRepositoryName = repoNameFromQuery;
     state.repositoryName = repoNameFromQuery;
     state.hostUri = `${getHostBase().replace(/\/+$/, '')}/`;
 
@@ -1520,7 +2162,10 @@
     targetRepoInput.value = `${projectNameFromQuery || 'project'}_Azure_DevOps`;
     setServiceNameFromRepository(repoNameFromQuery || projectNameFromQuery, projectNameFromQuery);
     applyDetectedEnvironment(initialBranch);
-    const hasHostContext = Boolean(isFramed && (hasReferrer || projectIdFromQuery || repoIdFromQuery || hasOpener));
+    // A host dialog is a trusted candidate even when an on-premises
+    // referrer-policy removes document.referrer. The VSS handshake itself is
+    // the authority; an unrelated parent cannot complete it successfully.
+    const hasHostContext = isFramed;
     if (!hasHostContext || !shouldAttemptSdk) {
       setStatus(
         'Running outside Azure DevOps. Open the extension from a branch action to create the repository and pipeline file automatically.',
@@ -1536,21 +2181,29 @@
       await waitForSdkReady(sdk);
 
       const context = sdk.getWebContext();
+      const dialogConfiguration = getDialogConfiguration(sdk);
+      const hostNavigationState = await getHostNavigationState(sdk);
+      const hostedConfiguration = { ...hostNavigationState, ...dialogConfiguration };
 
       const branch =
+        getQueryValue(hostedConfiguration.branch) ||
         branchFromQuery ||
         context?.repository?.defaultBranch?.replace(/^refs\/heads\//, '') ||
         '(unknown branch)';
       state.sourceBranch = branch;
 
-      const projectId = projectIdFromQuery || context?.project?.id;
-      const projectName = projectNameFromQuery || context?.project?.name || projectId;
-      const repoId = repoIdFromQuery || context?.repository?.id;
-      let repositoryName = repoNameFromQuery || context?.repository?.name;
+      const projectId = getQueryValue(hostedConfiguration.projectId) || projectIdFromQuery || context?.project?.id;
+      const projectName =
+        getQueryValue(hostedConfiguration.projectName) || projectNameFromQuery || context?.project?.name || projectId;
+      const repoId = getQueryValue(hostedConfiguration.repoId) || repoIdFromQuery || context?.repository?.id;
+      let repositoryName =
+        getQueryValue(hostedConfiguration.repoName) || repoNameFromQuery || context?.repository?.name;
       state.sdk = sdk;
       state.projectId = projectId;
+      state.rawProjectName = projectName || state.rawProjectName;
       state.projectName = projectName;
       state.repoId = repoId;
+      state.rawRepositoryName = repositoryName || state.rawRepositoryName;
       state.repositoryName = repositoryName;
 
       branchLabel.textContent = `Target branch: ${SCAFFOLD_BRANCH} (source: ${branch})`;
@@ -1569,7 +2222,7 @@
         return;
       }
 
-      const hostUri = (context.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
+      const hostUri = normalizeHostUri(hostedConfiguration.hostUri || context.collection?.uri || getHostBase());
       state.hostUri = hostUri;
       let accessToken = state.accessToken;
       let accessTokenError = null;
@@ -1589,13 +2242,18 @@
         const errorMessage =
           accessTokenError ||
           'Failed to acquire access token from Azure DevOps. Reload the page and relaunch the generator from a branch action.';
+        setReauthenticationVisibility(
+          true,
+          buildTokenRecoveryMessage(errorMessage)
+        );
         setStatus(errorMessage, true);
-        sdk.notifyLoadFailed?.('Access token unavailable');
+        sdk.notifyLoadSucceeded?.();
         return;
       }
 
       try {
         state.accessToken = accessToken;
+        setReauthenticationVisibility(false);
         if (!repositoryName && repoId) {
           try {
             const repoUrl = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${encodeURIComponent(
@@ -1605,6 +2263,7 @@
             if (repoRes.ok) {
               const repoPayload = await repoRes.json();
               repositoryName = repoPayload?.name || repositoryName;
+              state.rawRepositoryName = repositoryName || state.rawRepositoryName;
               state.repositoryName = repositoryName;
               setServiceNameFromRepository(repositoryName, projectName);
             }
@@ -1622,8 +2281,14 @@
         console.error('Failed to initialize Azure DevOps context', tokenError);
         const detailMessage =
           accessTokenError || 'Failed to acquire access token from Azure DevOps. Reload the page and try again.';
+        if (isUnauthorizedError(tokenError)) {
+          setReauthenticationVisibility(
+            true,
+            'The Azure DevOps host token could not access the required APIs. Sign out and authenticate again, then reopen the generator.'
+          );
+        }
         setStatus(detailMessage, true);
-        sdk.notifyLoadFailed?.('Access token unavailable');
+        sdk.notifyLoadSucceeded?.();
         return;
       }
 
@@ -1633,9 +2298,15 @@
       const fallbackMessage = /Timed out waiting for Azure DevOps host/i.test(error?.message || '')
         ? 'Could not connect to the Azure DevOps host. If you opened this page directly, use the form to generate the YAML and copy it below.'
         : 'Failed to initialize extension frame. Check extension permissions and reload, or copy the template below.';
+      if (state.projectId && state.hostUri) {
+        setReauthenticationVisibility(
+          true,
+          `${fallbackMessage} Sign out and authenticate again below to rebuild the Azure DevOps host session.`
+        );
+      }
       setStatus(fallbackMessage, true);
       const sdk = normalizeSdk(window.VSS || window.parent?.VSS);
-      sdk?.notifyLoadFailed?.(error?.message || 'Initialization failed');
+      sdk?.notifyLoadSucceeded?.();
     } finally {
       setSubmitting(false);
     }
@@ -1655,6 +2326,14 @@
       setKomodoServerFromEnvironment(event.target.value);
     });
   }
+
+  reauthenticateButton?.addEventListener('click', () => {
+    restartAzureDevOpsSession();
+  });
+
+  authorizeExtensionButton?.addEventListener('click', () => {
+    openExtensionAuthorization();
+  });
 
   window.addEventListener('message', (event) => {
     if (!event?.data || event.origin !== window.location.origin) return;

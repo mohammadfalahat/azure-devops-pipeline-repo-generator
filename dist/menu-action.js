@@ -295,83 +295,43 @@ const getBranchName = (context) => {
   return normalizeBranchName(fallbackBranch) || normalizeBranchName(branchFromWebContext) || 'Unknown branch';
 };
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const HOST_PAGE_LAYOUT_SERVICE_ID = 'ms.vss-features.host-page-layout-service';
+const HOST_NAVIGATION_SERVICE_ID = 'ms.vss-features.host-navigation-service';
+const DIALOG_CONTRIBUTION_ID = 'pipeline-generator-dialog';
+const HUB_CONTRIBUTION_ID = 'pipeline-generator-hub';
 
-const normalizeAccessTokenError = (error) => {
-  const message = error?.message || 'Unknown Azure DevOps authentication error';
-  if (/HostAuthorizationNotFound/i.test(message)) {
-    return 'Host authorization was not found. Re-enable or reinstall the Pipeline Generator extension for this collection and project (Collection Settings → Extensions → Pipeline Generator → Manage), then reload the page.';
+const getHostPageLayoutServiceId = (sdk) =>
+  sdk?.ServiceIds?.HostPageLayoutService ||
+  sdk?.ServiceIds?.HostPageLayout ||
+  HOST_PAGE_LAYOUT_SERVICE_ID;
+
+const buildContributionId = (extensionContext, contributionId) => {
+  const publisherId = extensionContext?.publisherId;
+  const extensionId = extensionContext?.extensionId;
+  if (!publisherId || !extensionId) {
+    throw new Error('Azure DevOps did not provide the extension identity required to open the generator.');
   }
-  return message;
+  return `${publisherId}.${extensionId}.${contributionId}`;
 };
 
-const getAccessTokenWithRetry = async (sdk, maxAttempts = 3, delayMs = 800) => {
-  if (!sdk?.getAccessToken) {
-    return undefined;
+const buildDialogContributionId = (extensionContext) =>
+  buildContributionId(extensionContext, DIALOG_CONTRIBUTION_ID);
+
+const buildHubContributionId = (extensionContext) =>
+  buildContributionId(extensionContext, HUB_CONTRIBUTION_ID);
+
+const getHostNavigationService = async (sdk) =>
+  sdk.getService(sdk?.ServiceIds?.Navigation || HOST_NAVIGATION_SERVICE_ID);
+
+const buildGeneratorHubUrl = ({ hostUri, projectName, extensionContext, params }) => {
+  if (!hostUri || !projectName) {
+    throw new Error('Azure DevOps project context is required to open the Pipeline Generator hub.');
   }
-
-  let lastError;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      const token = await sdk.getAccessToken();
-      if (token) {
-        return token;
-      }
-      lastError = new Error('Azure DevOps returned an empty access token.');
-    } catch (error) {
-      lastError = error;
-      console.warn('[pipeline-generator] getAccessToken failed before opening generator', {
-        attempt,
-        status: error?.status,
-        message: error?.message
-      });
-
-      // Some Azure DevOps Server instances may respond with an internal
-      // error (HTTP 500) from the WebPlatformAuth SessionToken endpoint
-      // when an access token cannot be issued. Retrying those responses
-      // only generates more noisy 500 logs without succeeding, so stop
-      // immediately and surface the error to the UI instead.
-      if (error?.status === 500) {
-        break;
-      }
-    }
-
-    if (attempt < maxAttempts) {
-      await delay(delayMs * attempt);
-    }
-  }
-
-  throw lastError;
-};
-
-const postBootstrapMessage = (targetWindow, targetOrigin, payload) => {
-  if (!targetWindow || !targetOrigin) return;
-
-  const message = { type: 'pipeline-bootstrap', payload };
-  let attempts = 0;
-  const maxAttempts = 10;
-
-  const intervalId = setInterval(() => {
-    attempts += 1;
-    if (targetWindow.closed || attempts > maxAttempts) {
-      clearInterval(intervalId);
-      return;
-    }
-    try {
-      targetWindow.postMessage(message, targetOrigin);
-    } catch (error) {
-      console.warn('Failed to post bootstrap message to generator window', error);
-    }
-  }, 400);
-
-  const handleAck = (event) => {
-    if (event.source === targetWindow && event.origin === targetOrigin && event.data?.type === 'pipeline-bootstrap-ack') {
-      clearInterval(intervalId);
-      window.removeEventListener('message', handleAck);
-    }
-  };
-
-  window.addEventListener('message', handleAck);
+  const contributionId = buildHubContributionId(extensionContext);
+  const query = params.toString();
+  return `${hostUri}${encodeURIComponent(projectName)}/_apps/hub/${encodeURIComponent(contributionId)}${
+    query ? `?${query}` : ''
+  }`;
 };
 
 const openGenerator = async (context, sdk) => {
@@ -385,8 +345,6 @@ const openGenerator = async (context, sdk) => {
     const projectId = project?.id || actionContext?.projectId;
     const projectName = project?.name || projectId;
     const extContext = VSS.getExtensionContext?.();
-    const baseUriCandidate = extContext?.baseUri || `${getHostBase()}/`;
-    const baseUri = baseUriCandidate.endsWith('/') ? baseUriCandidate : `${baseUriCandidate}/`;
     const params = new URLSearchParams();
 
     if (branchName) params.set('branch', branchName);
@@ -395,43 +353,38 @@ const openGenerator = async (context, sdk) => {
     if (repoId) params.set('repoId', repoId);
     if (repoName) params.set('repoName', repoName);
 
-    const targetUrl = `${baseUri}dist/index.html?${params.toString()}`;
-    const targetOrigin = new URL(targetUrl).origin;
-
     const hostUri = (VSS.getWebContext?.()?.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
-    let accessToken;
-    let accessTokenError;
-    try {
-      accessToken = await getAccessTokenWithRetry(sdk);
-    } catch (tokenError) {
-      console.warn('Could not acquire access token before opening generator', tokenError);
-      accessTokenError = normalizeAccessTokenError(tokenError);
-    }
-
+    params.set('hostUri', hostUri);
     const bootstrapPayload = {
       branch: branchName,
       projectId,
       projectName,
       repoId,
       repoName,
-      hostUri,
-      accessToken,
-      accessTokenError
+      hostUri
     };
 
     try {
-      const hostService = await VSS.getService(VSS.ServiceIds.HostPageLayout);
-      if (hostService?.openWindow) {
-        const generatorWindow = hostService.openWindow(targetUrl, {});
-        postBootstrapMessage(generatorWindow, targetOrigin, bootstrapPayload);
+      const hostService = await sdk.getService(getHostPageLayoutServiceId(sdk));
+      if (hostService?.openCustomDialog) {
+        hostService.openCustomDialog(buildDialogContributionId(extContext), {
+          title: `Generate pipeline for ${branchName || 'branch'}`,
+          lightDismiss: false,
+          configuration: bootstrapPayload
+        });
         return;
       }
     } catch (serviceError) {
-      console.warn('Falling back to window.open because HostPageLayout was unavailable', serviceError);
+      console.warn('Azure DevOps host dialog was unavailable; opening the in-host Repos hub instead', serviceError);
     }
 
-    const generatorWindow = window.open(targetUrl, '_blank');
-    postBootstrapMessage(generatorWindow, targetOrigin, bootstrapPayload);
+    const navigationService = await getHostNavigationService(sdk);
+    if (!navigationService?.navigate) {
+      throw new Error('Azure DevOps host navigation service is unavailable; the generator cannot open in-host.');
+    }
+    navigationService.navigate(
+      buildGeneratorHubUrl({ hostUri, projectName, extensionContext: extContext, params })
+    );
   } catch (error) {
     console.error('Failed to launch pipeline generator', error);
     VSS.handleError?.(error);

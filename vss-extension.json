@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "pipeline-generator",
   "publisher": "mohammad-falahat",
-  "version": "0.1.19",
+  "version": "0.1.32",
   "name": "Pipeline Generator",
   "description": "Create a YAML pipeline and its classic Komodo release definition from a branch.",
   "public": false,
@@ -15,6 +15,28 @@
     { "path": "README.md" }
   ],
   "contributions": [
+    {
+      "id": "pipeline-generator-hub",
+      "type": "ms.vss-web.hub",
+      "description": "Pipeline Generator hosted inside the Azure Repos experience.",
+      "targets": [
+        "ms.vss-code-web.code-hub-group"
+      ],
+      "properties": {
+        "name": "Pipeline Generator",
+        "order": 90,
+        "uri": "dist/index.html"
+      }
+    },
+    {
+      "id": "pipeline-generator-dialog",
+      "type": "ms.vss-web.control",
+      "description": "Pipeline Generator content hosted inside an Azure DevOps dialog.",
+      "targets": [],
+      "properties": {
+        "uri": "dist/index.html"
+      }
+    },
     {
       "id": "generate-pipeline-action",
       "type": "ms.vss-web.action",
@@ -45,7 +67,7 @@
     { "id": "Microsoft.VisualStudio.Services.Cloud" },
     { "id": "Microsoft.TeamFoundation.Server", "version": "[16.0,20.0)" }
   ],
-  "scopes": ["vso.code", "vso.code_manage", "vso.project", "vso.build", "vso.build_execute", "vso.release", "vso.release_manage"],
+  "scopes": ["vso.code", "vso.code_manage", "vso.project", "vso.build", "vso.build_execute", "vso.release", "vso.release_manage", "vso.agentpools", "vso.serviceendpoint", "vso.variablegroups_read"],
   "links": {
     "getstarted": {
       "uri": "https://learn.microsoft.com/azure/devops/extend/get-started/node"

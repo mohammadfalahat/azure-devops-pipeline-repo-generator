@@ -1,0 +1,459 @@
+schema_version: 1
+last_verified_at: "2026-08-10"
+status: "live_release_created_candidate_0_1_32_adds_inline_wrapper_and_komodoapi_linkage"
+
+development_candidate:
+  version: "0.1.32"
+  package_path: "mohammad-falahat.pipeline-generator-0.1.32.vsix"
+  package_sha256: "28419f876deefc904ca0bd8b8f234cc6e8297d3580e0d1a1c3e7e6215328a3c3"
+  local_validation: "passed: npm test, Bash syntax, structured E2E-state YAML parse, VSIX version/scope inspection, and packaged-source comparisons"
+  installed: false
+  live_verified: false
+  intended_pipeline_name: "ridesharing-ridesharing_backend-feature-zones.yml"
+  intended_release_name: "ridesharing-ridesharing_backend-feature-zones.yml_Release"
+  migration:
+    pipeline: "Find by generated repository and YAML path, then GET-modify-PUT the Build Definition with current revision."
+    release: "Find by exact desired name or Pipeline artifact ID, then reconcile the full Release definition."
+  fixes:
+    - "Load dist/release-inline-task.sh from the installed extension and embed its complete text as the classic Release Bash task's inline script."
+    - "Resolve exact Variable Group KomodoAPI with actionFilter=Use and validate AZP_TOKEN, KOMODO_API_KEY, and KOMODO_API_SECRET names without exposing values."
+    - "Link KomodoAPI by numeric ID in the Release definition's top-level variableGroups array and preserve additional existing definition-level groups."
+    - "Request vso.variablegroups_read and tag Variable Group authorization failures with that required scope."
+    - "Keep the secret-derived Authorization header out of xtrace and process arguments in the packaged Release wrapper."
+    - "Read an existing generated YAML as text and skip Git Push entirely when its content already matches, preventing an empty no-op commit."
+    - "For exact-name Pipeline reuse, read the canonical full Build Definition before comparing bindings; the target Server's sparse Pipelines by-ID response omits repository.defaultBranch."
+    - "Skip Build Definition PUT completely when the full existing binding already matches, preventing a no-op revision increment on rerun."
+    - "Request vso.agentpools so the extension token can read project queues and resolve the selected Release queue ID."
+    - "Request vso.serviceendpoint so the extension token can read Docker Registry service-connection names/types."
+    - "Tag queue authorization failures with the missing extension scope and direct administrators to scope reauthorization."
+    - "Use a fixed full-viewport wrapper as the explicit vertical scroll container because root/body scrolling is suppressed by the target legacy iframe."
+    - "Never call legacy VSS.resize from the Hub; parameterless resize caused a repeated scrollWidth feedback loop on the target Server."
+    - "Bound html to the host viewport and use body-owned internal vertical scrolling without changing contribution width."
+    - "Preserve HostAuthorizationNotFound through normalization so every recovery path leads with collection-level extension authorization."
+    - "Expose an Open extension authorization action that navigates the parent host to collection extension settings."
+    - "Treat HostAuthorizationNotFound as missing or stale collection-level extension authorization, not only an expired user session."
+    - "Declare dist/index.html as the pipeline-generator-hub ms.vss-web.hub contribution under Azure Repos."
+    - "When openCustomDialog is unavailable, navigate the current host to the extension Hub instead of opening a new tab."
+    - "Remove all action-side token acquisition, detached-window, and postMessage bootstrap paths."
+    - "Read Hub launch context from legacy getCurrentState or modern getQueryParams host navigation APIs."
+    - "Declare dist/index.html as the pipeline-generator-dialog ms.vss-web.control contribution."
+    - "Open the generator with host-page-layout openCustomDialog before considering in-host Hub navigation."
+    - "Pass only non-secret branch/repository context through dialog configuration."
+    - "Acquire the current user's extension token from VSS.getAccessToken inside the hosted generator iframe."
+    - "Navigate the parent Azure DevOps host to the Pipeline after success instead of navigating only the dialog iframe."
+    - "Reveal a full-session reauthentication action when VSS.getAccessToken cannot issue a host token."
+    - "Clear the in-memory host token and navigate the parent Azure DevOps host to the collection-relative _signout route."
+    - "Never request or accept a PAT in the browser extension."
+    - "Keep source and generated repository identities in separate state fields."
+    - "Set Pipeline name exactly equal to the generated YAML filename."
+    - "Never PUT to /_apis/pipelines/{id}; update through /_apis/build/definitions/{id}."
+    - "Compare Pipeline and Release folder casing case-insensitively."
+    - "Migrate same-Pipeline Release definitions instead of creating name-based duplicates."
+
+security:
+  contains_secrets: false
+  pat_storage_allowed: false
+  in_memory_pat_fallback_allowed: false
+  notes:
+    - "Never copy a PAT, cookie, session token, or Authorization header into this repository."
+    - "Rotate any PAT that was exposed in conversation or terminal output."
+    - "The browser extension must never request or accept a PAT."
+
+server:
+  base_url: "https://azure.buluttakin.com"
+  internal_ip_observed: "192.168.62.17"
+  collection:
+    name: "ShonizCollection"
+  proxy:
+    bypass_required: true
+    no_proxy_hosts:
+      - "azure.buluttakin.com"
+      - "192.168.62.17"
+    failure_without_bypass: "nginx HTTP 403"
+  authentication_route_probe:
+    observed_at: "2026-08-09"
+    method: "anonymous read-only GET without redirects"
+    deployment_signout_url: "https://azure.buluttakin.com/_signout"
+    collection_signout_url: "https://azure.buluttakin.com/ShonizCollection/_signout"
+    response_status: 401
+    challenges:
+      - "Bearer"
+      - "Basic"
+      - "Negotiate"
+      - "NTLM"
+    proves: "The target server recognizes the sign-out routes and returns its normal authentication challenge."
+    does_not_prove: "Cookie invalidation and full login UI in the user's existing authenticated browser."
+
+observed_installed_launch:
+  observed_at: "2026-08-10"
+  version: "0.1.30"
+  evidence: "Normal signed-in Chrome session monitored through the loopback DevTools Protocol, followed by same-session read-only REST readback."
+  result: "All five steps completed and Release definition 7 was created. YAML content and Pipeline 347 were reused, but 0.1.30 emitted an empty Git commit and an unnecessary Pipeline revision 1-to-2 update."
+  conclusion: "The added vso.agentpools and vso.serviceendpoint scopes fixed Step 5. A separate idempotency defect remained because the sparse Pipelines by-ID response omitted repository.defaultBranch."
+  token_result: "Hosted VSS.getAccessToken succeeded; installed extension 0.1.30 had installState.flags=none and all required scopes."
+  layout_result: "stable in-host Hub with the complete form and submit action reachable"
+  provisioning_result: "Release definition 7 created and linked to Pipeline 347; no Build run or Release instance created"
+
+read_only_variable_group_contract_probe:
+  observed_at: "2026-08-10"
+  method: "normal signed-in parent Chrome session, same-session read-only REST; no PAT and no authentication adaptation"
+  variable_group:
+    request: "GET project/_apis/distributedtask/variablegroups?groupName=KomodoAPI&actionFilter=Use&api-version=7.1"
+    status: 200
+    id: 7
+    name: "KomodoAPI"
+    type: "Vsts"
+    required_variable_names:
+      - "AZP_TOKEN"
+      - "KOMODO_API_KEY"
+      - "KOMODO_API_SECRET"
+    all_marked_secret: true
+    secret_values_inspected_or_logged: false
+  working_reference_release:
+    id: 3
+    name: "New UI Pro"
+    status: 200
+    definition_level_variable_groups:
+      - 7
+    environment_level_variable_groups: []
+  conclusion: "The target Server links KomodoAPI by numeric ID at Release-definition scope; this probe did not mutate Release 3 or verify candidate 0.1.32."
+
+latest_live_run:
+  observed_at: "2026-08-10"
+  method: "normal signed-in interactive Chrome session monitored through loopback DevTools Protocol; same-user parent-session read-only REST readback; no PAT or authentication adaptation"
+  source_branch: "feature/Zones"
+  extension:
+    installed_version: "0.1.30"
+    install_state_flags: "none"
+    requested_scopes:
+      - "vso.code"
+      - "vso.code_manage"
+      - "vso.project"
+      - "vso.build"
+      - "vso.build_execute"
+      - "vso.release"
+      - "vso.release_manage"
+      - "vso.agentpools"
+      - "vso.serviceendpoint"
+  yaml:
+    path: "/ridesharing-ridesharing_backend-feature-zones.yml"
+    read_status: 200
+    object_id: "1c5181a428f7f7a536ddbd331e1e1230a6a23f77"
+    last_path_change_commit: "4cde26160ce6b2b222f0925e8c53b35ed373ef34"
+    last_path_change_at: "2026-08-09T13:03:45Z"
+    content_changed_by_this_run: false
+    no_op_commit_created_by_this_run: true
+    no_op_commit_id: "726f11e85fd78adecc5aefaece8686ecb0282aa2"
+    no_op_commit_changes_count: 0
+  pipeline:
+    id: 347
+    name: "ridesharing-ridesharing_backend-feature-zones.yml"
+    exact_name_match_count: 1
+    folder: "\\KOMODO"
+    repository_id: "316fba81-11a5-4dfe-a71f-aa91486e4279"
+    default_branch: "refs/heads/main"
+    yaml_path: "/ridesharing-ridesharing_backend-feature-zones.yml"
+    revision_before: 1
+    revision_after: 2
+    updated_by_this_run: true
+    update_was_necessary: false
+    run_count: 0
+    preserve: true
+  release_definition:
+    id: 7
+    name: "ridesharing-ridesharing_backend-feature-zones.yml_Release"
+    folder: "\\komodo"
+    revision: 1
+    created_by_this_run: true
+    artifact_pipeline_id: "347"
+    artifact_pipeline_name: "ridesharing-ridesharing_backend-feature-zones.yml"
+    artifact_repository_id: "316fba81-11a5-4dfe-a71f-aa91486e4279"
+    environment_name: "komodo"
+    queue_id: 111
+    queue_name: "PublishDockerAgent"
+    task_id: "6c731c3c-3c68-459a-a5c9-bde6e6595b5b"
+    task_version: "3.*"
+    inline_script_present: true
+    release_started_condition_present: true
+    automated_pre_approval_present: true
+    automated_post_approval_present: true
+    release_instance_count: 0
+    preserve: true
+  http_readback:
+    pipelines: 200
+    pipeline_347: 200
+    build_definition_347: 200
+    release_definition_7: 200
+    builds_for_pipeline_347: 200
+    releases_for_definition_7: 200
+    installed_extension: 200
+  local_follow_up: "Candidate 0.1.32 carries the 0.1.31 no-write fixes and adds the packaged Inline wrapper plus KomodoAPI linkage; first live run should update Release 7 once, then a second run should be fully stable."
+
+previous_partial_run:
+  observed_at: "2026-08-09"
+  method: "normal signed-in interactive Chrome session inspected through DevTools Protocol; same-session read-only REST readback"
+  source_branch: "feature/Zones"
+  installed_asset_version: "0.1.28"
+  yaml:
+    path: "/ridesharing-ridesharing_backend-feature-zones.yml"
+    read_status: 200
+  pipeline:
+    id: 347
+    name: "ridesharing-ridesharing_backend-feature-zones.yml"
+    folder: "\\KOMODO"
+    repository_id: "316fba81-11a5-4dfe-a71f-aa91486e4279"
+    yaml_path: "/ridesharing-ridesharing_backend-feature-zones.yml"
+    preserve: true
+    run_queued: false
+  desired_release_name: "ridesharing-ridesharing_backend-feature-zones.yml_Release"
+  desired_release_present: false
+  release_instance_created: false
+  extension_token_queue_read:
+    status: 401
+    error: "TF400813"
+  extension_token_service_endpoint_read:
+    status: 401
+    error: "TF400813"
+  same_user_parent_session_queue_read:
+    status: 200
+    selected_queue_name: "PublishDockerAgent"
+    selected_queue_id: 111
+  same_user_parent_session_service_endpoint_read:
+    status: 200
+    selected_endpoint_name: "BulutReg"
+  root_cause: "Manifest omitted vso.agentpools and vso.serviceendpoint; user ACL is not the differentiator."
+
+previous_observed_launch:
+  observed_at: "2026-08-09"
+  version: "0.1.27"
+  evidence: "Interactive screenshots showed installed version 0.1.27 with requested permissions and the in-host Hub collapsing into a narrow left strip while blank space grew on the right."
+  result: "Hub width repeatedly shrank until the form became unusable."
+  conclusion: "Parameterless legacy VSS.resize fed changing body.scrollWidth back to the host and created a width feedback loop."
+  token_result: "not verified in that run"
+  layout_result: "failed due to repeated horizontal resize feedback"
+
+older_observed_launches:
+  - observed_at: "2026-08-09"
+    version: "0.1.26"
+    result: "In-host Hub opened with correct context, but the form was clipped and hosted VSS.getAccessToken returned HostAuthorizationNotFound."
+  - observed_at: "2026-08-09"
+    version: "0.1.25"
+    result: "Generator opened in a standalone tab and action-side VSS.getAccessToken returned HostAuthorizationNotFound."
+
+project:
+  name: "RideSharing"
+  id: "0eaa21d3-9359-45a7-a374-6f44bde2d941"
+
+source:
+  repository:
+    name: "RideSharing_Backend"
+    id: "72f0181d-3763-4df4-b995-1a4701791c3b"
+  branch: "feature/defineZones"
+
+target:
+  repository:
+    name: "RideSharing_Azure_DevOps"
+    id: "316fba81-11a5-4dfe-a71f-aa91486e4279"
+  default_branch: "refs/heads/main"
+  yaml:
+    path: "/ridesharing-ridesharing_backend-feature-definezones.yml"
+    object_id: "8058c2a9d6b348e4f413d7ab3cd943a26dc951c2"
+    commit_id: "82bb7cbdbcf6d56d0a02d617c0e32851497632a6"
+    url: "https://azure.buluttakin.com/ShonizCollection/RideSharing/_git/RideSharing_Azure_DevOps?path=%2Fridesharing-ridesharing_backend-feature-definezones.yml&version=GBmain"
+
+pipeline:
+  id: 344
+  name: "RideSharing_RideSharing_Backend_demo"
+  requested_folder: "\\komodo"
+  normalized_folder: "\\KOMODO"
+  api_version_for_create: "7.1-preview.1"
+  create_query_requires_repository_id: true
+  repository_id: "316fba81-11a5-4dfe-a71f-aa91486e4279"
+  default_branch: "refs/heads/main"
+  yaml_path: "/ridesharing-ridesharing_backend-feature-definezones.yml"
+  url: "https://azure.buluttakin.com/ShonizCollection/RideSharing/_build?definitionId=344"
+  preserve: true
+  run_queued: false
+
+release_definition:
+  id: 5
+  name: "RideSharing_RideSharing_Backend_demo_Release"
+  folder: "\\komodo"
+  artifact:
+    pipeline_id: "344"
+    pipeline_name: "RideSharing_RideSharing_Backend_demo"
+    repository_id: "316fba81-11a5-4dfe-a71f-aa91486e4279"
+  environment:
+    name: "komodo"
+    queue:
+      name: "PublishDockerAgent"
+      id: 111
+    bash_task:
+      task_id: "6c731c3c-3c68-459a-a5c9-bde6e6595b5b"
+      version: "3.*"
+      target_type: "inline"
+    approvals:
+      pre:
+        automated: true
+        execution_order: "beforeGates"
+      post:
+        automated: true
+        execution_order: "afterSuccessfulGates"
+  url: "https://azure.buluttakin.com/ShonizCollection/RideSharing/_release?definitionId=5"
+  preserve: true
+  release_instance_created: false
+
+extension:
+  publisher: "mohammad-falahat"
+  id: "pipeline-generator"
+  display_name: "Pipeline Generator"
+  installed_version: "0.1.30 confirmed through the installed-extension API in the normal signed-in browser session"
+  install_state_flags: "none"
+  package_path: "mohammad-falahat.pipeline-generator-0.1.30.vsix"
+  package_sha256: "17d280809a69b9f7ee6e2dc2070522d75b94ac33033224fa45381138618b0a95"
+  complete_five_step_workflow_verified_version: "0.1.30"
+  strict_no_write_rerun_verified_version: null
+  stale_install_recovery:
+    stale_version: "0.1.16"
+    stale_flags:
+      - "error"
+      - "needsReauthorization"
+    ordinary_get_result: "HTTP 404"
+    direct_reinstall_result: "HTTP 409"
+    resolution: "Delete the stale collection installation, then clean-install 0.1.21 with an empty POST body."
+
+implementation_contracts:
+  authentication:
+    preferred: "Generator hosted by openCustomDialog calls VSS.getAccessToken directly and sends the token as Bearer"
+    server_compatibility_path: "Navigate the current Azure DevOps page to pipeline-generator-hub; the Hub iframe calls VSS.getAccessToken directly"
+    dialog_configuration_contains_token: false
+    hub_query_contains_token: false
+    detached_window_allowed: false
+    action_token_acquisition_allowed: false
+    extension_authorization_route: "<collection>/_settings/extensions?tab=installed"
+    host_authorization_not_found_recovery: "A Collection Administrator authorizes the requested extension scopes; reinstall the same published version if no authorization action is available."
+    user_session_recovery: "Explicit user-triggered parent navigation to the collection-relative _signout route, followed by full login"
+    persistence: "none; page memory only"
+    fallback_live_verified: true
+    host_dialog_live_verified: false
+    host_hub_live_verified: true
+    extension_authorization_live_verified: true
+    host_resize_live_verified: "0.1.27 failed; installed 0.1.30 keeps the Hub width stable without host resize"
+  pipeline_create:
+    browser_api_version: "7.1-preview.1"
+    shell_default_api_version: "7.1"
+    repository_id_in_query: true
+    repository_id_in_body: true
+    response_must_contain_id: true
+  pipeline_update:
+    api_family: "Build Definitions"
+    api_version: "7.1"
+    method: "GET-modify-PUT"
+    current_revision_required: true
+    pipelines_api_put_forbidden: true
+    exact_name_equals_yaml_filename: true
+    exact_name_reuse_reads_complete_build_definition: true
+    no_op_put_regression_fixed_in: "0.1.31"
+  release_update:
+    api_version: "7.1-preview.4"
+    identity_order:
+      - "exact desired name"
+      - "Pipeline artifact ID"
+    preserves_revision_and_environment_id: true
+  release:
+    required_read_scopes:
+      - "vso.agentpools"
+      - "vso.serviceendpoint"
+      - "vso.variablegroups_read"
+    variable_group_name: "KomodoAPI"
+    variable_group_id_from_read_only_probe: 7
+    required_variable_names:
+      - "AZP_TOKEN"
+      - "KOMODO_API_KEY"
+      - "KOMODO_API_SECRET"
+    variable_group_link_scope: "Release definition top-level variableGroups; environment variableGroups remains empty"
+    default_script_source: "dist/release-inline-task.sh, embedded into Bash task inputs.script as inline text"
+    release_started_event_condition_required: true
+    pre_approvals_must_be_nonempty_and_automated: true
+    post_approvals_must_be_nonempty_and_automated: true
+  files:
+    ui: "dist/ui.js"
+    shell_provisioner: "scripts/provision-pipeline-release.sh"
+    local_validator: "scripts/validate-extension.js"
+    manifest: "vss-extension.json"
+  local_validation: "npm test passed after the fixes"
+
+test_method:
+  entry_point: "Branches page -> feature/defineZones -> More options -> Generate pipeline"
+  installed_asset_version: "0.1.21"
+  ui_logic: "actual installed dist/ui.js"
+  branch_context: "injected equivalent pipeline-bootstrap payload"
+  authentication: "PAT Basic adapted in browser requests"
+  independent_api_readback: true
+  limitation: "PAT-authenticated headless Chrome cannot obtain VSS.getAccessToken(); the host returned AccessDenied."
+  exact_interactive_session_proven: false
+
+cleanup:
+  deleted_disposable_resources:
+    pipeline_ids:
+      - 343
+    release_definition_ids:
+      - 4
+  pipeline_delete_endpoint: "/ShonizCollection/RideSharing/_apis/build/definitions/{id}?api-version=7.1"
+  release_delete_endpoint: "/ShonizCollection/RideSharing/_apis/release/definitions/{id}?api-version=7.1-preview.4"
+  pipelines_api_delete_result: "HTTP 405"
+  do_not_delete_without_user_request:
+    pipeline_ids:
+      - 344
+      - 347
+    release_definition_ids:
+      - 5
+      - 7
+
+known_residue:
+  old_yaml:
+    path: "/ridesharing-ridesharing_backend-demo.yml"
+    object_id: "8ab4e461ad71872ba129af1029765172fd605557"
+    source_extension_version: "0.1.16"
+
+area_diagnostic:
+  project_id: "82f378a4-46ca-4fa8-88ab-6cc2c9d4c7fd"
+  target_repository:
+    name: "Area_Azure_DevOps"
+    id: "b5255b04-a863-4712-a6fe-ec548a6cc468"
+  yaml_found_on_main: "/area-area.api-main.yml"
+  yaml_missing_on_main: "/area-area-definezones.yml"
+  failed_commit: "d4928291edca8e204f1b344ab92a3f90bccf2a10"
+  failure: "YamlFileNotFoundException"
+  conclusion: "Pipeline folder does not alter or replace the repository YAML path."
+
+known_automation_dead_ends:
+  - "Earlier Chrome sessions had no DevTools endpoint; the 2026-08-09 partial Release test successfully used the current browser endpoint on loopback."
+  - "Copied Chrome cookies do not reproduce the on-premises authenticated session."
+  - "PAT Basic cannot obtain a VSS extension session token."
+  - "Wayland prevents reliable external focus/input control of the existing Chrome window."
+  - "GNOME Shell D-Bus window, screenshot, focus, and remote-desktop approaches were denied or inhibited."
+  - "AT-SPI could not expose or focus the renderer tree of the already-running Chrome instance."
+
+next_run:
+  - "Read current server state before creating resources."
+  - "Verify installed extension version and installState.flags."
+  - "Verify YAML exists on refs/heads/main before pipeline creation."
+  - "Use pipeline API 7.1-preview.1 with repositoryId in the query string."
+  - "Read back pipeline through Pipelines and Build Definitions APIs."
+  - "Verify automated pre/post Release approvals and queue 111."
+  - "Record the authentication/test method explicitly."
+  - "Install 0.1.32 and reauthorize its new vso.variablegroups_read scope."
+  - "Rerun feature/Zones and verify Pipeline 347 stays at revision 2; allow Release definition 7 to advance once from revision 1 only for the new Inline wrapper and KomodoAPI linkage."
+  - "Read Release 7 back: top-level variableGroups includes ID 7, environment variableGroups is empty, and the Inline task text matches the packaged wrapper."
+  - "Rerun 0.1.32 a second time and verify Release 7 revision is stable with no PUT."
+  - "Verify exact-name Pipeline reuse reads Build Definition 347 and sends no Pipeline or Build Definition PUT."
+  - "Verify the extension-token queue and Docker Registry endpoint reads return HTTP 200 before submitting."
+  - "Verify mouse wheel, touchpad, Page Down, and scrollbar can reach every form field plus the submit button."
+  - "If HostAuthorizationNotFound appears, use Open extension authorization as a Collection Administrator and authorize the requested scopes."
+  - "If no authorization action is exposed, clean-install the same published 0.1.32 version and verify installState.flags."
+  - "Verify the generator opens in an Azure DevOps Dialog or the Azure Repos Pipeline Generator Hub, never a separate tab."
+  - "Verify the hosted generator itself obtains VSS.getAccessToken without a PAT prompt or token transfer."
+  - "Verify success navigates the parent host to the Pipeline URL."
+  - "Do not queue a run or create a release instance unless requested."
+  - "Update this snapshot and the layered Markdown document."

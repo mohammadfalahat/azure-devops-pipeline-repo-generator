@@ -1,3 +1,4 @@
 node_modules
 npm-debug.log*
 localdev.pipeline-generator*.vsix
+mohammad-falahat.pipeline-generator-*.vsix
