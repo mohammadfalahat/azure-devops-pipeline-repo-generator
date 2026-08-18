@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "pipeline-generator",
   "publisher": "mohammad-falahat",
-  "version": "0.1.32",
+  "version": "0.1.42",
   "name": "Pipeline Generator",
   "description": "Create a YAML pipeline and its classic Komodo release definition from a branch.",
   "public": false,

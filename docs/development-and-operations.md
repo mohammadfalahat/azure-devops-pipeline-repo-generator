@@ -22,6 +22,11 @@ For `scripts/provision-pipeline-release.sh`:
 The target Azure DevOps project must already contain or authorize:
 
 - `SharedTemplates/SharedTemplates`;
+- `/pipeline-generator.yml` on that repository's `main` branch, with non-empty
+  Environment `name`/`domain` records; a legacy `servers` list may remain but
+  is ignored;
+- `/komodo-servers-creds.env` on the same repository/branch, containing the
+  centrally managed Komodo address and Server-Read API credential;
 - service endpoint `ShonizCollection` for that repository resource;
 - template `build-push-komodo.yml` on its `main` branch;
 - variable group `KomodoAPI` with secret variables `AZP_TOKEN`,
@@ -76,7 +81,11 @@ packaged path.
 `dist/ui.js` currently owns:
 
 - `defaultValues` and default Pool/registry options;
-- environment-to-Komodo server mapping;
+- the `SharedTemplates/SharedTemplates:/pipeline-generator.yml@main` deployment
+  environment/domain source and its small strict parser;
+- strict parsing of the central Komodo credential file and direct
+  `ListFullServers` response;
+- environment-to-server label inference;
 - scaffold branch `main`;
 - Pipeline folder `\komodo`;
 - Git, Pipeline, and Release API versions;
@@ -84,9 +93,51 @@ packaged path.
 - YAML naming and rendering;
 - REST reconciliation logic.
 
-`dist/index.html` owns the visible select choices. When changing a default or
-environment, update both files if the HTML options and JavaScript mapping would
-otherwise diverge.
+`dist/index.html` contains disabled loading placeholders for Environment and
+Komodo Server. Update `pipeline-generator.yml` to change environments. Server
+enable/disable changes come directly from Komodo and require no repackaging.
+A missing/unreadable/invalid environment or credential file, rejected Komodo
+request, blocked CORS preflight, or empty enabled-server result is blocking and
+has no compiled-in fallback.
+
+Use structured Environment records:
+
+```yaml
+environments:
+  - name: pro
+    domain: bulutcom.cloud
+  - name: dev
+    domain: bulutdev.ir
+```
+
+The compact `"dev:bulutdev.ir"` form is parsed for migration, but structured
+records are the maintained contract. Every record needs a domain because the
+Nginx starter host and certificate filenames are derived from it.
+
+### Central Komodo credential file
+
+Create `/komodo-servers-creds.env` on `main` in
+`SharedTemplates/SharedTemplates` with exactly these fields:
+
+```dotenv
+KOMODO_ADDRESS=https://komodo.buluttakin.com
+KOMODO_API_KEY=<server-read-key>
+KOMODO_API_SECRET=<server-read-secret>
+```
+
+The same single file serves every project; colleagues do not define per-project
+discovery credentials. The API user must be enabled, have base `Read` only for
+the Server resource type, and have `None` for other resource types and create
+permissions. By operator decision this dedicated credential is browser-readable
+and not treated as a write-capable secret. Do not reuse a deployment/admin key.
+
+The browser reads this file using its current Azure DevOps extension token,
+calls Komodo `/read` with `ListFullServers`, immediately projects the response
+to enabled non-template server names, and does not persist or log credential
+values. Komodo must allow `https://azure.buluttakin.com` in
+`KOMODO_CORS_ALLOWED_ORIGINS` when its allowed-origin list is non-empty. The
+direct call uses custom `X-Api-Key` and `X-Api-Secret` headers, so verify both
+the OPTIONS preflight and POST response in the browser.
 
 ### Release definition configuration
 
@@ -98,7 +149,6 @@ otherwise diverge.
 | `enabled` | Boolean | `false` skips Release creation but still creates YAML/Pipeline |
 | `folder` | String | Normalized to an Azure DevOps folder beginning with `\` |
 | `environmentName` | String | Required name of the single classic Release environment |
-| `nameSuffix` | String | Appended to the Pipeline name; default `_Release` |
 | `bashTaskName` | String | Display name of the Bash@3 task; default `Run Komodo deployment` |
 | `variableGroupName` | String | Exact project Variable Group name; default and supported deployment contract is `KomodoAPI` |
 | `requiredVariableNames` | String array | Names that must exist before a Release write: `AZP_TOKEN`, `KOMODO_API_KEY`, `KOMODO_API_SECRET` |
@@ -166,9 +216,12 @@ assembled as text:
 - run `npm test` and inspect a concrete generated document;
 - validate the document in a test Pipeline on the target server.
 
-`buildPipelineName` returns `pipelineFilename` unchanged. If naming changes,
-update `buildPipelineFilename`, `buildPipelineName`, Pipeline/Release migration
-lookups, artifact aliases, tests, and documentation together.
+`buildPipelineFilename` requires Environment and returns
+`<project>-<repository>-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml`;
+`buildPipelineName` returns that filename unchanged. `buildReleaseName` uses
+only uppercased Service and Environment values. If either naming contract
+changes, update migration lookups, artifact aliases, tests, and documentation
+together.
 
 ### Bundled SDK
 
@@ -226,14 +279,30 @@ REST responses to assert that:
   PAT credential path;
 - session restart clears the in-memory host token and asks the Azure DevOps host
   navigation service to open the collection-relative `_signout` route;
-- Pipeline name exactly equals the branch-specific YAML filename;
+- `pipeline-generator.yml` is parsed into dynamic Environment/domain options
+  and read from the exact shared repository path;
+- the exact central credential-file Git URL is called with the ADO Bearer token;
+- the subsequent direct Komodo request uses the parsed synthetic credentials
+  in tests, filters disabled/template records, and keeps only server names;
+- Docker/Nginx DevOps repository names, Compose/shared-Nginx paths, project
+  hostname, service route, ports, WebSocket headers, and certificate paths
+  follow the documented convention; managed routes always use Docker DNS
+  `resolver 127.0.0.11 ipv6=off` and `set $target <container>`; root uses a
+  trailing-slash proxy target, while non-root uses `/<service>/`, no rewrite,
+  and a no-URI-slash proxy target so the request URI is preserved; root is
+  ordered last and older managed paths/targets/generated rewrites are migrated
+  while only a missing Location is inserted;
+- Pipeline name exactly equals the Branch-to-Environment transition YAML filename;
+- Release name contains only uppercased Service and Environment;
 - an existing byte-identical YAML file is read and reused without a Git Push or
   no-op commit;
 - a sparse exact-name Pipeline reference is resolved through the complete Build
   Definition, and a correctly linked definition with folder `\KOMODO` is reused
   without any PUT or revision increment;
-- a legacy same-YAML Pipeline is selected deterministically and renamed through
-  Build Definitions GET-modify-PUT while preserving its revision;
+- a 0.1.37 Environment-first or earlier branch-only Pipeline is found by legacy
+  name or YAML path, selected deterministically, and migrated to the
+  BranchToEnvironment name/path through Build Definitions GET-modify-PUT while
+  preserving its ID;
 - no `PUT /_apis/pipelines/{id}` is sent;
 - a legacy Release is found by `<projectId>:<pipelineId>` Build artifact source,
   updated in place, and retains its revision, environment ID, and deployment
@@ -510,16 +579,19 @@ During the browser test:
 2. confirm the generator is either a modal or the Pipeline Generator Hub under
    Azure Repos, never a separate browser tab;
 3. verify project, source repository, source branch, target repository, and
-   inferred form values;
+   inferred form values, including the dynamically loaded deployment targets;
 4. confirm the generator obtained a Bearer host token through its in-frame SDK
    handshake without asking for a PAT;
 5. submit once and record the five status transitions;
-6. confirm success navigates the parent host to `_build?definitionId=...`;
+6. confirm success stays on the form and displays working Nginx, Compose, and
+   Pipeline links without queueing a run;
 7. do not infer success solely from the UI message.
 
 After the test, read back and compare:
 
 - exact YAML path and branch;
+- Docker/Nginx DevOps repositories, `/environments`, and selected Environment
+  Compose/Nginx starter files;
 - Pipeline ID, name, folder, repository ID, default branch, and YAML path;
 - classic Build Definition `process.yamlFilename`;
 - Release ID/name/folder, artifact Pipeline and repository IDs;
@@ -540,10 +612,10 @@ resources that were cleaned up.
 | --- | --- | --- |
 | Action missing from branch menu | Extension not enabled, stale browser assets, or menu target mismatch | Confirm installed version/state, hard-refresh, inspect manifest contribution targets |
 | Session-token HTTP 401/403 or an expired-session error | The current browser sign-in is stale or the user lost project access | Use **Sign out and authenticate again**, complete the full login flow, then reopen the branch action |
-| Generator opens in a separate tab | Version 0.1.25 or older is still served, or stale action assets remain cached | Verify installed/asset version 0.1.32 and hard-refresh; current code has no detached-window path |
+| Generator opens in a separate tab | Version 0.1.25 or older is still served, or stale action assets remain cached | Verify installed/asset version 0.1.41 and hard-refresh; current code has no detached-window path |
 | Generator opens as an Azure Repos Hub instead of a modal | This Azure DevOps Server does not expose the custom Dialog service | Expected compatibility behavior; the Hub is still a host iframe |
-| Hub width repeatedly shrinks while blank space grows on the right | Legacy `VSS.resize()` used the form's changing `scrollWidth`, creating a host/iframe width feedback loop | Install 0.1.32; it never calls host resize and keeps contribution width fixed |
-| Hub form is clipped or mouse-wheel scrolling does nothing | Legacy iframe root/body scrolling is suppressed by the host | Version 0.1.32 uses a fixed full-viewport `.wrapper` as an explicit scroll container; verify the served asset version and hard-refresh |
+| Hub width repeatedly shrinks while blank space grows on the right | Legacy `VSS.resize()` used the form's changing `scrollWidth`, creating a host/iframe width feedback loop | Install 0.1.41; it never calls host resize and keeps contribution width fixed |
+| Hub form is clipped or mouse-wheel scrolling does nothing | Legacy iframe root/body scrolling is suppressed by the host | Version 0.1.41 uses a fixed full-viewport `.wrapper` as an explicit scroll container; verify the served asset version and hard-refresh |
 | `HostAuthorizationNotFound` inside Dialog/Hub | Collection installation has no authorization record for the extension scopes, or that record is stale | Select **Open extension authorization**; a Collection Administrator must authorize Pipeline Generator in Collection Settings → Extensions. If no action exists, reinstall the same published version |
 | Generator says another access-token error | Page opened directly, hosted iframe SDK handshake failed, or host denied token | Launch from a branch action; retry full sign-in only after extension authorization is confirmed |
 | Browser displays Basic login prompts | Platform SDK/API request received an auth challenge | Confirm bundled SDK is used, Bearer token is present, and fed-auth redirects are suppressed |
@@ -553,9 +625,12 @@ resources that were cleaned up.
 | Pipeline create fails despite repository in JSON body | Missing on-prem `repositoryId` query parameter or wrong API contract | Inspect final URL and generated repository GUID |
 | HTTP 2xx but no Pipeline ID | Unexpected server/proxy response shape | Inspect response safely; the UI intentionally rejects it |
 | Release fails with `VS402877` | Empty/missing pre/post approvals | Keep automated approvals and correct execution orders in both payload builders |
-| Release Step 5 gets 401 while resolving a queue | Extension token lacks `vso.agentpools`, has not been reauthorized after adding it, or the user cannot view/use the queue | Verify installed version 0.1.32 scopes, reauthorize/reinstall it, then confirm the current user can read and Use the queue |
-| Registry choices fall back to defaults with a 401 in Console | Extension token lacks `vso.serviceendpoint` or has not been reauthorized | Authorize the updated 0.1.32 scopes; the extension only reads endpoint names/types |
-| Release Step 5 cannot resolve `KomodoAPI` | The extension lacks `vso.variablegroups_read`, the new scope has not been authorized, or the group/user lacks Use permission | Reauthorize/install 0.1.32, confirm `KomodoAPI` exists in the current project, and grant the user/extension permission to use it |
+| Environment stays unavailable | `pipeline-generator.yml` is missing/invalid, an Environment lacks a valid domain, `main` is absent, or the user cannot read `SharedTemplates/SharedTemplates` | Verify the exact file URL, structured non-empty `environments` records, and repository Read permission; there is no static fallback |
+| Komodo Server remains on Loading/unavailable | Central credential file is missing/invalid/unreadable, Komodo CORS blocks the ADO origin/custom headers, Komodo rejects the read credential, or no visible Server has `config.enabled: true` | Verify the exact SharedTemplates file path/branch and Read permission, inspect OPTIONS/POST status without logging header values, confirm `KOMODO_CORS_ALLOWED_ORIGINS`, and test `ListFullServers` with the dedicated user |
+| Step 1 fails after creating the Azure DevOps repository | Docker/Nginx support repository creation, bootstrap push, or shared Nginx merge was denied/ambiguous | Grant Create repository/Contribute permission; for Nginx also verify balanced braces, complete managed markers, and exactly one matching port-443 server block before rerunning |
+| Release Step 5 gets 401 while resolving a queue | Extension token lacks `vso.agentpools`, has not been reauthorized after adding it, or the user cannot view/use the queue | Verify installed version 0.1.41 scopes, reauthorize/reinstall it, then confirm the current user can read and Use the queue |
+| Registry choices fall back to defaults with a 401 in Console | Extension token lacks `vso.serviceendpoint` or has not been reauthorized | Authorize the updated 0.1.41 scopes; the extension only reads endpoint names/types |
+| Release Step 5 cannot resolve `KomodoAPI` | The extension lacks `vso.variablegroups_read`, the new scope has not been authorized, or the group/user lacks Use permission | Reauthorize/install 0.1.41, confirm `KomodoAPI` exists in the current project, and grant the user/extension permission to use it |
 | Release reports missing required variables | `KomodoAPI` exists but lacks one of the wrapper inputs | Add secret variables `AZP_TOKEN`, `KOMODO_API_KEY`, and `KOMODO_API_SECRET` with exact casing; do not put their values in source control |
 | Release cannot be created after a Pipeline error | Step 5 never ran because Step 4 aborted | Fix/read back Pipeline first; then rerun so Release migration/create can execute |
 | Release has a legacy name/configuration | It was created by an older extension | Version 0.1.27 finds it by Pipeline artifact ID and reconciles it without deleting it |
@@ -566,7 +641,7 @@ resources that were cleaned up.
 | Dockerfile is not auto-detected | No Dockerfile exists on the selected source branch or the tree read failed | Enter the path manually and inspect the Git Items response |
 | Terminal calls return nginx 403 | Internal Azure DevOps request went through environment proxy | Configure `NO_PROXY`/unset proxy variables for the host |
 | `DELETE /_apis/pipelines/{id}` returns 405 | Endpoint unsupported for deletion on this server | Delete disposable Pipeline via Build Definitions API |
-| Old build redirects to YAML instead of Pipeline | Stale extension version/assets | Verify installed asset version and hard-refresh; current flow redirects only after Pipeline success |
+| Page redirects after success, leaves the completed form active, or does not show three review links | Stale extension version/assets | Verify installed asset version 0.1.41 and hard-refresh; current flow locks/collapses the form and focuses the Nginx, Compose, and Pipeline links |
 
 For environment-specific IDs, exact recovery endpoints, failed automation
 approaches, and the last verified successful resource graph, use

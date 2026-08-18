@@ -22,7 +22,29 @@ const instrumented = source.replace(
   initializationMarker,
   `  window.__PipelineGeneratorTestHooks = {
 	    buildPipelineFilename,
+	    buildLegacyPipelineFilename,
+	    buildLegacyEnvironmentFirstPipelineFilename,
 	    buildPipelineName,
+	    buildReleaseName,
+	    parseDeploymentTargetsYaml,
+	    fetchDeploymentTargets,
+	    parseKomodoCredentialFile,
+	    fetchKomodoCredentials,
+	    extractEnabledKomodoServers,
+	    fetchKomodoServers,
+	    loadDeploymentTargets,
+	    setKomodoServerFromEnvironment,
+	    setServiceNameFromRepository,
+	    buildSupportRepositorySpecs,
+	    buildComposeSample,
+	    buildNginxRouteBlock,
+	    buildNginxSample,
+	    mergeNginxServiceRoute,
+	    ensureSupportRepositories,
+	    ensureRepositoryBootstrapFiles,
+	    buildRepositoryFileUrl,
+	    showCompletionLinks,
+	    finishProvisioning,
 	    getAuthHeader,
 	    getDialogConfiguration,
 	    getHostNavigationState,
@@ -69,8 +91,8 @@ const form = element({
   querySelector: () => submitButton
 });
 const environment = element({
-  value: 'demo',
-  options: ['dev', 'demo', 'qa', 'pro'].map((value) => ({ value }))
+  value: '',
+  options: []
 });
 const elements = new Map([
   ['branch-label', element()],
@@ -87,7 +109,11 @@ const elements = new Map([
   ['reauth-panel', element({ className: 'auth-fallback hidden' })],
   ['reauth-message', element()],
   ['authorize-extension', element()],
-  ['reauthenticate', element()]
+  ['reauthenticate', element()],
+  ['completion-panel', element({ className: 'completion-panel hidden' })],
+  ['nginx-result-link', element()],
+  ['compose-result-link', element()],
+  ['pipeline-result-link', element()]
 ]);
 
 const document = {
@@ -109,7 +135,6 @@ const window = {
     enabled: true,
     folder: '\\komodo',
     environmentName: 'komodo',
-    nameSuffix: '_Release',
     bashTaskName: 'Run Komodo deployment',
     variableGroupName: 'KomodoAPI',
     requiredVariableNames: ['AZP_TOKEN', 'KOMODO_API_KEY', 'KOMODO_API_SECRET'],
@@ -164,10 +189,291 @@ const repo = {
 const filename = hooks.buildPipelineFilename({
   projectName: 'RideSharing',
   repositoryName: 'RideSharing_Backend',
+  environment: 'demo',
   branchName: 'feature/defineZones'
 });
-assert.strictEqual(filename, 'ridesharing-ridesharing_backend-feature-definezones.yml');
+const previousEnvironmentFirstFilename = hooks.buildLegacyEnvironmentFirstPipelineFilename({
+  projectName: 'RideSharing',
+  repositoryName: 'RideSharing_Backend',
+  environment: 'demo',
+  branchName: 'feature/defineZones'
+});
+const legacyFilename = hooks.buildLegacyPipelineFilename({
+  projectName: 'RideSharing',
+  repositoryName: 'RideSharing_Backend',
+  branchName: 'feature/defineZones'
+});
+assert.strictEqual(filename, 'ridesharing-ridesharing_backend-Feature-DefineZonesToDEMO.yml');
+assert.strictEqual(previousEnvironmentFirstFilename, 'ridesharing-ridesharing_backend-demo-feature-definezones.yml');
+assert.strictEqual(legacyFilename, 'ridesharing-ridesharing_backend-feature-definezones.yml');
 assert.strictEqual(hooks.buildPipelineName(filename), filename);
+assert.strictEqual(hooks.buildReleaseName({ service: 'api', environment: 'demo' }), 'API DEMO');
+assert.strictEqual(
+  hooks.buildPipelineFilename({
+    projectName: 'RideSharing',
+    repositoryName: 'RideSharing_Backend',
+    environment: 'dev',
+    branchName: 'feature/defineZones'
+  }),
+  'ridesharing-ridesharing_backend-Feature-DefineZonesToDEV.yml'
+);
+assert.strictEqual(
+  hooks.buildPipelineFilename({
+    projectName: 'Locanit',
+    repositoryName: 'Locanit_API',
+    environment: 'soc',
+    branchName: 'Production'
+  }),
+  'locanit-locanit_api-ProductionToSOC.yml'
+);
+assert.throws(
+  () =>
+    hooks.buildPipelineFilename({
+      projectName: 'RideSharing',
+      repositoryName: 'RideSharing_Backend',
+      branchName: 'feature/defineZones'
+    }),
+  /Environment is required/
+);
+hooks.setServiceNameFromRepository('Locanit_API', 'Locanit');
+assert.strictEqual(elements.get('service').value, 'api');
+const deploymentTargets = hooks.parseDeploymentTargetsYaml(`
+servers:
+  - "DEMO-192.168.62.91"
+  - "Development-192.168.62.19"
+  - "Production-192.168.0.244"
+  - "Production-192.168.62.140"
+  - "Production-31.7.65.195"
+  - "QA-192.168.62.153"
+environments:
+  - name: pro
+    domain: bulutcom.cloud
+  - name: qa
+    domain: bulutqa.ir
+  - name: demo # inline comments are allowed
+    domain: bulutdemo.ir
+  - "dev:bulutdev.ir" # compact legacy form remains accepted
+  - name: soc
+    domain: bulutsoc.ir
+`);
+assert.deepStrictEqual(Array.from(deploymentTargets.servers), [
+  'DEMO-192.168.62.91',
+  'Development-192.168.62.19',
+  'Production-192.168.0.244',
+  'Production-192.168.62.140',
+  'Production-31.7.65.195',
+  'QA-192.168.62.153'
+]);
+assert.deepStrictEqual(Array.from(deploymentTargets.environments), ['pro', 'qa', 'demo', 'dev', 'soc']);
+assert.deepStrictEqual(
+  Array.from(deploymentTargets.environmentConfigs, (item) => ({ ...item })),
+  [
+    { name: 'pro', domain: 'bulutcom.cloud' },
+    { name: 'qa', domain: 'bulutqa.ir' },
+    { name: 'demo', domain: 'bulutdemo.ir' },
+    { name: 'dev', domain: 'bulutdev.ir' },
+    { name: 'soc', domain: 'bulutsoc.ir' }
+  ]
+);
+assert.throws(
+  () => hooks.parseDeploymentTargetsYaml('environments:\n  - dev\n'),
+  /must define a valid domain/
+);
+const komodoServerSelect = elements.get('komodoServer');
+komodoServerSelect.options = deploymentTargets.servers.map((value) => ({ value }));
+hooks.setKomodoServerFromEnvironment('dev');
+assert.strictEqual(komodoServerSelect.value, 'Development-192.168.62.19');
+hooks.setKomodoServerFromEnvironment('soc');
+assert.strictEqual(komodoServerSelect.value, '');
+assert.deepStrictEqual(
+  Array.from(
+    hooks.buildSupportRepositorySpecs({
+      projectName: '180 Feedback',
+      environment: 'demo',
+      domain: 'bulutdemo.ir',
+      service: 'api',
+      repositoryAddress: 'registry.buluttakin.com'
+    }),
+    (item) => ({ name: item.name, directory: item.directory, filePath: item.filePath })
+  ),
+  [
+    {
+      name: '180Feedback_Docker_DevOps',
+      directory: 'demo_180feedback',
+      filePath: '/demo_180feedback/compose.yml'
+    },
+    {
+      name: '180Feedback_Nginx_DevOps',
+      directory: 'demo',
+      filePath: '/demo/180feedback-demo.conf'
+    }
+  ]
+);
+const nginxApiSample = hooks.buildNginxSample({
+  projectHost: 'locanit',
+  projectKey: 'locanit',
+  serviceKey: 'api',
+  environment: 'dev',
+  domain: 'bulutdev.ir'
+});
+assert(nginxApiSample.includes('server_name locanit.bulutdev.ir;'));
+assert(nginxApiSample.includes('location /api/ {'));
+assert(nginxApiSample.includes('resolver         127.0.0.11         ipv6=off;'));
+assert(nginxApiSample.includes('set              $target            locanit_api_dev;'));
+assert(!nginxApiSample.includes('rewrite '));
+assert(nginxApiSample.includes('proxy_pass                          http://$target:8080;'));
+assert(!nginxApiSample.includes('proxy_pass                          http://$target:8080/;'));
+assert(!nginxApiSample.includes('proxy_pass http://locanit_api_dev:8080;'));
+assert(nginxApiSample.includes('/etc/nginx/conf.d/bulutdev.pem'));
+assert(nginxApiSample.includes('client_max_body_size 0;'));
+assert(nginxApiSample.includes('proxy_set_header Upgrade $http_upgrade;'));
+const nginxUiSample = hooks.buildNginxSample({
+  projectHost: 'locanit',
+  projectKey: 'locanit',
+  serviceKey: 'newui',
+  environment: 'dev',
+  domain: 'bulutdev.ir'
+});
+assert(nginxUiSample.includes('location / {'));
+assert(nginxUiSample.includes('set              $target            locanit_newui_dev;'));
+assert(nginxUiSample.includes('proxy_pass                          http://$target:80/;'));
+assert(!nginxUiSample.includes('proxy_pass                          http://$target:80;'));
+assert(!nginxUiSample.includes('proxy_pass http://locanit_newui_dev:80;'));
+const mergedNginxSample = hooks.mergeNginxServiceRoute({
+  content: `${nginxApiSample.replace('    client_max_body_size 0;', '    # manual setting is preserved\n    client_max_body_size 0;')}`,
+  serverName: 'locanit.bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'newui',
+  environment: 'dev'
+});
+assert(mergedNginxSample.includes('# manual setting is preserved'));
+assert(mergedNginxSample.includes('location /api/ {'));
+assert(mergedNginxSample.includes('location / {'));
+assert(mergedNginxSample.indexOf('location /api/ {') < mergedNginxSample.indexOf('location / {'));
+assert.strictEqual((mergedNginxSample.match(/listen 443 ssl;/g) || []).length, 1);
+assert.strictEqual((mergedNginxSample.match(/server_name locanit\.bulutdev\.ir;/g) || []).length, 2);
+assert.strictEqual(
+  hooks.mergeNginxServiceRoute({
+    content: mergedNginxSample,
+    serverName: 'locanit.bulutdev.ir',
+    projectKey: 'locanit',
+    serviceKey: 'newui',
+    environment: 'dev'
+  }),
+  mergedNginxSample
+);
+const rootFirstSample = hooks.mergeNginxServiceRoute({
+  content: nginxUiSample,
+  serverName: 'locanit.bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'api',
+  environment: 'dev'
+});
+assert(rootFirstSample.includes('location /api/ {'));
+assert(rootFirstSample.indexOf('location /api/ {') < rootFirstSample.indexOf('location / {'));
+const apiRouteBlock = hooks.buildNginxRouteBlock({
+  projectKey: 'locanit',
+  serviceKey: 'api',
+  environment: 'dev'
+}).content;
+const legacyRootBeforeApiSample = nginxUiSample.replace(
+  '    # END PIPELINE-GENERATOR MANAGED ROUTES',
+  `${apiRouteBlock}\n    # END PIPELINE-GENERATOR MANAGED ROUTES`
+);
+const reorderedRootLastSample = hooks.mergeNginxServiceRoute({
+  content: legacyRootBeforeApiSample,
+  serverName: 'locanit.bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'api',
+  environment: 'dev'
+});
+assert(reorderedRootLastSample.indexOf('location /api/ {') < reorderedRootLastSample.indexOf('location / {'));
+assert.strictEqual(
+  hooks.mergeNginxServiceRoute({
+    content: reorderedRootLastSample,
+    serverName: 'locanit.bulutdev.ir',
+    projectKey: 'locanit',
+    serviceKey: 'api',
+    environment: 'dev'
+  }),
+  reorderedRootLastSample
+);
+const legacyDirectProxySample = mergedNginxSample
+  .replace('location /api/ {', 'location /api {')
+  .replace(
+    /        resolver         127\.0\.0\.11         ipv6=off;\n        set              \$target            locanit_api_dev;\n        proxy_pass                          http:\/\/\$target:8080;/,
+    '        proxy_pass http://locanit_api_dev:8080;'
+  )
+  .replace(
+    '        proxy_pass http://locanit_api_dev:8080;',
+    '        rewrite          ^/api/(.*)$ /$1 break;\n        proxy_pass http://locanit_api_dev:8080;'
+  )
+  .replace(
+    /        resolver         127\.0\.0\.11         ipv6=off;\n        set              \$target            locanit_newui_dev;\n        proxy_pass                          http:\/\/\$target:80\/;/,
+    '        proxy_pass http://locanit_newui_dev:80;'
+  );
+const migratedDynamicProxySample = hooks.mergeNginxServiceRoute({
+  content: legacyDirectProxySample,
+  serverName: 'locanit.bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'api',
+  environment: 'dev'
+});
+assert(!migratedDynamicProxySample.includes('proxy_pass http://locanit_api_dev:8080;'));
+assert(!migratedDynamicProxySample.includes('proxy_pass http://locanit_newui_dev:80;'));
+assert.strictEqual((migratedDynamicProxySample.match(/resolver\s+127\.0\.0\.11\s+ipv6=off;/g) || []).length, 2);
+assert(migratedDynamicProxySample.includes('location /api/ {'));
+assert(!migratedDynamicProxySample.includes('rewrite '));
+assert(migratedDynamicProxySample.includes('proxy_pass                          http://$target:8080;'));
+assert(migratedDynamicProxySample.includes('proxy_pass                          http://$target:80/;'));
+assert(migratedDynamicProxySample.indexOf('location /api/ {') < migratedDynamicProxySample.indexOf('location / {'));
+assert.strictEqual(
+  hooks.mergeNginxServiceRoute({
+    content: migratedDynamicProxySample,
+    serverName: 'locanit.bulutdev.ir',
+    projectKey: 'locanit',
+    serviceKey: 'api',
+    environment: 'dev'
+  }),
+  migratedDynamicProxySample
+);
+const legacySlashNonRootSample = nginxApiSample
+  .replace('location /api/ {', 'location /api {')
+  .replace(
+    'proxy_pass                          http://$target:8080;',
+    'rewrite          ^/api/(.*)$ /$1 break;\n        proxy_pass http://$target:8080/;'
+  );
+const migratedNonRootRewriteSample = hooks.mergeNginxServiceRoute({
+  content: legacySlashNonRootSample,
+  serverName: 'locanit.bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'api',
+  environment: 'dev'
+});
+assert(migratedNonRootRewriteSample.includes('location /api/ {'));
+assert(!migratedNonRootRewriteSample.includes('rewrite '));
+assert(migratedNonRootRewriteSample.includes('proxy_pass                          http://$target:8080;'));
+assert(!migratedNonRootRewriteSample.includes('proxy_pass                          http://$target:8080/;'));
+assert.strictEqual(
+  hooks.mergeNginxServiceRoute({
+    content: migratedNonRootRewriteSample,
+    serverName: 'locanit.bulutdev.ir',
+    projectKey: 'locanit',
+    serviceKey: 'api',
+    environment: 'dev'
+  }),
+  migratedNonRootRewriteSample
+);
+assert.throws(
+  () => hooks.mergeNginxServiceRoute({
+    content: `${nginxApiSample}\n${nginxApiSample}`,
+    serverName: 'locanit.bulutdev.ir',
+    projectKey: 'locanit',
+    serviceKey: 'backend',
+    environment: 'dev'
+  }),
+  /multiple HTTPS server blocks/
+);
 assert.strictEqual(hooks.getAuthHeader('extension-session-token'), 'Bearer extension-session-token');
 assert.strictEqual(
   hooks.getDialogConfiguration({ getConfiguration: () => ({ projectId, branch: 'feature/defineZones' }) }).branch,
@@ -269,6 +575,262 @@ const run = async () => {
       error.requiredExtensionScope === 'vso.variablegroups_read'
   );
 
+  let targetConfigUrl;
+  context.fetch = async (url, options = {}) => {
+    targetConfigUrl = url;
+    assert.strictEqual(options.headers.Authorization, 'Bearer extension-session-token');
+    assert.strictEqual(options.cache, 'no-store');
+    return response({
+      body: 'servers:\n  - "QA-192.168.62.153"\nenvironments:\n  - name: qa\n    domain: bulutqa.ir\n',
+      url
+    });
+  };
+  const fetchedTargets = await hooks.fetchDeploymentTargets({
+    hostUri,
+    accessToken: 'extension-session-token'
+  });
+  assert(targetConfigUrl.includes('/SharedTemplates/_apis/git/repositories/SharedTemplates/items?'));
+  assert(targetConfigUrl.includes('path=%2Fpipeline-generator.yml'));
+  assert.deepStrictEqual(Array.from(fetchedTargets.servers), ['QA-192.168.62.153']);
+  assert.deepStrictEqual(Array.from(fetchedTargets.environments), ['qa']);
+
+  const parsedKomodoCredentials = hooks.parseKomodoCredentialFile(`
+KOMODO_ADDRESS=https://komodo.example.local
+KOMODO_API_KEY=synthetic-read-key
+KOMODO_API_SECRET="synthetic-read-secret"
+`);
+  assert.strictEqual(parsedKomodoCredentials.address, 'https://komodo.example.local');
+  assert.strictEqual(parsedKomodoCredentials.apiKey, 'synthetic-read-key');
+  assert.strictEqual(parsedKomodoCredentials.apiSecret, 'synthetic-read-secret');
+
+  const komodoCalls = [];
+  context.fetch = async (url, options = {}) => {
+    komodoCalls.push({ url, options });
+    if (url.includes('path=%2Fkomodo-servers-creds.env')) {
+      assert.strictEqual(options.headers.Authorization, 'Bearer extension-session-token');
+      return response({
+        body: [
+          'KOMODO_ADDRESS=https://komodo.example.local',
+          'KOMODO_API_KEY=synthetic-read-key',
+          'KOMODO_API_SECRET=synthetic-read-secret'
+        ].join('\n'),
+        url
+      });
+    }
+    assert.strictEqual(url, 'https://komodo.example.local/read');
+    assert.strictEqual(options.method, 'POST');
+    assert.strictEqual(options.headers.Authorization, undefined);
+    assert.strictEqual(options.headers['X-Api-Key'], 'synthetic-read-key');
+    assert.strictEqual(options.headers['X-Api-Secret'], 'synthetic-read-secret');
+    assert.strictEqual(options.credentials, 'omit');
+    assert.strictEqual(options.cache, 'no-store');
+    assert.strictEqual(JSON.parse(options.body).type, 'ListFullServers');
+    return response({
+      body: [
+        { id: 'server-2', name: 'Production-192.168.0.244', config: { enabled: true } },
+        { id: 'server-1', name: 'DEMO-192.168.62.91', config: { enabled: true } },
+        { id: 'server-3', name: 'Disabled', config: { enabled: false } },
+        { id: 'server-4', name: 'Template', template: true, config: { enabled: true } }
+      ],
+      url
+    });
+  };
+  const activeKomodoServers = await hooks.fetchKomodoServers({
+    hostUri,
+    accessToken: 'extension-session-token'
+  });
+  assert.strictEqual(komodoCalls.length, 2);
+  assert.deepStrictEqual(Array.from(activeKomodoServers), [
+    'DEMO-192.168.62.91',
+    'Production-192.168.0.244'
+  ]);
+
+  environment.options = [];
+  elements.get('komodoServer').options = [];
+  context.fetch = async (url) => {
+    if (url.includes('path=%2Fkomodo-servers-creds.env')) {
+      return response({
+        body: [
+          'KOMODO_ADDRESS=https://komodo.example.local',
+          'KOMODO_API_KEY=synthetic-read-key',
+          'KOMODO_API_SECRET=synthetic-read-secret'
+        ].join('\n'),
+        url
+      });
+    }
+    if (url === 'https://komodo.example.local/read') {
+      return response({
+        body: [
+          { id: 'qa-id', name: 'QA-192.168.62.153', config: { enabled: true } },
+          { id: 'demo-id', name: 'DEMO-192.168.62.91', config: { enabled: true } }
+        ],
+        url
+      });
+    }
+    return response({
+      body: 'environments:\n  - name: demo\n    domain: bulutdemo.ir\n  - name: qa\n    domain: bulutqa.ir\n',
+      url
+    });
+  };
+  await hooks.loadDeploymentTargets({
+    hostUri,
+    accessToken: 'extension-session-token',
+    branch: 'feature/qa'
+  });
+  assert.strictEqual(environment.value, 'qa');
+  assert.strictEqual(elements.get('komodoServer').value, 'QA-192.168.62.153');
+  assert.strictEqual(hooks.state.deploymentTargetsReady, true);
+
+  const supportRepos = new Map();
+  const supportPushes = new Map();
+  context.fetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    if (url.includes('/_apis/git/repositories?') && method === 'GET') {
+      return response({ body: { value: Array.from(supportRepos.values()) }, url });
+    }
+    if (url.includes('/_apis/git/repositories?') && method === 'POST') {
+      const body = JSON.parse(options.body);
+      const id = body.name.includes('_Docker_') ? 'docker-repo-id' : 'nginx-repo-id';
+      const created = { id, name: body.name };
+      supportRepos.set(body.name, created);
+      return response({ body: created, url });
+    }
+    if (url.includes('/refs?') && method === 'GET') {
+      return response({ body: { value: [] }, url });
+    }
+    if (url.includes('/pushes?') && method === 'POST') {
+      const repoId = url.includes('docker-repo-id') ? 'docker-repo-id' : 'nginx-repo-id';
+      supportPushes.set(repoId, JSON.parse(options.body));
+      return response({ body: { pushId: supportPushes.size }, url });
+    }
+    if (method === 'PATCH' && /\/repositories\/(docker|nginx)-repo-id\?/.test(url)) {
+      assert.strictEqual(JSON.parse(options.body).defaultBranch, 'refs/heads/main');
+      return response({ body: { id: url.includes('docker-repo-id') ? 'docker-repo-id' : 'nginx-repo-id' }, url });
+    }
+    throw new Error(`Unexpected support repository request: ${method} ${url}`);
+  };
+  const supportResults = await hooks.ensureSupportRepositories({
+    hostUri,
+    projectId,
+    projectName: 'RideSharing',
+    environment: 'demo',
+    domain: 'bulutdemo.ir',
+    service: 'api',
+    repositoryAddress: 'registry.buluttakin.com',
+    accessToken: 'extension-session-token'
+  });
+  assert.deepStrictEqual(
+    Array.from(supportResults, (result) => result.repo.name),
+    ['RideSharing_Docker_DevOps', 'RideSharing_Nginx_DevOps']
+  );
+  const dockerPaths = supportPushes
+    .get('docker-repo-id')
+    .commits[0].changes.map((change) => change.item.path);
+  const nginxPaths = supportPushes
+    .get('nginx-repo-id')
+    .commits[0].changes.map((change) => change.item.path);
+  assert.deepStrictEqual(dockerPaths, ['/environments', '/demo_ridesharing/compose.yml']);
+  assert.deepStrictEqual(nginxPaths, ['/environments', '/demo/ridesharing-demo.conf']);
+  const dockerComposeContent = supportPushes
+    .get('docker-repo-id')
+    .commits[0].changes.find((change) => change.item.path.endsWith('/compose.yml')).newContent.content;
+  assert(dockerComposeContent.includes('container_name: ridesharing_api_demo'));
+  assert(dockerComposeContent.includes('registry.buluttakin.com/ridesharing/api-demo:${IMAGE_TAG:-CHANGE_ME}'));
+  const nginxContent = supportPushes
+    .get('nginx-repo-id')
+    .commits[0].changes.find((change) => change.item.path.endsWith('.conf')).newContent.content;
+  assert(nginxContent.includes('server_name ridesharing.bulutdemo.ir;'));
+  assert(nginxContent.includes('location /api/ {'));
+  assert(nginxContent.includes('set              $target            ridesharing_api_demo;'));
+  assert(!nginxContent.includes('rewrite '));
+  assert(nginxContent.includes('proxy_pass                          http://$target:8080;'));
+  assert(!nginxContent.includes('proxy_pass http://ridesharing_api_demo:8080;'));
+  hooks.state.rawProjectName = 'RideSharing';
+  hooks.state.projectName = 'RideSharing';
+  hooks.showCompletionLinks({
+    supportRepositories: supportResults,
+    pipelineDefinition: { id: 344, name: filename }
+  });
+  assert(elements.get('nginx-result-link').href.includes('/RideSharing/_git/RideSharing_Nginx_DevOps?'));
+  assert(elements.get('nginx-result-link').href.includes('path=%2Fdemo%2Fridesharing-demo.conf'));
+  assert(elements.get('compose-result-link').href.includes('path=%2Fdemo_ridesharing%2Fcompose.yml'));
+  assert.strictEqual(
+    elements.get('pipeline-result-link').href,
+    `${hostUri}RideSharing/_build?definitionId=344`
+  );
+  assert.strictEqual(hooks.state.provisioningComplete, true);
+  assert.strictEqual(form.hidden, true);
+  assert.strictEqual(submitButton.disabled, true);
+
+  const existingSupportCalls = [];
+  context.fetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    existingSupportCalls.push({ url, method });
+    if (url.includes('/refs?')) {
+      return response({ body: { value: [{ objectId: '2222222222222222222222222222222222222222' }] }, url });
+    }
+    if (url.includes('/items?') && url.includes('%24format=text')) {
+      return response({ body: 'mattermost_channel=already-configured', url });
+    }
+    throw new Error(`Existing support repository content must not be written: ${method} ${url}`);
+  };
+  const existingBootstrap = await hooks.ensureRepositoryBootstrapFiles({
+    hostUri,
+    projectId,
+    repo: { id: 'docker-repo-id', name: 'RideSharing_Docker_DevOps' },
+    directory: 'demo_ridesharing',
+    sampleFile: {
+      path: '/demo_ridesharing/compose.yml',
+      content: 'services: {}\n'
+    },
+    accessToken: 'extension-session-token'
+  });
+  assert.strictEqual(existingBootstrap.skipped, true);
+  assert(existingSupportCalls.every(({ method }) => method === 'GET'));
+
+  let nginxMergePush;
+  context.fetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    if (url.includes('/refs?') && method === 'GET') {
+      return response({ body: { value: [{ objectId: '3333333333333333333333333333333333333333' }] }, url });
+    }
+    if (url.includes('/items?') && method === 'GET') {
+      const filePath = new URL(url).searchParams.get('path');
+      return response({
+        body: filePath === '/environments' ? 'mattermost_channel=already-configured' : nginxApiSample,
+        url
+      });
+    }
+    if (url.includes('/pushes?') && method === 'POST') {
+      nginxMergePush = JSON.parse(options.body);
+      return response({ body: { pushId: 3 }, url });
+    }
+    throw new Error(`Unexpected Nginx merge request: ${method} ${url}`);
+  };
+  const mergedBootstrap = await hooks.ensureRepositoryBootstrapFiles({
+    hostUri,
+    projectId,
+    repo: { id: 'nginx-repo-id', name: 'Locanit_Nginx_DevOps' },
+    directory: 'dev',
+    sampleFile: {
+      path: '/dev/locanit-dev.conf',
+      content: nginxUiSample,
+      mergeExisting: (content) => hooks.mergeNginxServiceRoute({
+        content,
+        serverName: 'locanit.bulutdev.ir',
+        projectKey: 'locanit',
+        serviceKey: 'newui',
+        environment: 'dev'
+      })
+    },
+    accessToken: 'extension-session-token'
+  });
+  assert.strictEqual(mergedBootstrap.skipped, false);
+  assert.strictEqual(nginxMergePush.commits[0].changes.length, 1);
+  assert.strictEqual(nginxMergePush.commits[0].changes[0].changeType, 'edit');
+  assert.strictEqual(nginxMergePush.commits[0].changes[0].item.path, '/dev/locanit-dev.conf');
+  assert(nginxMergePush.commits[0].changes[0].newContent.content.includes('location / {'));
+
   let packagedScriptRequest;
   context.fetch = async (url, options = {}) => {
     packagedScriptRequest = { url, options };
@@ -358,7 +920,7 @@ const run = async () => {
               revision: 2,
               name: 'RideSharing_RideSharing_Azure_DevOps_demo',
               path: '\\KOMODO',
-              process: { type: 2, yamlFilename: `/${filename}` },
+              process: { type: 2, yamlFilename: `/${legacyFilename}` },
               repository: { id: repo.id, defaultBranch: 'refs/heads/main' }
             },
             {
@@ -366,7 +928,7 @@ const run = async () => {
               revision: 7,
               name: 'RideSharing_RideSharing_Backend_demo',
               path: '\\KOMODO',
-              process: { type: 2, yamlFilename: `/${filename}` },
+              process: { type: 2, yamlFilename: `/${legacyFilename}` },
               repository: { id: repo.id, defaultBranch: 'refs/heads/main' }
             }
           ]
@@ -381,7 +943,7 @@ const run = async () => {
           revision: 7,
           name: 'RideSharing_RideSharing_Backend_demo',
           path: '\\KOMODO',
-          process: { type: 2, yamlFilename: `/${filename}` },
+          process: { type: 2, yamlFilename: `/${legacyFilename}` },
           repository: { id: repo.id, name: repo.name, type: 'TfsGit', defaultBranch: 'refs/heads/main' }
         },
         url
@@ -406,10 +968,20 @@ const run = async () => {
     repo,
     pipelineName: filename,
     pipelinePath: `/${filename}`,
+    legacyPipelineNames: [previousEnvironmentFirstFilename, legacyFilename],
+    legacyPipelinePaths: [`/${previousEnvironmentFirstFilename}`, `/${legacyFilename}`],
     branch: 'main',
     accessToken: 'test-token'
   });
   assert.strictEqual(migrated.id, 344);
+  const migrationYamlLookups = migrationCalls
+    .filter(({ url, method }) => url.includes('/_apis/build/definitions?') && method === 'GET')
+    .map(({ url }) => new URL(url).searchParams.get('yamlFilename'));
+  assert.deepStrictEqual(migrationYamlLookups, [
+    `/${filename}`,
+    `/${previousEnvironmentFirstFilename}`,
+    `/${legacyFilename}`
+  ]);
   assert(migrationCalls.some(({ url, method }) => url.includes('/_apis/build/definitions/344') && method === 'PUT'));
   assert(!migrationCalls.some(({ url, method }) => url.includes('/_apis/pipelines/344') && method === 'PUT'));
 
@@ -420,6 +992,7 @@ const run = async () => {
     const parsed = new URL(url);
     releaseCalls.push({ url, method, options });
     if (url.includes('/_apis/release/definitions?') && method === 'GET' && parsed.searchParams.has('searchText')) {
+      assert.strictEqual(parsed.searchParams.get('searchText'), 'API DEMO');
       return response({ body: { value: [] }, url });
     }
     if (url.includes('/_apis/release/definitions?') && method === 'GET' && parsed.searchParams.has('artifactSourceId')) {
@@ -494,7 +1067,7 @@ const run = async () => {
       const body = JSON.parse(options.body);
       assert.strictEqual(body.id, 5);
       assert.strictEqual(body.revision, 4);
-      assert.strictEqual(body.name, `${filename}_Release`);
+      assert.strictEqual(body.name, 'API DEMO');
       assert.strictEqual(body.environments[0].id, 23);
       assert.strictEqual(body.environments[0].deployPhases[0].id, 31);
       assert.strictEqual(body.artifacts[0].definitionReference.definition.id, '344');
@@ -516,6 +1089,8 @@ const run = async () => {
     repo,
     pipelineDefinition: { id: 344 },
     pipelineName: filename,
+    service: 'api',
+    environment: 'demo',
     branch: 'main',
     queueName: 'PublishDockerAgent',
     accessToken: 'test-token'
@@ -531,7 +1106,8 @@ const run = async () => {
     const parsed = new URL(url);
     noOpReleaseCalls.push({ url, method });
     if (url.includes('/_apis/release/definitions?') && method === 'GET' && parsed.searchParams.has('searchText')) {
-      return response({ body: { value: [{ id: 5, name: `${filename}_Release` }] }, url });
+      assert.strictEqual(parsed.searchParams.get('searchText'), 'API DEMO');
+      return response({ body: { value: [{ id: 5, name: 'API DEMO' }] }, url });
     }
     if (url.includes('/_apis/distributedtask/queues?') && method === 'GET') {
       return response({ body: { value: [{ id: 111, name: 'PublishDockerAgent' }] }, url });
@@ -566,6 +1142,8 @@ const run = async () => {
     repo,
     pipelineDefinition: { id: 344 },
     pipelineName: filename,
+    service: 'api',
+    environment: 'demo',
     branch: 'main',
     queueName: 'PublishDockerAgent',
     accessToken: 'test-token'
@@ -575,9 +1153,9 @@ const run = async () => {
   assert.strictEqual(reusedRelease.updated, false);
   assert(noOpReleaseCalls.every(({ method }) => method === 'GET'));
 
-  console.log(
-    'UI behavior regression tests passed: session restart URL, exact naming, unchanged YAML and canonical Build/Release no-op reuse, no Pipelines PUT, and Pipeline/Release/KomodoAPI reconciliation.'
-  );
+console.log(
+  'UI behavior regression tests passed: Environment/domain parsing, direct enabled-server discovery, BranchToEnvironment Pipeline naming with two-shape legacy migration, root-last Nginx routing with managed rewrite removal, idempotent Compose/shared-route merging, locked completion links, short Release naming, and Pipeline/Release/KomodoAPI reconciliation.'
+);
 };
 
 run().catch((error) => {

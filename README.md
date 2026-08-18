@@ -6,7 +6,7 @@ creates or reuses a project-level repository, writes a generated YAML file,
 registers a YAML Pipeline that points to that file, and creates a classic
 Release definition that consumes the Pipeline as a Build artifact.
 
-The manifest version documented here is **0.1.32**. The manifest targets Azure
+The manifest version documented here is **0.1.41**. The manifest targets Azure
 DevOps Services and Azure DevOps Server range `[16.0,20.0)`. The complete live
 workflow has been verified on the documented on-premises Server environment;
 the Azure DevOps Services Release API route still requires a separate
@@ -17,17 +17,24 @@ compatibility test.
 ```text
 selected source repository + branch
         |
-        | generates a branch-specific YAML document
+        | reads environments from SharedTemplates/pipeline-generator.yml
+        | reads central Komodo read credentials from SharedTemplates
+        | reads enabled servers directly from Komodo
+        | ensures <ProjectName>_Docker_DevOps and <ProjectName>_Nginx_DevOps
+        |
+        | generates a Branch-to-Environment-specific YAML document
         v
 <ProjectName>_Azure_DevOps @ main
         |
         | YAML configuration points to this repository and file
         v
 YAML Pipeline in \komodo
+        | name: <project>-<repository>-<Branch>To<ENVIRONMENT>.yml
         |
         | primary Build artifact
         v
 Classic Release definition in \komodo
+        | name: <SERVICE> <ENVIRONMENT> (for example API DEMO)
         | links project Variable Group KomodoAPI
         |
         v
@@ -36,16 +43,22 @@ one agent-based Bash@3 deployment job with packaged wrapper stored Inline
 
 The browser workflow performs five visible steps:
 
-1. Create or reuse `<ProjectName>_Azure_DevOps`.
+1. Create or reuse `<ProjectName>_Azure_DevOps`,
+   `<ProjectNameWithoutSpaces>_Docker_DevOps`, and
+   `<ProjectNameWithoutSpaces>_Nginx_DevOps`; initialize the two support
+   repositories with `/environments`, a starter `compose.yml`, and one shared
+   project/Environment Nginx configuration with managed service routes.
 2. Add or edit the generated YAML file on `main`.
 3. set `refs/heads/main` as the generated repository's default branch.
 4. Create or update the YAML Pipeline under `\komodo`.
 5. Create or reconcile the classic Release definition under `\komodo`, embed
    the packaged Bash wrapper Inline, and link Variable Group `KomodoAPI`.
 
-After all enabled steps succeed, the page redirects to the real Pipeline. It
-does not redirect merely because the YAML file was created. The extension does
-not queue a Pipeline run and does not create a Release instance.
+After all enabled steps succeed, the page stays open, collapses and locks the
+completed form, and moves focus to links for the starter Nginx file, starter
+`compose.yml`, and real Pipeline. The user reviews and edits both files before
+opening and manually running the Pipeline. The extension does not queue a
+Pipeline run and does not create a Release instance.
 
 ## Important concepts
 
@@ -55,11 +68,35 @@ not queue a Pipeline run and does not create a Release instance.
   repository resource.
 - The **generated repository** is the shared project repository named
   `<ProjectName>_Azure_DevOps`.
+- The **Docker DevOps repository** is named
+  `<ProjectNameWithoutSpaces>_Docker_DevOps` and receives
+  `<environment>_<lowercase-project-without-spaces>/compose.yml`. Its starter
+  service/container is `<project>_<service>_<environment>` and exposes port 80
+  for UI/frontend services or 8080 for all other services.
+- The **Nginx DevOps repository** is named
+  `<ProjectNameWithoutSpaces>_Nginx_DevOps` and receives
+  `<environment>/<lowercase-project>-<environment>.conf`. Its host is
+  `<lowercase-sanitized-project>.<environment-domain>`; UI/frontend services
+  use `/`, while other services use `/<service>/`. Each later service run reads
+  the shared file and inserts only a missing direct-child Location into the
+  managed-routes section. An existing Location and all manual content are
+  preserved; ambiguous duplicate HTTPS server blocks stop automatic editing.
+  Every managed route uses Docker DNS (`resolver 127.0.0.11 ipv6=off`) and
+  stores its container hostname in `$target`. Root proxies to
+  `http://$target:80/`. Non-root `/<service>/` routes proxy to
+  `http://$target:8080` without a URI slash or rewrite, preserving the original
+  request URI. The root Location is always ordered below all other managed
+  Locations. Older managed paths, generated rewrites, and proxy forms are
+  migrated automatically.
+  Both support repositories are initialized with an `/environments` file when
+  it is missing.
 - The **scaffold branch** is always `main`; generated YAML files and Pipeline
   definitions point to this branch.
 - The Pipeline display name is exactly the generated YAML filename, including
   its `.yml` suffix. This makes the file/Pipeline relationship visible and
   keeps different source branches independently named.
+- The classic Release display name contains only the uppercased Service and
+  Environment form values, for example `UI DEMO` or `API PRO`.
 
 ## Documentation map
 
@@ -83,7 +120,7 @@ be deleted during routine cleanup.
 | `dist/menu-action.html` | Minimal host page for the branch action contribution |
 | `dist/menu-action.js` | Registers the action, extracts branch context, and opens a host Dialog or navigates to the in-host Azure Repos Hub |
 | `dist/index.html` | Generator form hosted by both the Dialog control and Azure Repos Hub contributions |
-| `dist/ui.js` | Form hydration, YAML rendering, Azure DevOps REST orchestration, error handling, and redirect |
+| `dist/ui.js` | Form hydration, starter-file/YAML rendering, Azure DevOps REST orchestration, error handling, and completion links |
 | `dist/release-config.js` | Token-free classic Release settings, required Variable Group, and packaged Bash source selection |
 | `dist/release-inline-task.sh` | Bash wrapper embedded as inline task text in each generated/reconciled Release definition |
 | `dist/lib/VSS.SDK*.js` | Bundled legacy VSS Web Extension SDK used by the on-premises host |
@@ -125,8 +162,10 @@ complete release procedure.
 
 ## Runtime authentication and permissions
 
-The browser extension has no backend and persists no credential. The branch
-action first asks Azure DevOps to open `dist/index.html` through
+The browser extension persists no credential. It reads the centrally managed
+read-only Komodo credential into page memory only while loading enabled server
+names, then discards the local function scope. The branch action first asks
+Azure DevOps to open `dist/index.html` through
 `openCustomDialog`. If an older Azure DevOps Server does not expose that
 service, the action navigates the current host page to the extension's
 `pipeline-generator-hub` under Azure Repos. It never opens the Generator in a
@@ -159,23 +198,33 @@ Create/Edit, classic Release definition management, and Use permission on the
 selected agent queue. Details are in
 [Authentication and authorization](docs/rest-api-contracts.md#authentication-and-authorization).
 
-Never hard-code a PAT, password, cookie, service secret, registry credential,
-or API key in JavaScript, HTML, the manifest, `release-config.js`,
-documentation, or a VSIX. The generated YAML and classic Release reference
-Komodo credentials through the `KomodoAPI` Variable Group rather than embedding
-their values.
+Never hard-code a PAT, password, cookie, registry credential, or API key in
+JavaScript, HTML, the manifest, `release-config.js`, documentation, or a VSIX.
+By explicit operator policy, the dedicated Server-Read Komodo credential is a
+browser-readable central Azure Repos file; the runtime never logs or persists
+it. The generated YAML and classic Release continue to reference their separate
+Komodo deployment credentials through the `KomodoAPI` Variable Group.
 
 ## Configuration summary
 
-The form defaults are declared in `dist/ui.js`. Release definition behavior is
-declared in `dist/release-config.js`. The default deployment mapping is:
+Pool and registry defaults are declared in `dist/ui.js`. Environment names and
+domains are read at runtime from
+`SharedTemplates/SharedTemplates:/pipeline-generator.yml` on `main`, using the
+signed-in user's Azure DevOps token. The preferred contract is:
 
-| Environment | Komodo target |
-| --- | --- |
-| `dev` | `Development-192.168.62.19` |
-| `demo` | `DEMO-192.168.62.91` |
-| `qa` | `QA-192.168.62.153` |
-| `pro` | `Production-31.7.65.195` |
+```yaml
+environments:
+  - name: dev
+    domain: bulutdev.ir
+```
+
+Every environment requires a valid domain; the compact legacy value
+`"dev:bulutdev.ir"` is accepted for migration. Any legacy `servers:` list is
+ignored by the form. To load Komodo Server choices, the extension reads
+`SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main`, calls Komodo
+1.19.x `ListFullServers` directly, filters strictly on
+`config.enabled === true`, excludes templates, and retains only names. Release
+definition behavior is declared in `dist/release-config.js`.
 
 The generated YAML consumes `build-push-komodo.yml` from
 `SharedTemplates/SharedTemplates` through the `ShonizCollection` service

@@ -6,7 +6,7 @@ Complete five-step workflow verified version: **0.1.30**
 
 Latest installed launch behavior observed: **0.1.30 on 2026-08-10**
 
-Local Release-script/Variable-Group candidate awaiting live verification: **0.1.32**
+Current local candidate awaiting live verification: **0.1.41**
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -15,11 +15,65 @@ task needs it. The companion
 [`azure-devops-e2e-state.yaml`](azure-devops-e2e-state.yaml) is the canonical
 machine-readable snapshot.
 
-No credentials belong in either file. A PAT was exposed during the original
-conversation and must never be copied from chat into commands, documentation,
-or logs; rotate any exposed PAT.
+No credentials belong in either file. Credentials exposed in conversation,
+including PATs and Komodo API credentials, must never be copied into commands,
+documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local candidate — version 0.1.32
+## Current local candidate — version 0.1.41
+
+Version 0.1.41 carries the uninstalled 0.1.34 direct Komodo discovery and adds
+Environment domains, starter deployment files, explicit review links, and a
+locked completion state:
+
+- Environment options continue to come from
+  `SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; each record
+  now has a required `name` and `domain`. Compact `name:domain` scalars are
+  accepted for migration and legacy `servers` entries are ignored.
+- The Komodo Select starts disabled with `Loading active Komodo servers...`,
+  reads `SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main` with
+  the current-user ADO token, then calls Komodo directly. Empty/invalid/error
+  responses block Submit.
+- The central file contains `KOMODO_ADDRESS`, `KOMODO_API_KEY`, and
+  `KOMODO_API_SECRET`. By explicit operator policy this is a non-confidential,
+  Server-Read-only credential available to every authorized extension user.
+- The browser calls Komodo 1.19.4 `ListFullServers`, retains only
+  `config.enabled === true`, excludes templates, and keeps names only. It does
+  not log, persist, generate YAML from, or package credential values.
+- Step 1 creates/reuses `<ProjectWithoutSpaces>_Docker_DevOps` and
+  `<ProjectWithoutSpaces>_Nginx_DevOps` alongside the Azure DevOps repository.
+  It adds `/environments` and the selected Environment's `compose.yml` only
+  when missing. Nginx uses one `<project>-<environment>.conf`; later service
+  runs parse its unique matching HTTPS server and insert only an absent direct
+  Location between managed markers. Existing Locations and manual content are
+  preserved, while ambiguous/malformed files block the edit.
+- Project `Locanit`, Service `api`, Environment `dev`, and domain
+  `bulutdev.ir` produce host `locanit.bulutdev.ir`, container
+  `locanit_api_dev`, Nginx route `/api/`, and port 8080. UI/frontend services
+  use `/` and port 80. Nginx starters include SSL paths, unlimited request body,
+  WebSocket forwarding, and Docker DNS runtime resolution through
+  `resolver 127.0.0.11 ipv6=off` and `$target`. Root retains a trailing-slash
+  proxy target. Non-root `/<service>/` routes use a no-URI-slash proxy target
+  and no rewrite, preserving the request URI. Root is ordered after all other
+  managed Locations. Older generated rewrites and managed paths/targets are
+  migrated; manual content outside the managed section is preserved.
+- The Pipeline filename and Pipeline name are exactly
+  `<project>-<repository>-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml`;
+  Environment is mandatory and shown as the destination of the Branch, such as
+  `ProductionToSOC`. The classic Release desired name remains uppercased
+  Service plus Environment (for example `API DEMO`). Legacy Pipelines support
+  both prior filename shapes and Releases are still migrated by artifact ID.
+- Successful provisioning does not redirect. It disables repeat submission,
+  collapses the completed form, and moves focus to links for the Nginx starter,
+  Compose starter, and Pipeline so the operator can edit both files before
+  manually running the Pipeline. Failed provisioning leaves the form visible.
+
+Offline tests cover YAML Environment/domain and dotenv credential parsing, exact
+SharedTemplates Git Items URLs, direct Komodo request shape, enabled/template
+filtering, starter content/paths, result links, short Release naming, and
+existing Pipeline/Release reconciliation guarantees. No VSIX has been packaged
+or installed and no live resource was changed for 0.1.41.
+
+## Previous packaged candidate — version 0.1.32
 
 Version 0.1.32 carries forward the locally tested no-write fixes from 0.1.31
 and changes the desired classic Release definition in two deliberate ways:
@@ -390,9 +444,13 @@ The generated resources are:
 
 These are the latest verification resources. **Do not delete Pipeline IDs 344
 or 347, or Release-definition IDs 5 or 7, as routine cleanup.** On the first
-0.1.32 run, Pipeline 347 must stay at revision 2 while Release 7 is expected to
-advance once from revision 1 to receive the new Inline wrapper and `KomodoAPI`
-linkage. A second run must leave both revisions unchanged.
+0.1.41 run must preserve Pipeline ID 347 while advancing its revision once to
+the new BranchToEnvironment name and YAML path. Release 7 is expected to
+advance once from revision 1 to receive the same Pipeline artifact, new Inline
+wrapper, `KomodoAPI` linkage, and short Service/Environment name. A second
+identical run must leave both revisions unchanged. Step 1 may add only missing
+support bootstrap files or one absent managed Location in the selected
+Environment's shared Nginx file.
 
 Useful links:
 
@@ -679,11 +737,16 @@ this missing-file failure with the corrected RideSharing end-to-end result.
    environment uses queue 111.
 8. Record whether authentication was interactive-session, adapted browser, or
    direct REST.
-9. For candidate 0.1.32, rerun `feature/Zones` and prove Pipeline 347 stays at
-   revision 2; Release definition 7 may advance once from revision 1 only to
-   install the new Inline wrapper and `KomodoAPI` ID 7. Run a second time and
-   prove the Release revision is then stable. No Build or Release instance may
-   appear.
+9. For candidate 0.1.41, confirm the form reads Environment name/domain records
+   from the exact shared `pipeline-generator.yml`, including `soc`, reads the exact central
+   `komodo-servers-creds.env`, and lists only enabled non-template servers from
+   the direct Komodo request. Confirm no credential appears in logs, storage,
+   generated YAML, or packaged assets. Rerun `feature/Zones` and prove Pipeline
+   ID 347 is migrated in place to the BranchToEnvironment name/path; Release
+   definition 7 may advance once from revision 1 only to install the Inline
+   wrapper, `KomodoAPI` ID 7, and the selected short Service/Environment name.
+   Run a second time and prove both revisions are then stable. No Build or
+   Release instance may appear.
 10. If `HostAuthorizationNotFound` appears, use **Open extension
    authorization** as a Collection Administrator, authorize the requested
    scopes, and reopen the generator. If no action is offered, reinstall the
@@ -691,8 +754,8 @@ this missing-file failure with the corrected RideSharing end-to-end result.
 11. Record whether the generator opened as an Azure DevOps Dialog or Azure
    Repos Hub and whether its own `VSS.getAccessToken()` succeeded without PAT
    injection or token transfer.
-12. Confirm successful provisioning navigates the parent host, not only the
-    dialog iframe.
+12. Confirm successful provisioning stays on the form and exposes correct
+    Nginx, Compose, and Pipeline links without automatic navigation.
 13. Do not queue a run or create a release instance unless explicitly requested.
 14. For exact-name Pipeline reuse, confirm the full Build Definition is read
     and no Pipeline or Build Definition PUT is sent when its binding matches.
@@ -700,3 +763,7 @@ this missing-file failure with the corrected RideSharing end-to-end result.
    environment-level `variableGroups` remains empty, and the task contains the
    packaged wrapper without logging a secret-derived Authorization header.
 16. Update both context files with the date, resulting IDs, and cleanup status.
+17. Read back the Docker/Nginx support repositories and verify only the missing
+    `/environments`, Compose starter, shared route, or managed normalization was
+    added; verify non-root slash/no-rewrite behavior, root-last ordering, and that
+    a repeated same-service run performs no Nginx edit.

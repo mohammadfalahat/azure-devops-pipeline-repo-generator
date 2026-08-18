@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.32
+This document is the integration contract between Pipeline Generator 0.1.41
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 
@@ -130,6 +130,9 @@ All calls send the Bearer and redirect-suppression headers.
 | Set default branch | `PATCH {project}/_apis/git/repositories/{repo}` | `6.0` | Set `defaultBranch` to `refs/heads/main` |
 | Scan Dockerfiles | `GET {project}/_apis/git/repositories/{sourceRepo}/items?recursionLevel=Full...` | `6.0` | Find files whose basename is `Dockerfile` |
 | Read one repository | `GET {project}/_apis/git/repositories/{repo}` | `6.0` | Fallback source-repository name lookup |
+| Read environments | `GET SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/pipeline-generator.yml...` | `6.0` | Read and validate non-empty Environment name/domain records from `main`; legacy `servers` entries are ignored |
+| Read Komodo credentials | `GET SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/komodo-servers-creds.env...` | `6.0` | Read and validate `KOMODO_ADDRESS`, `KOMODO_API_KEY`, and `KOMODO_API_SECRET` from `main` using the current-user Bearer token |
+| Ensure support repositories | List/create repository plus refs, items, pushes, and repository PATCH under the current project | `6.0` | Create/reuse Docker/Nginx DevOps repositories, add missing bootstrap files, merge only absent service Locations into the shared Nginx file, and set `main` |
 | List agent queues | `GET {project}/_apis/distributedtask/queues` | `6.0` | Populate Pool options and resolve Release queue ID |
 | Resolve Release Variable Group | `GET {project}/_apis/distributedtask/variablegroups?groupName=KomodoAPI&actionFilter=Use` | `7.1` | Find the exact group, validate required variable names, and retain only its numeric ID |
 | List Docker Registry endpoints | `GET {project}/_apis/serviceendpoint/endpoints?type=dockerregistry&projectIds=...` | `6.0` | Populate registry service options |
@@ -146,7 +149,84 @@ All calls send the Bearer and redirect-suppression headers.
 | List script repositories | `GET {scriptProject}/_apis/git/repositories` | `6.0` | Resolve optional script repository by ID or name |
 | Read Release script | `GET {scriptProject}/_apis/git/repositories/{repo}/items?...&%24format=text` | `6.0` | Return non-empty Bash source as text |
 
-The UI does not call the Pipeline run API or Release instance API.
+## Environment/domain configuration contract
+
+The preferred `pipeline-generator.yml` shape is:
+
+```yaml
+environments:
+  - name: pro
+    domain: bulutcom.cloud
+  - name: dev
+    domain: bulutdev.ir
+```
+
+Names must be safe path segments and unique case-insensitively. Domains must be
+plain DNS names without scheme, port, path, or wildcard. The parser also
+accepts `"dev:bulutdev.ir"` as a migration-only compact value. The selected
+name remains the Pipeline/Release Environment value; its paired domain is used
+only to render the Nginx starter.
+
+The project display name has whitespace removed and is lowercased for runtime
+resource names. For project `Locanit`, service `api`, Environment `dev`, and
+domain `bulutdev.ir`, the generated defaults are:
+
+```text
+host:       locanit.bulutdev.ir
+container:  locanit_api_dev
+route:      /api/
+proxy:      http://$target:8080
+certificate /etc/nginx/conf.d/bulutdev.pem
+key:         /etc/nginx/conf.d/bulutdev.key
+```
+
+`ui`, `front`, `frontend`, `newui`, and service names ending in `-ui` use `/`,
+port 80, and a trailing-slash proxy target. Other services use
+`/<normalized-service>/` and proxy to port 8080 without a URI slash or rewrite,
+preserving the original request URI. Compose is Git-added only when absent. Nginx uses one
+`/<environment>/<project>-<environment>.conf` per project/Environment. On each
+run the browser reads that file, tokenizes quotes/comments/braces, selects the
+unique port-443 `server` with the exact generated `server_name`, and enumerates
+its direct-child Location paths. Managed routes are normalized before lookup:
+old non-root paths gain their canonical trailing slash, proxy forms are
+normalized, and exact generated rewrite lines are removed; the root block is
+moved below all non-root blocks. A missing path is inserted
+between managed-route markers with `changeType: edit`; unrelated manual bytes
+are preserved. Unmatched braces, incomplete markers, a missing matching HTTPS
+server, or multiple matching HTTPS servers abort automatic editing.
+
+## Direct Komodo server discovery contract
+
+During discovery, the required Select remains disabled with
+`Loading active Komodo servers...`. The browser first reads
+`SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main`:
+
+```dotenv
+KOMODO_ADDRESS=https://komodo.buluttakin.com
+KOMODO_API_KEY=<server-read-key>
+KOMODO_API_SECRET=<server-read-secret>
+```
+
+The parser allows comments, blank lines, and quoted or unquoted values, rejects
+duplicates/unknown fields, requires HTTPS, and retains the values only in page
+memory. The browser then calls Komodo 1.19.x directly:
+
+- method/path: `POST {KOMODO_ADDRESS}/read`;
+- headers: `Content-Type: application/json`, `X-Api-Key`, `X-Api-Secret`;
+- body: `{ "type": "ListFullServers", "params": { "query": {} } }`;
+- browser options: `cache: no-store`, `credentials: omit`, and
+  `referrerPolicy: no-referrer`.
+
+Only full Server records where `config.enabled === true` and
+`template !== true` are retained. The form keeps only validated unique server
+names. No credential is logged, written to browser storage, embedded in the
+generated YAML, or shipped in the VSIX. Because custom authentication headers
+trigger browser CORS enforcement, Komodo must allow the Azure DevOps origin
+`https://azure.buluttakin.com`; no cookie credential is required.
+
+The UI does not call the Pipeline run API or Release instance API. After
+provisioning it does not redirect; it constructs browser links to the Nginx
+starter, Compose starter, and Pipeline definition.
 
 ## Git write contract
 
@@ -185,6 +265,15 @@ Azure DevOps performs the concurrency check against `oldObjectId`.
 The UI currently does not return or persist the push response; downstream
 provisioning relies on the POST completing successfully and on the server being
 able to resolve the new path immediately.
+
+The Docker and Nginx support repositories use the same Git push contract. A
+missing `main` branch receives one initial commit containing `/environments`
+and the selected Environment's Compose or shared Nginx starter. On an existing
+branch, the UI reads both exact file paths. `/environments` and `compose.yml`
+are add-only. The shared Nginx file is add-or-semantic-edit: only a missing
+managed Location is inserted; existing Location blocks and manual content are
+not rewritten. The ref `oldObjectId` protects all writes from silently
+overwriting a concurrent branch update.
 
 ## Pipeline create and reconciliation contract
 
@@ -226,8 +315,11 @@ Azure DevOps Server's Pipelines by-ID model can omit
 mismatch would cause a needless Build Definition PUT and revision increment on
 every otherwise-idempotent rerun.
 
-When no exact-name Pipeline exists, Build Definitions are filtered by generated
-repository ID and `process.yamlFilename`. A legacy same-file match is renamed
+When the desired `BranchToEnvironment` name does not exist, the lookup also
+accepts the 0.1.37 Environment-first name and the earlier branch-only name.
+Build Definitions are likewise filtered by generated repository ID and
+`process.yamlFilename` in this order: desired transition path, 0.1.37 path,
+then branch-only path. A legacy match is renamed and rebound to the new path
 instead of creating a duplicate.
 
 The target server rejects `PUT /_apis/pipelines/{id}` with HTTP 405. Therefore
@@ -308,7 +400,7 @@ header in a process argument.
 
 The browser reconciles Releases rather than treating any same-name definition
 as final. It first searches the desired exact name
-`<exact-generated-yaml-filename>.yml_Release`; if absent, it inspects expanded
+`<UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>`; if absent, it inspects expanded
 Build artifacts filtered by `artifactType=Build` and
 `artifactSourceId=<projectId>:<pipelineId>` for a legacy definition that
 references the same Pipeline ID.
@@ -365,6 +457,14 @@ match. Projects with large result sets or duplicate names in different folders
 need pagination/disambiguation before this behavior can be considered robust.
 
 ## On-premises operational requirements
+
+### Shared deployment-target configuration
+
+The current-user extension token must be able to read project/repository
+`SharedTemplates/SharedTemplates` and `/pipeline-generator.yml` on `main`.
+The extension uses the existing `vso.code` scope; project/repository ACLs still
+apply. Missing access, a missing file, malformed YAML, or an empty list is a
+blocking form-initialization error rather than a fallback to stale values.
 
 ### Internal proxy bypass
 

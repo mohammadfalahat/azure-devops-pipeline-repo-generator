@@ -14,7 +14,6 @@ window.PipelineGeneratorReleaseConfig = Object.freeze({
   enabled: true,
   folder: '\\komodo',
   environmentName: 'komodo',
-  nameSuffix: '_Release',
   bashTaskName: 'Run Komodo deployment',
   variableGroupName: 'KomodoAPI',
   requiredVariableNames: Object.freeze(['AZP_TOKEN', 'KOMODO_API_KEY', 'KOMODO_API_SECRET']),

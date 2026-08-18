@@ -243,6 +243,38 @@ button.secondary,
   color: #b91c1c;
 }
 
+.completion-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  background: #f0fdf4;
+}
+
+.completion-panel h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  color: #166534;
+}
+
+.completion-panel p {
+  margin: 0 0 8px;
+}
+
+.completion-panel ul {
+  margin: 0;
+  padding-inline-start: 20px;
+}
+
+.completion-panel li + li {
+  margin-top: 6px;
+}
+
+.completion-panel a {
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
 .hidden {
   display: none;
 }

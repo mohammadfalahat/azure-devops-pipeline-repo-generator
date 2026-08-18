@@ -99,6 +99,10 @@ const releaseConfig = releaseConfigContext.window.PipelineGeneratorReleaseConfig
 if (!releaseConfig?.enabled || releaseConfig.folder !== '\\komodo') {
   fail('release configuration must enable the \\komodo release folder.');
 }
+
+if (Object.prototype.hasOwnProperty.call(releaseConfig, 'nameSuffix')) {
+  fail('Release names must come from uppercased service and environment, not a Pipeline-name suffix.');
+}
 if (releaseConfig.variableGroupName !== 'KomodoAPI') {
   fail('release configuration must link the KomodoAPI variable group.');
 }
@@ -168,10 +172,72 @@ if (
 if (/id="pat-token"|Use PAT/i.test(html)) {
   fail('the browser UI must not request a Personal Access Token.');
 }
+if (
+  !html.includes('Loading from pipeline-generator.yml') ||
+  !html.includes('Loading active Komodo servers') ||
+  /<option value="(?:dev|demo|qa|pro|DEMO-192|Development-192|Production-)/.test(html)
+) {
+  fail('Environment and active Komodo server choices must use dynamic loading placeholders.');
+}
+if (
+  !html.includes('id="completion-panel"') ||
+  !html.includes('tabindex="-1"') ||
+  !html.includes('id="nginx-result-link"') ||
+  !html.includes('id="compose-result-link"') ||
+  !html.includes('id="pipeline-result-link"')
+) {
+  fail('index.html must expose review links for Nginx, Compose, and Pipeline results.');
+}
+
+for (const removedProxyAsset of [
+  'scripts/komodo-server-proxy.js',
+  'dist/komodo-server-config.js',
+  'deploy/komodo-server-proxy/nginx-location.conf'
+]) {
+  if (fs.existsSync(path.join(root, removedProxyAsset))) {
+    fail(`obsolete Komodo proxy asset must be removed: ${removedProxyAsset}`);
+  }
+}
 
 const ui = read('dist/ui.js');
 for (const requiredImplementation of [
   'ensureReleaseDefinition',
+  'parseDeploymentTargetsYaml',
+  'fetchDeploymentTargets',
+  'parseKomodoCredentialFile',
+  'fetchKomodoCredentials',
+  'extractEnabledKomodoServers',
+  'fetchKomodoServers',
+  'KOMODO_CREDENTIAL_CONFIG',
+  '/komodo-servers-creds.env',
+  'ListFullServers',
+  'record.config?.enabled === true',
+  'DEPLOYMENT_TARGETS_CONFIG',
+  'buildSupportRepositorySpecs',
+  'buildComposeSample',
+  'tokenizeNginx',
+  'findNginxHttpsServer',
+  'mergeNginxServiceRoute',
+  'buildNginxSample',
+  'normalizeNginxManagedRoutes',
+  'findManagedRootRouteIndex',
+  "const location = frontend ? '/' : `/${serviceKey}/`;",
+  'resolver         127.0.0.11         ipv6=off;',
+  'proxy_pass                          http://$target:${internalPort}/;',
+  'proxy_pass                          http://$target:${internalPort};',
+  'generatedRewritePattern',
+  'ensureSupportRepositories',
+  'ensureRepositoryBootstrapFiles',
+  'showCompletionLinks',
+  'finishProvisioning',
+  'state.provisioningComplete',
+  'form.hidden = true',
+  'buildPipelineFilename',
+  'buildLegacyPipelineFilename',
+  'buildLegacyEnvironmentFirstPipelineFilename',
+  'Environment is required to build the Pipeline filename.',
+  'legacyPipelinePaths',
+  'buildReleaseName',
   'buildReleaseDefinitionPayload',
   'updateBuildDefinition',
   'getBuildDefinitionByYamlPath',
@@ -196,8 +262,14 @@ for (const requiredImplementation of [
     fail(`ui.js is missing ${requiredImplementation}.`);
   }
 }
+if (ui.includes('proxy_pass http://${containerName}')) {
+  fail('managed Nginx routes must never proxy directly to a compiled container hostname.');
+}
 if (/localStorage|sessionStorage|document\.cookie/.test(ui)) {
   fail('ui.js must not persist credentials in browser storage or cookies.');
+}
+if (/["'](?:K|S)-[A-Za-z0-9]{20,}["']/.test(ui)) {
+  fail('ui.js must not contain a literal Komodo API credential.');
 }
 if (ui.includes("scheme: 'basic-pat'") || ui.includes('createPatCredential') || ui.includes('connectWithPat')) {
   fail('the browser UI must use only the Azure DevOps host token, never a PAT fallback.');
@@ -225,8 +297,8 @@ if (
 ) {
   fail('the complete Hub form must use an explicit full-viewport vertical scroll container.');
 }
-if (ui.includes('window.location.href = `${state.hostUri}${projectRoute}/_build')) {
-  fail('successful provisioning must navigate the Azure DevOps host, not only the dialog iframe.');
+if (/setTimeout\s*\([\s\S]{0,300}navigateHost\([\s\S]{0,200}_build\?definitionId/.test(ui)) {
+  fail('successful provisioning must show review links and must not redirect automatically to Pipelines.');
 }
 if (!ui.includes('const hasHostContext = isFramed;')) {
   fail('host-dialog SDK initialization must not depend on document.referrer being present.');
@@ -252,6 +324,31 @@ if (
   !ui.includes('const pipelineName = buildPipelineName(pipelineFilename);')
 ) {
   fail('Pipeline display name must exactly match the generated YAML filename.');
+}
+if (
+  !ui.includes("project: 'SharedTemplates'") ||
+  !ui.includes("repository: 'SharedTemplates'") ||
+  !ui.includes("path: '/pipeline-generator.yml'") ||
+  !ui.includes("branch: 'main'")
+) {
+  fail('Deployment target configuration must come from SharedTemplates/SharedTemplates:/pipeline-generator.yml@main.');
+}
+if (
+  !ui.includes("`${compactProject}_Docker_DevOps`") ||
+  !ui.includes("`${compactProject}_Nginx_DevOps`") ||
+  !ui.includes("{ path: '/environments', content: 'mattermost_channel=changeme' }") ||
+  !ui.includes('compose.yml') ||
+  !ui.includes('client_max_body_size 0;') ||
+  !ui.includes('proxy_set_header Upgrade $http_upgrade;') ||
+  !ui.includes('BEGIN PIPELINE-GENERATOR MANAGED ROUTES') ||
+  !ui.includes('multiple HTTPS server blocks') ||
+  !ui.includes('`/${nginxDirectory}/${projectHost}-${normalizedEnvironment}.conf`') ||
+  !ui.includes('Review the generated Nginx and Compose files below')
+) {
+  fail('Step 1 must provision the Docker/Nginx repositories and idempotent starter configuration files.');
+}
+if (!ui.includes("return `${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;")) {
+  fail('Classic Release names must contain only uppercased service and environment.');
 }
 if (ui.includes('state.repositoryName = repo.name')) {
   fail('generated repository metadata must not overwrite the source repository identity used for retries.');
