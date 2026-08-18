@@ -26,6 +26,8 @@ const instrumented = source.replace(
 	    buildLegacyEnvironmentFirstPipelineFilename,
 	    buildPipelineName,
 	    buildReleaseName,
+	    buildCollectionUri,
+	    buildCentralGitItemUrl,
 	    parseDeploymentTargetsYaml,
 	    fetchDeploymentTargets,
 	    parseKomodoCredentialFile,
@@ -589,6 +591,16 @@ const run = async () => {
     hostUri,
     accessToken: 'extension-session-token'
   });
+  assert.strictEqual(
+    hooks.buildCollectionUri(hostUri, 'ShonizCollection'),
+    'https://azure.example.local/ShonizCollection/'
+  );
+  assert.strictEqual(
+    hooks.buildCollectionUri('https://azure.example.local/tfs/OtherCollection/', 'ShonizCollection'),
+    'https://azure.example.local/tfs/ShonizCollection/'
+  );
+  assert.throws(() => hooks.buildCollectionUri(hostUri, '../unsafe'), /collection name is invalid/);
+  assert(targetConfigUrl.startsWith('https://azure.example.local/ShonizCollection/SharedTemplates/'));
   assert(targetConfigUrl.includes('/SharedTemplates/_apis/git/repositories/SharedTemplates/items?'));
   assert(targetConfigUrl.includes('path=%2Fpipeline-generator.yml'));
   assert.deepStrictEqual(Array.from(fetchedTargets.servers), ['QA-192.168.62.153']);
@@ -640,6 +652,11 @@ KOMODO_API_SECRET="synthetic-read-secret"
     accessToken: 'extension-session-token'
   });
   assert.strictEqual(komodoCalls.length, 2);
+  assert(
+    komodoCalls[0].url.startsWith(
+      'https://azure.example.local/ShonizCollection/SharedTemplates/_apis/git/repositories/SharedTemplates/items?'
+    )
+  );
   assert.deepStrictEqual(Array.from(activeKomodoServers), [
     'DEMO-192.168.62.91',
     'Production-192.168.0.244'

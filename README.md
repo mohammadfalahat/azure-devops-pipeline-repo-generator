@@ -6,7 +6,7 @@ creates or reuses a project-level repository, writes a generated YAML file,
 registers a YAML Pipeline that points to that file, and creates a classic
 Release definition that consumes the Pipeline as a Build artifact.
 
-The manifest version documented here is **0.1.41**. The manifest targets Azure
+The manifest version documented here is **0.1.43**. The manifest targets Azure
 DevOps Services and Azure DevOps Server range `[16.0,20.0)`. The complete live
 workflow has been verified on the documented on-premises Server environment;
 the Azure DevOps Services Release API route still requires a separate
@@ -17,8 +17,8 @@ compatibility test.
 ```text
 selected source repository + branch
         |
-        | reads environments from SharedTemplates/pipeline-generator.yml
-        | reads central Komodo read credentials from SharedTemplates
+        | reads environments from ShonizCollection/SharedTemplates
+        | reads central Komodo credentials from ShonizCollection/SharedTemplates
         | reads enabled servers directly from Komodo
         | ensures <ProjectName>_Docker_DevOps and <ProjectName>_Nginx_DevOps
         |
@@ -64,6 +64,10 @@ Pipeline run and does not create a Release instance.
 
 - The **source repository** is the repository from whose branch menu the user
   launches the extension.
+- The **central configuration repository** is always
+  `ShonizCollection/SharedTemplates/SharedTemplates`, even when the selected
+  source project belongs to another collection. The signed-in extension user
+  must have Read permission there.
 - The **source branch** is embedded in the generated YAML as the `otherRepo`
   repository resource.
 - The **generated repository** is the shared project repository named
@@ -209,7 +213,8 @@ Komodo deployment credentials through the `KomodoAPI` Variable Group.
 
 Pool and registry defaults are declared in `dist/ui.js`. Environment names and
 domains are read at runtime from
-`SharedTemplates/SharedTemplates:/pipeline-generator.yml` on `main`, using the
+`ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml` on
+`main`, using the
 signed-in user's Azure DevOps token. The preferred contract is:
 
 ```yaml
@@ -221,7 +226,8 @@ environments:
 Every environment requires a valid domain; the compact legacy value
 `"dev:bulutdev.ir"` is accepted for migration. Any legacy `servers:` list is
 ignored by the form. To load Komodo Server choices, the extension reads
-`SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main`, calls Komodo
+`ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main`,
+calls Komodo
 1.19.x `ListFullServers` directly, filters strictly on
 `config.enabled === true`, excludes templates, and retains only names. Release
 definition behavior is declared in `dist/release-config.js`.

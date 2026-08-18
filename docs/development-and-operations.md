@@ -19,9 +19,12 @@ For `scripts/provision-pipeline-release.sh`:
 - `jq`;
 - Git only when `RELEASE_BASH_SCRIPT_GIT_URL` mode is used.
 
-The target Azure DevOps project must already contain or authorize:
+The Azure DevOps deployment must already contain or authorize:
 
-- `SharedTemplates/SharedTemplates`;
+- central collection/project/repository
+  `ShonizCollection/SharedTemplates/SharedTemplates`; every extension user must
+  have repository Read permission there even when launching from another
+  collection;
 - `/pipeline-generator.yml` on that repository's `main` branch, with non-empty
   Environment `name`/`domain` records; a legacy `servers` list may remain but
   is ignored;
@@ -81,8 +84,9 @@ packaged path.
 `dist/ui.js` currently owns:
 
 - `defaultValues` and default Pool/registry options;
-- the `SharedTemplates/SharedTemplates:/pipeline-generator.yml@main` deployment
-  environment/domain source and its small strict parser;
+- the
+  `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`
+  deployment environment/domain source and its small strict parser;
 - strict parsing of the central Komodo credential file and direct
   `ListFullServers` response;
 - environment-to-server label inference;
@@ -117,7 +121,7 @@ Nginx starter host and certificate filenames are derived from it.
 ### Central Komodo credential file
 
 Create `/komodo-servers-creds.env` on `main` in
-`SharedTemplates/SharedTemplates` with exactly these fields:
+`ShonizCollection/SharedTemplates/SharedTemplates` with exactly these fields:
 
 ```dotenv
 KOMODO_ADDRESS=https://komodo.buluttakin.com
@@ -612,10 +616,10 @@ resources that were cleaned up.
 | --- | --- | --- |
 | Action missing from branch menu | Extension not enabled, stale browser assets, or menu target mismatch | Confirm installed version/state, hard-refresh, inspect manifest contribution targets |
 | Session-token HTTP 401/403 or an expired-session error | The current browser sign-in is stale or the user lost project access | Use **Sign out and authenticate again**, complete the full login flow, then reopen the branch action |
-| Generator opens in a separate tab | Version 0.1.25 or older is still served, or stale action assets remain cached | Verify installed/asset version 0.1.41 and hard-refresh; current code has no detached-window path |
+| Generator opens in a separate tab | Version 0.1.25 or older is still served, or stale action assets remain cached | Verify installed/asset version 0.1.43 and hard-refresh; current code has no detached-window path |
 | Generator opens as an Azure Repos Hub instead of a modal | This Azure DevOps Server does not expose the custom Dialog service | Expected compatibility behavior; the Hub is still a host iframe |
-| Hub width repeatedly shrinks while blank space grows on the right | Legacy `VSS.resize()` used the form's changing `scrollWidth`, creating a host/iframe width feedback loop | Install 0.1.41; it never calls host resize and keeps contribution width fixed |
-| Hub form is clipped or mouse-wheel scrolling does nothing | Legacy iframe root/body scrolling is suppressed by the host | Version 0.1.41 uses a fixed full-viewport `.wrapper` as an explicit scroll container; verify the served asset version and hard-refresh |
+| Hub width repeatedly shrinks while blank space grows on the right | Legacy `VSS.resize()` used the form's changing `scrollWidth`, creating a host/iframe width feedback loop | Install 0.1.43; it never calls host resize and keeps contribution width fixed |
+| Hub form is clipped or mouse-wheel scrolling does nothing | Legacy iframe root/body scrolling is suppressed by the host | Version 0.1.43 uses a fixed full-viewport `.wrapper` as an explicit scroll container; verify the served asset version and hard-refresh |
 | `HostAuthorizationNotFound` inside Dialog/Hub | Collection installation has no authorization record for the extension scopes, or that record is stale | Select **Open extension authorization**; a Collection Administrator must authorize Pipeline Generator in Collection Settings → Extensions. If no action exists, reinstall the same published version |
 | Generator says another access-token error | Page opened directly, hosted iframe SDK handshake failed, or host denied token | Launch from a branch action; retry full sign-in only after extension authorization is confirmed |
 | Browser displays Basic login prompts | Platform SDK/API request received an auth challenge | Confirm bundled SDK is used, Bearer token is present, and fed-auth redirects are suppressed |
@@ -625,12 +629,12 @@ resources that were cleaned up.
 | Pipeline create fails despite repository in JSON body | Missing on-prem `repositoryId` query parameter or wrong API contract | Inspect final URL and generated repository GUID |
 | HTTP 2xx but no Pipeline ID | Unexpected server/proxy response shape | Inspect response safely; the UI intentionally rejects it |
 | Release fails with `VS402877` | Empty/missing pre/post approvals | Keep automated approvals and correct execution orders in both payload builders |
-| Environment stays unavailable | `pipeline-generator.yml` is missing/invalid, an Environment lacks a valid domain, `main` is absent, or the user cannot read `SharedTemplates/SharedTemplates` | Verify the exact file URL, structured non-empty `environments` records, and repository Read permission; there is no static fallback |
+| Environment stays unavailable | `pipeline-generator.yml` is missing/invalid, an Environment lacks a valid domain, `main` is absent, or the user cannot read the central repository | Verify the URL targets `ShonizCollection/SharedTemplates/SharedTemplates`, structured non-empty `environments` records, and repository Read permission; there is no static fallback |
 | Komodo Server remains on Loading/unavailable | Central credential file is missing/invalid/unreadable, Komodo CORS blocks the ADO origin/custom headers, Komodo rejects the read credential, or no visible Server has `config.enabled: true` | Verify the exact SharedTemplates file path/branch and Read permission, inspect OPTIONS/POST status without logging header values, confirm `KOMODO_CORS_ALLOWED_ORIGINS`, and test `ListFullServers` with the dedicated user |
 | Step 1 fails after creating the Azure DevOps repository | Docker/Nginx support repository creation, bootstrap push, or shared Nginx merge was denied/ambiguous | Grant Create repository/Contribute permission; for Nginx also verify balanced braces, complete managed markers, and exactly one matching port-443 server block before rerunning |
-| Release Step 5 gets 401 while resolving a queue | Extension token lacks `vso.agentpools`, has not been reauthorized after adding it, or the user cannot view/use the queue | Verify installed version 0.1.41 scopes, reauthorize/reinstall it, then confirm the current user can read and Use the queue |
-| Registry choices fall back to defaults with a 401 in Console | Extension token lacks `vso.serviceendpoint` or has not been reauthorized | Authorize the updated 0.1.41 scopes; the extension only reads endpoint names/types |
-| Release Step 5 cannot resolve `KomodoAPI` | The extension lacks `vso.variablegroups_read`, the new scope has not been authorized, or the group/user lacks Use permission | Reauthorize/install 0.1.41, confirm `KomodoAPI` exists in the current project, and grant the user/extension permission to use it |
+| Release Step 5 gets 401 while resolving a queue | Extension token lacks `vso.agentpools`, has not been reauthorized after adding it, or the user cannot view/use the queue | Verify installed version 0.1.43 scopes, reauthorize/reinstall it, then confirm the current user can read and Use the queue |
+| Registry choices fall back to defaults with a 401 in Console | Extension token lacks `vso.serviceendpoint` or has not been reauthorized | Authorize the updated 0.1.43 scopes; the extension only reads endpoint names/types |
+| Release Step 5 cannot resolve `KomodoAPI` | The extension lacks `vso.variablegroups_read`, the new scope has not been authorized, or the group/user lacks Use permission | Reauthorize/install 0.1.43, confirm `KomodoAPI` exists in the current project, and grant the user/extension permission to use it |
 | Release reports missing required variables | `KomodoAPI` exists but lacks one of the wrapper inputs | Add secret variables `AZP_TOKEN`, `KOMODO_API_KEY`, and `KOMODO_API_SECRET` with exact casing; do not put their values in source control |
 | Release cannot be created after a Pipeline error | Step 5 never ran because Step 4 aborted | Fix/read back Pipeline first; then rerun so Release migration/create can execute |
 | Release has a legacy name/configuration | It was created by an older extension | Version 0.1.27 finds it by Pipeline artifact ID and reconciles it without deleting it |
@@ -641,7 +645,7 @@ resources that were cleaned up.
 | Dockerfile is not auto-detected | No Dockerfile exists on the selected source branch or the tree read failed | Enter the path manually and inspect the Git Items response |
 | Terminal calls return nginx 403 | Internal Azure DevOps request went through environment proxy | Configure `NO_PROXY`/unset proxy variables for the host |
 | `DELETE /_apis/pipelines/{id}` returns 405 | Endpoint unsupported for deletion on this server | Delete disposable Pipeline via Build Definitions API |
-| Page redirects after success, leaves the completed form active, or does not show three review links | Stale extension version/assets | Verify installed asset version 0.1.41 and hard-refresh; current flow locks/collapses the form and focuses the Nginx, Compose, and Pipeline links |
+| Page redirects after success, leaves the completed form active, or does not show three review links | Stale extension version/assets | Verify installed asset version 0.1.43 and hard-refresh; current flow locks/collapses the form and focuses the Nginx, Compose, and Pipeline links |
 
 For environment-specific IDs, exact recovery endpoints, failed automation
 approaches, and the last verified successful resource graph, use

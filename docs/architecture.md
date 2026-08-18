@@ -1,6 +1,6 @@
 # Architecture and runtime flow
 
-This document describes version 0.1.41 from the implementation in
+This document describes version 0.1.43 from the implementation in
 `vss-extension.json`, `dist/menu-action.js`, `dist/ui.js`, and
 `dist/release-config.js`.
 
@@ -14,13 +14,16 @@ Pipeline Generator is a client-only Azure DevOps web extension. It has:
 - no build-time generated JavaScript;
 - no background worker or webhook dependency.
 
-All Azure DevOps provisioning calls are made directly from the user's browser
-to the same collection that hosts the extension. The security principal is the
-signed-in user represented by the token returned by `VSS.getAccessToken()`.
+All Azure DevOps provisioning calls are made directly from the user's browser.
+Project resources are read and written in the collection that hosts the
+extension, while the two central configuration files are always read from the
+sibling collection `ShonizCollection`. The security principal is the signed-in
+user represented by the token returned by `VSS.getAccessToken()`.
 The manifest includes separate read scopes for agent pools/queues, service
 endpoints, and Variable Groups; Build and Release scopes do not implicitly
 grant those resource-area permissions. The browser also reads the central
-`/komodo-servers-creds.env` file from `SharedTemplates`, then calls the Komodo
+`/komodo-servers-creds.env` file from
+`ShonizCollection/SharedTemplates/SharedTemplates`, then calls the Komodo
 1.19.x read API using the operator-designated non-confidential Server-Read
 credential. Credential values remain in page/request memory only and are never
 logged or persisted. Komodo must allow the Azure DevOps origin through CORS.
@@ -212,7 +215,7 @@ The form starts with these defaults:
 | --- | --- |
 | Pool | `PublishDockerAgent`; merged with project agent queues |
 | Service | Lowercase source repository suffix after removing a matching project-name prefix and separator; remains user-editable |
-| Environment | Name/domain records loaded from `SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; `demo` is preferred when present, then inferred from source branch when possible |
+| Environment | Name/domain records loaded from `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; `demo` is preferred when present, then inferred from source branch when possible |
 | Dockerfile directory | `**`, then first recursively discovered Dockerfile directory |
 | Registry address | `registry.buluttakin.com` |
 | Registry service | `BulutReg`; merged with Docker Registry service endpoints |

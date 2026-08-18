@@ -29,6 +29,37 @@
     return `${withoutApis.replace(/\/+$/, '')}/`;
   };
 
+  const buildCollectionUri = (hostUri, collectionName) => {
+    const normalizedCollection = String(collectionName || '').trim();
+    if (!normalizedCollection || /[\\/\0\r\n]/.test(normalizedCollection)) {
+      throw new Error('Central Azure DevOps collection name is invalid.');
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(normalizeHostUri(hostUri));
+    } catch {
+      throw new Error('Azure DevOps collection URI is invalid.');
+    }
+    if (!/^https?:$/.test(parsed.protocol)) {
+      throw new Error('Azure DevOps collection URI must use HTTP or HTTPS.');
+    }
+
+    const currentSegments = parsed.pathname.split('/').filter(Boolean);
+    const serverPathSegments = currentSegments.length > 0 ? currentSegments.slice(0, -1) : [];
+    const centralPath = [...serverPathSegments, encodeURIComponent(normalizedCollection)].join('/');
+    return `${parsed.origin}/${centralPath}/`;
+  };
+
+  const buildCentralGitItemUrl = ({ hostUri, source }) => {
+    const collectionUri = buildCollectionUri(hostUri, source.collection);
+    return `${collectionUri}${encodeURIComponent(source.project)}/_apis/git/repositories/${encodeURIComponent(
+      source.repository
+    )}/items?path=${encodeURIComponent(source.path)}&versionDescriptor.version=${encodeURIComponent(
+      source.branch
+    )}&versionDescriptor.versionType=branch&%24format=text&api-version=6.0`;
+  };
+
   const loadScript = (src) =>
     new Promise((resolve, reject) => {
       const script = document.createElement('script');
@@ -151,13 +182,16 @@
   };
   const defaultPoolOptions = ['PublishDockerAgent', 'Default'];
   const defaultRegistryOptions = ['BulutReg', 'DockerReg'];
+  const CENTRAL_COLLECTION_NAME = 'ShonizCollection';
   const DEPLOYMENT_TARGETS_CONFIG = Object.freeze({
+    collection: CENTRAL_COLLECTION_NAME,
     project: 'SharedTemplates',
     repository: 'SharedTemplates',
     path: '/pipeline-generator.yml',
     branch: 'main'
   });
   const KOMODO_CREDENTIAL_CONFIG = Object.freeze({
+    collection: CENTRAL_COLLECTION_NAME,
     project: 'SharedTemplates',
     repository: 'SharedTemplates',
     path: '/komodo-servers-creds.env',
@@ -517,11 +551,7 @@
 
   const fetchDeploymentTargets = async ({ hostUri, accessToken }) => {
     const source = DEPLOYMENT_TARGETS_CONFIG;
-    const url = `${hostUri}${encodeURIComponent(source.project)}/_apis/git/repositories/${encodeURIComponent(
-      source.repository
-    )}/items?path=${encodeURIComponent(source.path)}&versionDescriptor.version=${encodeURIComponent(
-      source.branch
-    )}&versionDescriptor.versionType=branch&%24format=text&api-version=6.0`;
+    const url = buildCentralGitItemUrl({ hostUri, source });
     const res = await fetch(url, { headers: authHeaders(accessToken), cache: 'no-store' });
     if (!res.ok) {
       const detail = await readErrorDetail(res);
@@ -584,11 +614,7 @@
 
   const fetchKomodoCredentials = async ({ hostUri, accessToken }) => {
     const source = KOMODO_CREDENTIAL_CONFIG;
-    const url = `${hostUri}${encodeURIComponent(source.project)}/_apis/git/repositories/${encodeURIComponent(
-      source.repository
-    )}/items?path=${encodeURIComponent(source.path)}&versionDescriptor.version=${encodeURIComponent(
-      source.branch
-    )}&versionDescriptor.versionType=branch&%24format=text&api-version=6.0`;
+    const url = buildCentralGitItemUrl({ hostUri, source });
     const res = await fetch(url, { headers: authHeaders(accessToken), cache: 'no-store' });
     if (!res.ok) {
       const detail = await readErrorDetail(res);
@@ -3003,7 +3029,7 @@
     }
     if (!state.deploymentTargetsReady) {
       setStatus(
-        `Deployment targets are unavailable. Verify SharedTemplates/SharedTemplates:${DEPLOYMENT_TARGETS_CONFIG.path} on ${DEPLOYMENT_TARGETS_CONFIG.branch} and reopen the generator.`,
+        `Deployment targets are unavailable. Verify ${DEPLOYMENT_TARGETS_CONFIG.collection}/${DEPLOYMENT_TARGETS_CONFIG.project}/${DEPLOYMENT_TARGETS_CONFIG.repository}:${DEPLOYMENT_TARGETS_CONFIG.path} on ${DEPLOYMENT_TARGETS_CONFIG.branch} and reopen the generator.`,
         true
       );
       setSubmitting(false);
@@ -3438,7 +3464,7 @@
             detail || 'Verify the central credential file, Komodo API access, TLS certificate, and CORS origin.'
           }`;
         } else {
-          detailMessage = `Could not load SharedTemplates/SharedTemplates:${DEPLOYMENT_TARGETS_CONFIG.path}. ${
+          detailMessage = `Could not load ${DEPLOYMENT_TARGETS_CONFIG.collection}/${DEPLOYMENT_TARGETS_CONFIG.project}/${DEPLOYMENT_TARGETS_CONFIG.repository}:${DEPLOYMENT_TARGETS_CONFIG.path}. ${
             detail || 'Verify the file, branch, YAML structure, and repository Read permission.'
           }`;
         }

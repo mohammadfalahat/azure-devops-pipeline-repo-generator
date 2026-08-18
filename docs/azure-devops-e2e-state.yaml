@@ -1,12 +1,12 @@
 schema_version: 1
 last_verified_at: "2026-08-10"
-status: "live_release_created_candidate_0_1_41_preserves_non_root_request_uri"
+status: "live_release_created_candidate_0_1_43_targets_central_collection_explicitly"
 
 development_candidate:
-  version: "0.1.41"
+  version: "0.1.43"
   package_path: null
   package_sha256: null
-  local_validation: "passed: root Location keeps trailing-slash proxy and is ordered last; non-root /<service>/ routes use no rewrite and no-URI-slash proxy_pass, preserving request URI; older generated rewrites/paths/proxies/order normalize idempotently; BranchToEnvironment Pipeline migration, Release naming, Komodo discovery, Compose no-overwrite, locked links, npm test/build, diff check, and structured E2E-state YAML parse"
+  local_validation: "passed: both central Git Items reads replace the current collection with ShonizCollection, preserve an optional /tfs virtual-directory prefix, and retain current-user Bearer authentication; npm test/build, diff check, credential scan, and structured E2E-state YAML parse passed"
   installed: false
   live_verified: false
   intended_pipeline_name: "ridesharing-ridesharing_backend-Feature-ZonesToDEMO.yml"
@@ -15,8 +15,9 @@ development_candidate:
     pipeline: "Find by desired BranchToEnvironment name/path, then 0.1.37 Environment-first and earlier branch-only identities; GET-modify-PUT the same Build Definition ID."
     release: "Find by exact uppercased Service/Environment name or Pipeline artifact ID, then reconcile the full Release definition."
   fixes:
-    - "Load Environment name/domain records at runtime from SharedTemplates/SharedTemplates:/pipeline-generator.yml on main with the current-user Bearer token; accept compact name:domain values for migration and ignore legacy servers entries."
-    - "Read SharedTemplates/SharedTemplates:/komodo-servers-creds.env on main with the current-user Bearer token and require KOMODO_ADDRESS, KOMODO_API_KEY, and KOMODO_API_SECRET."
+    - "Always resolve both central Git Items reads against the sibling ShonizCollection while preserving an optional Azure DevOps Server /tfs virtual-directory prefix."
+    - "Load Environment name/domain records at runtime from ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml on main with the current-user Bearer token; accept compact name:domain values for migration and ignore legacy servers entries."
+    - "Read ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env on main with the current-user Bearer token and require KOMODO_ADDRESS, KOMODO_API_KEY, and KOMODO_API_SECRET."
     - "Call Komodo 1.19.4 POST /read ListFullServers directly from the browser using the operator-designated non-confidential Server-Read credential."
     - "Keep deployment selects and Submit disabled when the shared YAML environment list, credential file, or enabled-server result is missing, unreadable, malformed, or empty; never fall back to compiled-in targets."
     - "Retain only config.enabled === true non-template server names and never log, persist, generate YAML from, or package credential values."
@@ -349,6 +350,7 @@ extension:
 
 implementation_contracts:
   deployment_target_config:
+    collection: "ShonizCollection"
     project: "SharedTemplates"
     repository: "SharedTemplates"
     path: "/pipeline-generator.yml"
@@ -359,6 +361,7 @@ implementation_contracts:
     migration_environment_shape: "quoted name:domain scalar"
     static_fallback_allowed: false
   komodo_server_discovery:
+    credential_collection: "ShonizCollection"
     credential_project: "SharedTemplates"
     credential_repository: "SharedTemplates"
     credential_path: "/komodo-servers-creds.env"
@@ -514,19 +517,19 @@ next_run:
   - "Read back pipeline through Pipelines and Build Definitions APIs."
   - "Verify automated pre/post Release approvals and queue 111."
   - "Record the authentication/test method explicitly."
-  - "Create/verify SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main with the dedicated Server-Read-only Komodo address/key/secret."
+  - "Create/verify ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main with the dedicated Server-Read-only Komodo address/key/secret."
   - "Verify Komodo CORS permits https://azure.buluttakin.com and the X-Api-Key/X-Api-Secret preflight headers."
-  - "Package/install 0.1.41 and reauthorize its inherited vso.variablegroups_read scope."
-  - "Verify Environment name/domain options come from SharedTemplates/SharedTemplates:/pipeline-generator.yml@main and include soc; verify Komodo options contain only enabled non-template servers returned by the direct request."
+  - "Package/install 0.1.43 and reauthorize its inherited vso.variablegroups_read scope."
+  - "From a collection other than ShonizCollection, verify Environment name/domain options come from ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main and include soc; verify Komodo options contain only enabled non-template servers returned by the direct request."
   - "Rerun feature/Zones and verify Pipeline ID 347 is migrated in place to Feature-ZonesToDEMO; allow Release definition 7 to advance once for the preserved Pipeline artifact, Inline wrapper, KomodoAPI linkage, and short Release name."
   - "Read back the Docker/Nginx support repositories and verify only missing /environments, compose.yml, a shared route, or managed-route normalization was committed; prove root is last, root keeps its proxy URI slash, and every non-root route has /<service>/ with no rewrite and a no-URI-slash proxy target."
   - "Read Release 7 back: top-level variableGroups includes ID 7, environment variableGroups is empty, and the Inline task text matches the packaged wrapper."
-  - "Rerun 0.1.41 a second time and verify Release 7 revision is stable with no PUT and no support repository commit."
+  - "Rerun 0.1.43 a second time and verify Release 7 revision is stable with no PUT and no support repository commit."
   - "On the second identical run, verify exact-name Pipeline reuse reads Build Definition 347 and sends no Pipeline or Build Definition PUT."
   - "Verify the extension-token queue and Docker Registry endpoint reads return HTTP 200 before submitting."
   - "Verify mouse wheel, touchpad, Page Down, and scrollbar can reach every form field plus the submit button."
   - "If HostAuthorizationNotFound appears, use Open extension authorization as a Collection Administrator and authorize the requested scopes."
-  - "If no authorization action is exposed, clean-install the same published 0.1.41 version and verify installState.flags."
+  - "If no authorization action is exposed, clean-install the same published 0.1.43 version and verify installState.flags."
   - "Verify the generator opens in an Azure DevOps Dialog or the Azure Repos Pipeline Generator Hub, never a separate tab."
   - "Verify the hosted generator itself obtains VSS.getAccessToken without a PAT prompt or token transfer."
   - "Verify success stays on the page, locks/collapses the form, focuses valid Nginx, Compose, and Pipeline links, and performs no automatic navigation."

@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.41
+This document is the integration contract between Pipeline Generator 0.1.43
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 
@@ -130,8 +130,8 @@ All calls send the Bearer and redirect-suppression headers.
 | Set default branch | `PATCH {project}/_apis/git/repositories/{repo}` | `6.0` | Set `defaultBranch` to `refs/heads/main` |
 | Scan Dockerfiles | `GET {project}/_apis/git/repositories/{sourceRepo}/items?recursionLevel=Full...` | `6.0` | Find files whose basename is `Dockerfile` |
 | Read one repository | `GET {project}/_apis/git/repositories/{repo}` | `6.0` | Fallback source-repository name lookup |
-| Read environments | `GET SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/pipeline-generator.yml...` | `6.0` | Read and validate non-empty Environment name/domain records from `main`; legacy `servers` entries are ignored |
-| Read Komodo credentials | `GET SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/komodo-servers-creds.env...` | `6.0` | Read and validate `KOMODO_ADDRESS`, `KOMODO_API_KEY`, and `KOMODO_API_SECRET` from `main` using the current-user Bearer token |
+| Read environments | `GET /ShonizCollection/SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/pipeline-generator.yml...` | `6.0` | Always target the central sibling collection, then read and validate non-empty Environment name/domain records from `main`; legacy `servers` entries are ignored |
+| Read Komodo credentials | `GET /ShonizCollection/SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/komodo-servers-creds.env...` | `6.0` | Always target the central sibling collection, then read and validate `KOMODO_ADDRESS`, `KOMODO_API_KEY`, and `KOMODO_API_SECRET` from `main` using the current-user Bearer token |
 | Ensure support repositories | List/create repository plus refs, items, pushes, and repository PATCH under the current project | `6.0` | Create/reuse Docker/Nginx DevOps repositories, add missing bootstrap files, merge only absent service Locations into the shared Nginx file, and set `main` |
 | List agent queues | `GET {project}/_apis/distributedtask/queues` | `6.0` | Populate Pool options and resolve Release queue ID |
 | Resolve Release Variable Group | `GET {project}/_apis/distributedtask/variablegroups?groupName=KomodoAPI&actionFilter=Use` | `7.1` | Find the exact group, validate required variable names, and retain only its numeric ID |
@@ -199,7 +199,7 @@ server, or multiple matching HTTPS servers abort automatic editing.
 
 During discovery, the required Select remains disabled with
 `Loading active Komodo servers...`. The browser first reads
-`SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main`:
+`ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main`:
 
 ```dotenv
 KOMODO_ADDRESS=https://komodo.buluttakin.com
@@ -460,8 +460,9 @@ need pagination/disambiguation before this behavior can be considered robust.
 
 ### Shared deployment-target configuration
 
-The current-user extension token must be able to read project/repository
-`SharedTemplates/SharedTemplates` and `/pipeline-generator.yml` on `main`.
+The current-user extension token must be able to read
+`ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml` on
+`main`, including when the extension is launched from a sibling collection.
 The extension uses the existing `vso.code` scope; project/repository ACLs still
 apply. Missing access, a missing file, malformed YAML, or an empty list is a
 blocking form-initialization error rather than a fallback to stale values.

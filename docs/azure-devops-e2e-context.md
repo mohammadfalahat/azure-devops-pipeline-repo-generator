@@ -6,7 +6,7 @@ Complete five-step workflow verified version: **0.1.30**
 
 Latest installed launch behavior observed: **0.1.30 on 2026-08-10**
 
-Current local candidate awaiting live verification: **0.1.41**
+Current local candidate awaiting live verification: **0.1.43**
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -19,18 +19,28 @@ No credentials belong in either file. Credentials exposed in conversation,
 including PATs and Komodo API credentials, must never be copied into commands,
 documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local candidate — version 0.1.41
+## Current local candidate — version 0.1.43
 
-Version 0.1.41 carries the uninstalled 0.1.34 direct Komodo discovery and adds
-Environment domains, starter deployment files, explicit review links, and a
-locked completion state:
+Version 0.1.43 carries the uninstalled direct Komodo discovery, Environment
+domains, starter deployment files, explicit review links, and locked completion
+state. It also fixes a cross-collection initialization defect reported from a
+collection other than `ShonizCollection`: versions through 0.1.42 combined the
+current collection URI with project `SharedTemplates`, which produced
+`TF200016` because that project exists in the sibling central collection. Both
+central Git Items reads now replace only the collection segment with
+`ShonizCollection` while preserving an optional Azure DevOps Server virtual
+directory such as `/tfs`.
+
+The inherited feature set is:
 
 - Environment options continue to come from
-  `SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; each record
+  `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`;
+  each record
   now has a required `name` and `domain`. Compact `name:domain` scalars are
   accepted for migration and legacy `servers` entries are ignored.
 - The Komodo Select starts disabled with `Loading active Komodo servers...`,
-  reads `SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main` with
+  reads `ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main`
+  with
   the current-user ADO token, then calls Komodo directly. Empty/invalid/error
   responses block Submit.
 - The central file contains `KOMODO_ADDRESS`, `KOMODO_API_KEY`, and
@@ -68,10 +78,11 @@ locked completion state:
   manually running the Pipeline. Failed provisioning leaves the form visible.
 
 Offline tests cover YAML Environment/domain and dotenv credential parsing, exact
-SharedTemplates Git Items URLs, direct Komodo request shape, enabled/template
+cross-collection SharedTemplates Git Items URLs (including `/tfs` preservation),
+direct Komodo request shape, enabled/template
 filtering, starter content/paths, result links, short Release naming, and
 existing Pipeline/Release reconciliation guarantees. No VSIX has been packaged
-or installed and no live resource was changed for 0.1.41.
+or installed and no live resource was changed for 0.1.43.
 
 ## Previous packaged candidate — version 0.1.32
 
@@ -444,7 +455,7 @@ The generated resources are:
 
 These are the latest verification resources. **Do not delete Pipeline IDs 344
 or 347, or Release-definition IDs 5 or 7, as routine cleanup.** On the first
-0.1.41 run must preserve Pipeline ID 347 while advancing its revision once to
+0.1.43 run must preserve Pipeline ID 347 while advancing its revision once to
 the new BranchToEnvironment name and YAML path. Release 7 is expected to
 advance once from revision 1 to receive the same Pipeline artifact, new Inline
 wrapper, `KomodoAPI` linkage, and short Service/Environment name. A second
@@ -737,8 +748,9 @@ this missing-file failure with the corrected RideSharing end-to-end result.
    environment uses queue 111.
 8. Record whether authentication was interactive-session, adapted browser, or
    direct REST.
-9. For candidate 0.1.41, confirm the form reads Environment name/domain records
-   from the exact shared `pipeline-generator.yml`, including `soc`, reads the exact central
+9. For candidate 0.1.43, confirm the form reads Environment name/domain records
+   from the exact `ShonizCollection` shared `pipeline-generator.yml`, including
+   `soc`, reads the exact central
    `komodo-servers-creds.env`, and lists only enabled non-template servers from
    the direct Komodo request. Confirm no credential appears in logs, storage,
    generated YAML, or packaged assets. Rerun `feature/Zones` and prove Pipeline
