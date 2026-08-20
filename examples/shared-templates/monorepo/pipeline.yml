@@ -1,0 +1,253 @@
+parameters:
+  - name: pool
+    type: string
+  - name: projectKey
+    type: string
+  - name: serviceKey
+    type: string
+  - name: environment
+    type: string
+  - name: komodoServer
+    type: string
+  - name: deploymentRoot
+    type: string
+  - name: staticContainer
+    type: string
+  - name: bffContainer
+    type: string
+    default: ''
+  - name: runtimeVariablePrefix
+    type: string
+  - name: bffProfile
+    type: string
+  - name: composeRepository
+    type: string
+  - name: composePath
+    type: string
+  - name: komodoRepository
+    type: string
+  - name: komodoStack
+    type: string
+  - name: komodoAddress
+    type: string
+    default: https://komodo.buluttakin.com
+  - name: komodoGitAccount
+    type: string
+    default: '23'
+
+stages:
+  - stage: MR_Build
+    displayName: Build affected Monorepo modules
+    jobs:
+      - job: BuildAffected
+        displayName: Discover, build, and package affected Nx applications
+        pool:
+          name: ${{ parameters.pool }}
+        workspace:
+          clean: all
+        steps:
+          - checkout: self
+            displayName: Checkout generated DevOps repository
+            clean: true
+            path: s/devops
+
+          - checkout: sourceRepo
+            displayName: Checkout Monorepo source
+            clean: true
+            fetchDepth: 0
+            path: s/source
+
+          - checkout: SharedTemplatesRepo
+            displayName: Checkout central SharedTemplates
+            clean: true
+            path: s/shared-templates
+
+          - task: Bash@3
+            displayName: Discover and build affected Nx applications
+            inputs:
+              targetType: inline
+              script: |
+                set -Eeuo pipefail
+                corepack enable >/dev/null 2>&1 || true
+                node "$(Pipeline.Workspace)/s/shared-templates/monorepo/mr-build.cjs"
+            env:
+              MR_SOURCE_DIR: $(Pipeline.Workspace)/s/source
+              MR_CONFIG_PATH: $(Pipeline.Workspace)/s/devops/.devops/deployments.yml
+              MR_ARTIFACT_DIR: $(Build.ArtifactStagingDirectory)/mr-drop
+              MR_BUILD_ID: $(Build.BuildId)
+              MR_PROJECT_KEY: ${{ parameters.projectKey }}
+              MR_SERVICE_KEY: ${{ parameters.serviceKey }}
+              MR_ENVIRONMENT: ${{ parameters.environment }}
+              MR_KOMODO_SERVER: ${{ parameters.komodoServer }}
+              MR_KOMODO_STACK: ${{ parameters.komodoStack }}
+              MR_DEPLOYMENT_ROOT: ${{ parameters.deploymentRoot }}
+              MR_STATIC_CONTAINER: ${{ parameters.staticContainer }}
+              MR_BFF_CONTAINER: ${{ parameters.bffContainer }}
+              MR_COMPOSE_REPOSITORY: ${{ parameters.composeRepository }}
+              MR_COMPOSE_PATH: ${{ parameters.composePath }}
+
+          - task: Bash@3
+            displayName: Package shared Nginx runtime configuration
+            inputs:
+              targetType: inline
+              script: |
+                set -Eeuo pipefail
+                source="$(Pipeline.Workspace)/s/shared-templates/monorepo/nginx/default.conf"
+                target="$(Build.ArtifactStagingDirectory)/mr-drop/runtime/nginx"
+                test -s "$source"
+                mkdir -p "$target"
+                cp "$source" "$target/default.conf"
+
+          - task: Bash@3
+            displayName: Ensure Komodo GitOps repository and shared Docker Stack
+            env:
+              KOMODO_ADDRESS: ${{ parameters.komodoAddress }}
+              KOMODO_API_KEY: $(KOMODO_API_KEY)
+              KOMODO_API_SECRET: $(KOMODO_API_SECRET)
+              MR_KOMODO_SERVER: ${{ parameters.komodoServer }}
+              MR_KOMODO_REPOSITORY: ${{ parameters.komodoRepository }}
+              MR_KOMODO_STACK: ${{ parameters.komodoStack }}
+              MR_COMPOSE_REPOSITORY: ${{ parameters.composeRepository }}
+              MR_COMPOSE_PATH: ${{ parameters.composePath }}
+              MR_PROJECT_KEY: ${{ parameters.projectKey }}
+              MR_SERVICE_KEY: ${{ parameters.serviceKey }}
+              MR_ENVIRONMENT: ${{ parameters.environment }}
+              MR_DEPLOYMENT_ROOT: ${{ parameters.deploymentRoot }}
+              MR_RUNTIME_VARIABLE_PREFIX: ${{ parameters.runtimeVariablePrefix }}
+              MR_BFF_PROFILE: ${{ parameters.bffProfile }}
+              MR_GIT_ACCOUNT: ${{ parameters.komodoGitAccount }}
+              MR_MANIFEST: $(Build.ArtifactStagingDirectory)/mr-drop/manifest.json
+            inputs:
+              targetType: inline
+              script: |
+                set -Eeuo pipefail
+                : "${KOMODO_ADDRESS:?KOMODO_ADDRESS is required}"
+                : "${KOMODO_API_KEY:?KOMODO_API_KEY is required}"
+                : "${KOMODO_API_SECRET:?KOMODO_API_SECRET is required}"
+                command -v curl >/dev/null 2>&1
+                command -v jq >/dev/null 2>&1
+                test -s "$MR_MANIFEST"
+
+                case "$MR_KOMODO_SERVER" in (*[!A-Za-z0-9._:-]*|'') echo "Unsafe Komodo Server" >&2; exit 20;; esac
+                case "$MR_KOMODO_REPOSITORY" in (*[!A-Za-z0-9._-]*|'') echo "Unsafe Komodo Repo name" >&2; exit 20;; esac
+                case "$MR_KOMODO_STACK" in (*[!A-Za-z0-9._-]*|'') echo "Unsafe Komodo Stack name" >&2; exit 20;; esac
+                case "$MR_COMPOSE_REPOSITORY" in (*[!A-Za-z0-9._-]*|'') echo "Unsafe ADO Compose repository" >&2; exit 20;; esac
+                case "$MR_COMPOSE_PATH" in (/*/compose.yml) ;; (*) echo "Unsafe Compose path" >&2; exit 20;; esac
+                case "$MR_PROJECT_KEY" in (*[!a-z0-9-]*|'') echo "Unsafe project key" >&2; exit 20;; esac
+                case "$MR_SERVICE_KEY" in (*[!a-z0-9-]*|'') echo "Unsafe service key" >&2; exit 20;; esac
+                case "$MR_ENVIRONMENT" in (*[!a-z0-9-]*|'') echo "Unsafe Environment" >&2; exit 20;; esac
+                case "$MR_RUNTIME_VARIABLE_PREFIX" in (*[!A-Z0-9_]*|'') echo "Unsafe runtime variable prefix" >&2; exit 20;; esac
+                case "$MR_BFF_PROFILE" in (*[!a-z0-9-]*|'') echo "Unsafe BFF profile" >&2; exit 20;; esac
+
+                request_dir="$(mktemp -d "${AGENT_TEMPDIRECTORY:-/tmp}/mr-komodo.XXXXXX")"
+                trap 'rm -rf "$request_dir"' EXIT
+                request_number=0
+                komodo_call() {
+                  endpoint="$1"
+                  payload="$2"
+                  request_number=$((request_number + 1))
+                  request_file="$request_dir/request-$request_number.json"
+                  response_file="$request_dir/response-$request_number.json"
+                  printf '%s' "$payload" > "$request_file"
+                  status="$({
+                    printf 'header = "X-Api-Key: %s"\n' "$KOMODO_API_KEY"
+                    printf 'header = "X-Api-Secret: %s"\n' "$KOMODO_API_SECRET"
+                    printf 'header = "Content-Type: application/json"\n'
+                  } | curl --config - -sS -o "$response_file" -w '%{http_code}' \
+                    --data-binary "@$request_file" "${KOMODO_ADDRESS%/}/$endpoint")"
+                  if ! printf '%s' "$status" | grep -Eq '^2[0-9][0-9]$'; then
+                    message="$(jq -r '.error // .message // "Komodo request failed"' "$response_file" 2>/dev/null || true)"
+                    echo "Komodo $endpoint request failed with HTTP $status: $message" >&2
+                    return 1
+                  fi
+                  printf '%s' "$response_file"
+                }
+
+                server_response="$(komodo_call read "$(jq -cn --arg server "$MR_KOMODO_SERVER" '{type:"GetServer",params:{server:$server}}')")"
+                server_id="$(jq -r '._id["$oid"] // .id["$oid"] // .id // empty' "$server_response")"
+                test -n "$server_id" || { echo "Komodo Server ID was not returned" >&2; exit 21; }
+
+                collection_uri="${SYSTEM_COLLECTIONURI%/}"
+                without_scheme="${collection_uri#*://}"
+                provider_domain="${without_scheme%%/*}"
+                collection_path="${without_scheme#*/}"
+                project_path="${SYSTEM_TEAMPROJECT// /%20}"
+                ado_repo_path="${collection_path}/${project_path}/_git/${MR_COMPOSE_REPOSITORY}"
+                clone_path="/var/projects-komodo/${MR_KOMODO_REPOSITORY}"
+                repo_config="$(jq -cn \
+                  --arg provider "$provider_domain" \
+                  --arg account "$MR_GIT_ACCOUNT" \
+                  --arg repo "$ado_repo_path" \
+                  --arg server "$server_id" \
+                  --arg path "$clone_path" \
+                  '{git_provider:$provider,git_https:true,git_account:$account,repo:$repo,branch:"main",server_id:$server,path:$path}')"
+
+                repos_response="$(komodo_call read '{"type":"ListFullRepos","params":{"query":{}}}')"
+                repo_id="$(jq -r --arg name "$MR_KOMODO_REPOSITORY" 'first(.[] | select(.name == $name) | (._id["$oid"] // .id["$oid"] // .id)) // empty' "$repos_response")"
+                if [ -n "$repo_id" ]; then
+                  komodo_call write "$(jq -cn --arg id "$repo_id" --argjson config "$repo_config" '{type:"UpdateRepo",params:{id:$id,config:$config}}')" >/dev/null
+                else
+                  komodo_call write "$(jq -cn --arg name "$MR_KOMODO_REPOSITORY" --argjson config "$repo_config" '{type:"CreateRepo",params:{name:$name,config:$config}}')" >/dev/null
+                fi
+
+                run_directory="${MR_COMPOSE_PATH#/}"
+                run_directory="${run_directory%/compose.yml}"
+                bff_project="$(jq -r '.bffProject // ""' "$MR_MANIFEST")"
+                bff_entry="$(jq -r '.bffEntry // "main.js"' "$MR_MANIFEST")"
+
+                stacks_response="$(komodo_call read '{"type":"ListFullStacks","params":{"query":{}}}')"
+                stack_id="$(jq -r --arg name "$MR_KOMODO_STACK" 'first(.[] | select(.name == $name) | (._id["$oid"] // .id["$oid"] // .id)) // empty' "$stacks_response")"
+                existing_environment="$(jq -r --arg name "$MR_KOMODO_STACK" 'first(.[] | select(.name == $name) | .config.environment) // ""' "$stacks_response")"
+                existing_extra_args="$(jq -c --arg name "$MR_KOMODO_STACK" 'first(.[] | select(.name == $name) | .config.extra_args) // []' "$stacks_response")"
+                stack_environment="$(printf '%s\n' "$existing_environment" | awk -v prefix="$MR_RUNTIME_VARIABLE_PREFIX" '
+                  $0 !~ ("^[[:space:]]*" prefix "_(DEPLOY_ROOT|BFF_PROJECT|BFF_ENTRY)[[:space:]]*=") { print }
+                ')"
+                stack_environment="${stack_environment%$'\n'}"
+                managed_environment="${MR_RUNTIME_VARIABLE_PREFIX}_DEPLOY_ROOT = ${MR_DEPLOYMENT_ROOT}"
+                enable_bff=false
+                if [ -n "$bff_project" ]; then
+                  managed_environment="${managed_environment}
+                ${MR_RUNTIME_VARIABLE_PREFIX}_BFF_PROJECT = ${bff_project}
+                ${MR_RUNTIME_VARIABLE_PREFIX}_BFF_ENTRY = ${bff_entry}"
+                  enable_bff=true
+                fi
+                if [ -n "$stack_environment" ]; then
+                  stack_environment="${stack_environment}
+                ${managed_environment}"
+                else
+                  stack_environment="$managed_environment"
+                fi
+                extra_args="$(jq -cn \
+                  --argjson args "$existing_extra_args" \
+                  --arg profile "$MR_BFF_PROFILE" \
+                  --argjson enable "$enable_bff" '
+                    $args as $all |
+                    [range(0; $all | length) as $index |
+                      select((
+                        ($all[$index] == "--profile" and $all[$index + 1] == $profile) or
+                        ($index > 0 and $all[$index - 1] == "--profile" and $all[$index] == $profile)
+                      ) | not) |
+                      $all[$index]
+                    ] + (if $enable then ["--profile", $profile] else [] end)
+                  ')"
+                stack_config="$(jq -cn \
+                  --arg linked_repo "$MR_KOMODO_REPOSITORY" \
+                  --arg server "$server_id" \
+                  --arg run_directory "$run_directory" \
+                  --arg environment "$stack_environment" \
+                  --argjson extra_args "$extra_args" \
+                  '{linked_repo:$linked_repo,server_id:$server,run_directory:$run_directory,file_paths:["compose.yml"],environment:$environment,extra_args:$extra_args,files_on_host:false}')"
+
+                if [ -n "$stack_id" ]; then
+                  komodo_call write "$(jq -cn --arg id "$stack_id" --argjson config "$stack_config" '{type:"UpdateStack",params:{id:$id,config:$config}}')" >/dev/null
+                else
+                  komodo_call write "$(jq -cn --arg name "$MR_KOMODO_STACK" --argjson config "$stack_config" '{type:"CreateStack",params:{name:$name,config:$config}}')" >/dev/null
+                fi
+                echo "##[section]Shared Komodo GitOps Stack ensured: $MR_KOMODO_STACK -> $MR_COMPOSE_REPOSITORY/$run_directory/compose.yml"
+
+          - task: PublishBuildArtifacts@1
+            displayName: Publish MR artifact
+            inputs:
+              PathtoPublish: $(Build.ArtifactStagingDirectory)/mr-drop
+              ArtifactName: mr-drop
+              publishLocation: Container

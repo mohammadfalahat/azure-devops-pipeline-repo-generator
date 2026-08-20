@@ -60,6 +60,19 @@
     )}&versionDescriptor.versionType=branch&%24format=text&api-version=6.0`;
   };
 
+  // Azure DevOps Server extension access tokens are issued by the collection
+  // hosting the current page. A token that is valid for that collection can be
+  // rejected by a sibling collection even when the same signed-in user has
+  // repository access there. These two central reads stay on the same origin,
+  // so use the existing authenticated browser session without forwarding the
+  // collection-scoped Bearer token.
+  const centralGitRequestOptions = () => ({
+    headers: { 'X-TFS-FedAuthRedirect': 'Suppress' },
+    cache: 'no-store',
+    credentials: 'same-origin',
+    redirect: 'manual'
+  });
+
   const loadScript = (src) =>
     new Promise((resolve, reject) => {
       const script = document.createElement('script');
@@ -247,6 +260,8 @@
   };
 
   const branchLabel = document.getElementById('branch-label');
+  const pageTitle = document.getElementById('page-title');
+  const formHint = document.getElementById('form-hint');
   const branchInput = document.getElementById('branch');
   const environmentSelect = document.getElementById('environment');
   const poolSelect = document.getElementById('pool');
@@ -266,6 +281,13 @@
   const nginxResultLink = document.getElementById('nginx-result-link');
   const composeResultLink = document.getElementById('compose-result-link');
   const pipelineResultLink = document.getElementById('pipeline-result-link');
+  const contractResultItem = document.getElementById('contract-result-item');
+  const contractResultLink = document.getElementById('contract-result-link');
+  const completionHint = document.getElementById('completion-hint');
+  const serviceField = document.getElementById('service-field');
+  const dockerfileField = document.getElementById('dockerfile-field');
+  const registryAddressField = document.getElementById('registry-address-field');
+  const registryServiceField = document.getElementById('registry-service-field');
 
   if (targetRepoInput) {
     targetRepoInput.disabled = true;
@@ -280,6 +302,7 @@
   const SCAFFOLD_BRANCH = 'main';
   const ZERO_OBJECT_ID = '0000000000000000000000000000000000000000';
   const PIPELINE_FOLDER = '\\komodo';
+  const MONOREPO_PIPELINE_FOLDER = '\\komodo\\MR';
   // The Pipelines API remains a preview contract on supported Azure DevOps
   // Server versions. Keep the repositoryId query parameter on create: without
   // it, some on-prem servers accept the YAML commit but reject pipeline
@@ -304,25 +327,33 @@
     return `\\${candidate.replace(/^\\+/, '')}`;
   };
 
-  const getReleaseConfig = () => {
+  const getReleaseConfig = (mode = state.mode) => {
     const configured = window.PipelineGeneratorReleaseConfig || {};
     const source = configured.scriptSource || DEFAULT_RELEASE_CONFIG.scriptSource;
+    const monorepo = normalizeGeneratorMode(mode) === 'monorepo';
     return {
       enabled: configured.enabled !== false,
-      folder: normalizePipelineFolder(configured.folder, DEFAULT_RELEASE_CONFIG.folder),
-      environmentName: String(configured.environmentName || DEFAULT_RELEASE_CONFIG.environmentName).trim(),
-      bashTaskName: String(configured.bashTaskName || DEFAULT_RELEASE_CONFIG.bashTaskName).trim(),
+      folder: monorepo
+        ? normalizePipelineFolder(`${configured.folder || DEFAULT_RELEASE_CONFIG.folder}\\MR`, '\\komodo\\MR')
+        : normalizePipelineFolder(configured.folder, DEFAULT_RELEASE_CONFIG.folder),
+      environmentName: monorepo
+        ? 'MR deployment'
+        : String(configured.environmentName || DEFAULT_RELEASE_CONFIG.environmentName).trim(),
+      bashTaskName: monorepo
+        ? 'Deploy affected MR modules through Komodo'
+        : String(configured.bashTaskName || DEFAULT_RELEASE_CONFIG.bashTaskName).trim(),
       variableGroupName: String(
         configured.variableGroupName || DEFAULT_RELEASE_CONFIG.variableGroupName
       ).trim(),
       requiredVariableNames: Array.isArray(configured.requiredVariableNames)
         ? configured.requiredVariableNames.map((name) => String(name).trim()).filter(Boolean)
         : [...DEFAULT_RELEASE_CONFIG.requiredVariableNames],
-      scriptSource: source
+      scriptSource: monorepo ? { type: 'packagedFile', path: 'monorepo-release-inline-task.sh' } : source
     };
   };
 
   const state = {
+    mode: 'pipeline',
     sdk: null,
     accessToken: null,
     accessTokenError: null,
@@ -342,6 +373,45 @@
     sourceBranch: null
   };
   let initializationPromise;
+
+  const normalizeGeneratorMode = (mode) => (String(mode || '').toLowerCase() === 'monorepo' ? 'monorepo' : 'pipeline');
+  const isMonorepoMode = () => state.mode === 'monorepo';
+  const getPipelineFolder = () => (isMonorepoMode() ? MONOREPO_PIPELINE_FOLDER : PIPELINE_FOLDER);
+
+  const applyModePresentation = (mode) => {
+    state.mode = normalizeGeneratorMode(mode);
+    const monorepo = isMonorepoMode();
+    if (pageTitle) pageTitle.textContent = monorepo ? 'Generate MonoRepo' : 'Generate pipeline';
+    document.title = monorepo ? 'Generate MonoRepo' : 'Generate pipeline';
+    if (formHint) {
+      formHint.textContent = monorepo
+        ? 'Generate one MR Pipeline and one classic Release for this Nx monorepo. The extension creates the deployment contract, generic runtime Compose/Nginx files, automatic affected-project build, and safe versioned deployment through Komodo.'
+        : 'Fill the fields below, then generate the pipeline. The generator will push the template, ensure the project Docker/Nginx DevOps repositories and starter files, register the YAML pipeline in \\komodo, and create its classic Release definition. It will then show review links without running or redirecting to the Pipeline.';
+    }
+    if (serviceField) serviceField.hidden = false;
+    [dockerfileField, registryAddressField, registryServiceField].forEach((element) => {
+      if (element) element.hidden = monorepo;
+    });
+    if (serviceInput) serviceInput.required = true;
+    if (dockerfileInput) dockerfileInput.required = !monorepo;
+    const repositoryAddressInput = document.getElementById('repositoryAddress');
+    if (repositoryAddressInput) repositoryAddressInput.required = !monorepo;
+    if (registrySelect) registrySelect.required = !monorepo;
+    if (submitButton) {
+      submitButton.textContent = monorepo
+        ? 'Create MR runtime, pipeline, and release'
+        : 'Create repositories, pipeline, and release';
+    }
+    contractResultItem?.classList?.toggle('hidden', !monorepo);
+    if (contractResultItem && !contractResultItem.classList) {
+      contractResultItem.className = monorepo ? '' : 'hidden';
+    }
+    if (completionHint) {
+      completionHint.textContent = monorepo
+        ? 'Review the generated contract, Compose, and Nginx files. Then run the MR Pipeline once; later source changes are detected automatically.'
+        : 'The files are only starter templates. Review and edit them, then open and run the Pipeline once.';
+    }
+  };
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
@@ -549,16 +619,15 @@
     return result;
   };
 
-  const fetchDeploymentTargets = async ({ hostUri, accessToken }) => {
+  const fetchDeploymentTargets = async ({ hostUri }) => {
     const source = DEPLOYMENT_TARGETS_CONFIG;
     const url = buildCentralGitItemUrl({ hostUri, source });
-    const res = await fetch(url, { headers: authHeaders(accessToken), cache: 'no-store' });
+    const res = await fetch(url, centralGitRequestOptions());
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      throw markRequiredExtensionScope(
-        buildHttpError(`Failed to load deployment targets from ${source.path}`, res, detail),
-        'vso.code'
-      );
+      const error = buildHttpError(`Failed to load deployment targets from ${source.path}`, res, detail);
+      error.authenticationMode = 'browser-session';
+      throw error;
     }
     return parseDeploymentTargetsYaml(await res.text());
   };
@@ -612,16 +681,14 @@
     });
   };
 
-  const fetchKomodoCredentials = async ({ hostUri, accessToken }) => {
+  const fetchKomodoCredentials = async ({ hostUri }) => {
     const source = KOMODO_CREDENTIAL_CONFIG;
     const url = buildCentralGitItemUrl({ hostUri, source });
-    const res = await fetch(url, { headers: authHeaders(accessToken), cache: 'no-store' });
+    const res = await fetch(url, centralGitRequestOptions());
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      const error = markRequiredExtensionScope(
-        buildHttpError(`Failed to load Komodo credentials from ${source.path}`, res, detail),
-        'vso.code'
-      );
+      const error = buildHttpError(`Failed to load Komodo credentials from ${source.path}`, res, detail);
+      error.authenticationMode = 'browser-session';
       error.domain = 'komodo';
       throw error;
     }
@@ -662,9 +729,9 @@
     return servers;
   };
 
-  const fetchKomodoServers = async ({ hostUri, accessToken }) => {
+  const fetchKomodoServers = async ({ hostUri }) => {
     try {
-      const credentials = await fetchKomodoCredentials({ hostUri, accessToken });
+      const credentials = await fetchKomodoCredentials({ hostUri });
       const res = await fetch(`${credentials.address}/read`, {
         method: 'POST',
         headers: {
@@ -689,14 +756,14 @@
     }
   };
 
-  const loadDeploymentTargets = async ({ hostUri, accessToken, branch }) => {
+  const loadDeploymentTargets = async ({ hostUri, branch }) => {
     state.deploymentTargetsReady = false;
     if (environmentSelect) environmentSelect.disabled = true;
     if (komodoSelect) komodoSelect.disabled = true;
     try {
       const [targets, komodoServers] = await Promise.all([
-        fetchDeploymentTargets({ hostUri, accessToken }),
-        fetchKomodoServers({ hostUri, accessToken })
+        fetchDeploymentTargets({ hostUri }),
+        fetchKomodoServers({ hostUri })
       ]);
       targets.servers = komodoServers;
       state.deploymentTargets = targets;
@@ -930,7 +997,7 @@
     return `${projectSegment}-${repoSegment}-${environmentSegment}-${branchSegment}.yml`;
   };
 
-  const buildPipelineFilename = ({ projectName, repositoryName, environment, branchName }) => {
+  const buildPipelineFilename = ({ projectName, repositoryName, environment, branchName, mode = 'pipeline' }) => {
     const projectSegment = sanitizePipelineNameSegment(projectName, 'project');
     const repoSegment = sanitizePipelineNameSegment(repositoryName || projectName, 'repo');
     if (!String(environment || '').trim()) {
@@ -942,12 +1009,13 @@
       'branch',
       { lowercase: false }
     ).replace(/(^|[-_.])([a-z])/g, (_, separator, character) => `${separator}${character.toUpperCase()}`);
-    return `${projectSegment}-${repoSegment}-${branchSegment}To${environmentSegment}.yml`;
+    const modeSegment = normalizeGeneratorMode(mode) === 'monorepo' ? '-MR' : '';
+    return `${projectSegment}-${repoSegment}${modeSegment}-${branchSegment}To${environmentSegment}.yml`;
   };
 
   const buildPipelineName = (pipelineFilename) => pipelineFilename;
 
-  const buildReleaseName = ({ service, environment }) => {
+  const buildReleaseName = ({ service, environment, mode = 'pipeline' }) => {
     const normalizePart = (value, label) => {
       const normalized = String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
       if (!normalized || normalized.length > 100 || /[\0\r\n]/.test(normalized)) {
@@ -955,6 +1023,9 @@
       }
       return normalized;
     };
+    if (normalizeGeneratorMode(mode) === 'monorepo') {
+      return `MR ${normalizePart(environment, 'Environment')}`;
+    }
     return `${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;
   };
 
@@ -970,7 +1041,7 @@
     )}&version=GB${encodeURIComponent(SCAFFOLD_BRANCH)}&_a=contents`;
   };
 
-  const showCompletionLinks = ({ supportRepositories, pipelineDefinition }) => {
+  const showCompletionLinks = ({ supportRepositories, pipelineDefinition, generatedRepo, contractPath }) => {
     const nginx = supportRepositories.find((result) => result.kind === 'nginx');
     const docker = supportRepositories.find((result) => result.kind === 'docker');
     if (!nginx?.repo?.name || !docker?.repo?.name || !pipelineDefinition?.id) {
@@ -996,6 +1067,13 @@
         pipelineDefinition.id
       )}`;
       pipelineResultLink.textContent = `Open Pipeline ${pipelineDefinition.name || pipelineDefinition.id}`;
+    }
+    if (contractResultLink && contractPath && generatedRepo?.name) {
+      contractResultLink.href = buildRepositoryFileUrl({
+        repositoryName: generatedRepo.name,
+        filePath: contractPath
+      });
+      contractResultLink.textContent = `Review ${contractPath}`;
     }
     finishProvisioning();
   };
@@ -1071,8 +1149,11 @@
       repoName,
       hostUri,
       accessToken,
-      accessTokenError
+      accessTokenError,
+      mode
     } = payload;
+
+    applyModePresentation(mode || state.mode);
 
     const normalizedHost = normalizeHostUri(hostUri || state.hostUri || getHostBase());
     state.sourceBranch = branch || state.sourceBranch;
@@ -1131,20 +1212,24 @@
     try {
       await loadDeploymentTargets({
         hostUri: state.hostUri,
-        accessToken: state.accessToken,
         branch: sourceBranch || targetBranch
       });
-      await Promise.all([
-        loadPools({ hostUri: state.hostUri, projectId: state.projectId, accessToken: state.accessToken }),
-        loadContainerRegistries({ hostUri: state.hostUri, projectId: state.projectId, accessToken: state.accessToken }),
-        refreshDockerfiles({
-          hostUri: state.hostUri,
-          projectId: state.projectId,
-          repoId: state.repoId,
-          branch: sourceBranch || targetBranch,
-          accessToken: state.accessToken
-        })
-      ]);
+      const resourceLoads = [
+        loadPools({ hostUri: state.hostUri, projectId: state.projectId, accessToken: state.accessToken })
+      ];
+      if (!isMonorepoMode()) {
+        resourceLoads.push(
+          loadContainerRegistries({ hostUri: state.hostUri, projectId: state.projectId, accessToken: state.accessToken }),
+          refreshDockerfiles({
+            hostUri: state.hostUri,
+            projectId: state.projectId,
+            repoId: state.repoId,
+            branch: sourceBranch || targetBranch,
+            accessToken: state.accessToken
+          })
+        );
+      }
+      await Promise.all(resourceLoads);
       setStatus(
         source === 'message'
           ? 'Azure DevOps context received from the branch action. Generate the pipeline when ready.'
@@ -1166,8 +1251,7 @@
     return segments.length ? segments[segments.length - 1] : value;
   };
 
-  const setServiceNameFromRepository = (name, projectName) => {
-    if (!serviceInput) return;
+  const deriveServiceNameFromRepository = (name, projectName) => {
     const targetName = extractRepositoryName(name) || projectName;
     const compactProject = String(projectName || '').replace(/\s+/g, '');
     const projectPrefixes = [String(projectName || '').trim(), compactProject]
@@ -1183,7 +1267,12 @@
         }
       }
     }
-    const normalizedTarget = normalizeName(serviceName || targetName);
+    return normalizeName(serviceName || targetName);
+  };
+
+  const setServiceNameFromRepository = (name, projectName) => {
+    if (!serviceInput) return;
+    const normalizedTarget = deriveServiceNameFromRepository(name, projectName);
     if (!normalizedTarget) return;
 
     const currentValue = normalizeName(serviceInput.value);
@@ -1436,11 +1525,19 @@
   const NGINX_MANAGED_ROUTES_START = '    # BEGIN PIPELINE-GENERATOR MANAGED ROUTES';
   const NGINX_MANAGED_ROUTES_END = '    # END PIPELINE-GENERATOR MANAGED ROUTES';
 
-  const buildNginxRouteBlock = ({ projectKey, serviceKey, environment }) => {
-    const containerName = `${projectKey}_${serviceKey.replace(/-/g, '_')}_${environment}`;
-    const frontend = isFrontendService(serviceKey);
-    const location = frontend ? '/' : `/${serviceKey}/`;
-    const internalPort = frontend ? 80 : 8080;
+  const buildNginxRouteBlock = ({
+    projectKey,
+    serviceKey,
+    environment,
+    containerName: requestedContainerName,
+    location: requestedLocation,
+    internalPort: requestedInternalPort,
+    frontend: requestedFrontend
+  }) => {
+    const containerName = requestedContainerName || `${projectKey}_${serviceKey.replace(/-/g, '_')}_${environment}`;
+    const frontend = typeof requestedFrontend === 'boolean' ? requestedFrontend : isFrontendService(serviceKey);
+    const location = requestedLocation || (frontend ? '/' : `/${serviceKey}/`);
+    const internalPort = requestedInternalPort || (frontend ? 80 : 8080);
     const upstreamDirectives = [
       '        resolver         127.0.0.11         ipv6=off;',
       `        set              $target            ${containerName};`
@@ -1708,10 +1805,10 @@
     return -1;
   };
 
-  const mergeNginxServiceRoute = ({ content, serverName, projectKey, serviceKey, environment }) => {
+  const mergeNginxServiceRoute = ({ content, serverName, projectKey, serviceKey, environment, routeOptions = {} }) => {
     let mergedContent = content;
     let server = findNginxHttpsServer(mergedContent, serverName);
-    const route = buildNginxRouteBlock({ projectKey, serviceKey, environment });
+    const route = buildNginxRouteBlock({ projectKey, serviceKey, environment, ...routeOptions });
 
     let startIndex = mergedContent.indexOf(NGINX_MANAGED_ROUTES_START, server.open.end);
     let endIndex = mergedContent.indexOf(NGINX_MANAGED_ROUTES_END, server.open.end);
@@ -1759,7 +1856,7 @@
 
   const buildNginxSample = ({ projectHost, projectKey, serviceKey, environment, domain }) => {
     const route = buildNginxRouteBlock({ projectKey, serviceKey, environment });
-    const certificateName = domain.split('.')[0];
+    const certificateName = domain;
     const serverName = `${projectHost}.${domain}`;
     return [
       'server {',
@@ -1782,6 +1879,249 @@
       '}',
       ''
     ].join('\n');
+  };
+
+  const buildMonorepoDeploymentRoot = ({ compactProject, projectKey, serviceKey, environment }) =>
+    `/mnt/graid/projects/${compactProject}_Docker_DevOps/${environment}_${projectKey}/monorepo/${serviceKey}`;
+
+  const buildMonorepoKomodoResourceNames = ({ compactProject, environment }) => ({
+    repository: `${compactProject}_Docker_DevOps-${environment}`,
+    stack: `${compactProject}_Docker_DevOps-${environment}`
+  });
+
+  const buildMonorepoComposeServices = ({ compactProject, projectKey, serviceKey, environment }) => {
+    const normalizedService = serviceKey.replace(/-/g, '_');
+    const staticContainer = `${projectKey}_${normalizedService}_${environment}`;
+    const bffContainer = `${projectKey}_${normalizedService}_bff_${environment}`;
+    const deploymentRoot = buildMonorepoDeploymentRoot({
+      compactProject,
+      projectKey,
+      serviceKey,
+      environment
+    });
+    const variablePrefix = `MR_${projectKey}_${serviceKey}_${environment}`.replace(/[^a-z0-9]+/gi, '_').toUpperCase();
+    const bffProjectVariable = `${variablePrefix}_BFF_PROJECT`;
+    const bffEntryVariable = `${variablePrefix}_BFF_ENTRY`;
+    const bffProfile = `mr-${serviceKey}-bff`;
+    return [
+      {
+        name: staticContainer,
+        content: [
+      `  ${staticContainer}:`,
+      `    container_name: ${staticContainer}`,
+      '    image: nginx:1.27-alpine',
+      '    restart: unless-stopped',
+      '    volumes:',
+      `      - ${deploymentRoot}:/srv/monorepo:ro`,
+      `      - ${deploymentRoot}/runtime/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro`,
+      '    expose:',
+      '      - "80"',
+      '    networks:',
+      '      - nginx-network'
+        ].join('\n')
+      },
+      {
+        name: bffContainer,
+        content: [
+      `  ${bffContainer}:`,
+      `    container_name: ${bffContainer}`,
+      '    image: node:20-alpine',
+      `    profiles: ["${bffProfile}"]`,
+      '    restart: unless-stopped',
+      `    working_dir: /srv/monorepo/current/modules/\${${bffProjectVariable}:-bff}`,
+      `    command: ["/bin/sh", "-ec", "exec node \\"\${${bffEntryVariable}:-main.js}\\""]`,
+      '    volumes:',
+      `      - ${deploymentRoot}:/srv/monorepo:ro`,
+      '    expose:',
+      '      - "3000"',
+      '    networks:',
+      '      - nginx-network'
+        ].join('\n')
+      }
+    ];
+  };
+
+  const buildMonorepoComposeSample = ({ compactProject, projectKey, serviceKey, environment }) => {
+    const services = buildMonorepoComposeServices({ compactProject, projectKey, serviceKey, environment });
+    return [
+      'services:',
+      ...services.flatMap(({ content }, index) => (index ? ['', content] : [content])),
+      '',
+      'networks:',
+      '  nginx-network:',
+      '    external: true',
+      ''
+    ].join('\n');
+  };
+
+  const mergeMonorepoComposeServices = ({ content, compactProject, projectKey, serviceKey, environment }) => {
+    if (!String(content || '').trim()) {
+      return buildMonorepoComposeSample({ compactProject, projectKey, serviceKey, environment });
+    }
+    const newline = content.includes('\r\n') ? '\r\n' : '\n';
+    const hadTrailingNewline = content.endsWith('\n');
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const desiredServices = buildMonorepoComposeServices({ compactProject, projectKey, serviceKey, environment });
+    let servicesIndex = lines.findIndex((line) => /^services:\s*(?:#.*)?$/.test(line));
+    const inlineEmptyIndex = lines.findIndex((line) => /^services:\s*\{\s*\}\s*(?:#.*)?$/.test(line));
+    if (servicesIndex === -1 && inlineEmptyIndex !== -1) {
+      lines[inlineEmptyIndex] = 'services:';
+      servicesIndex = inlineEmptyIndex;
+    }
+    if (servicesIndex === -1) {
+      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+      if (lines.length) lines.push('');
+      lines.push('services:');
+      servicesIndex = lines.length - 1;
+    }
+    let servicesEnd = lines.findIndex(
+      (line, index) => index > servicesIndex && /^[A-Za-z0-9_.-]+:\s*(?:.*)?$/.test(line)
+    );
+    if (servicesEnd === -1) servicesEnd = lines.length;
+    const existingNames = new Set(
+      lines
+        .slice(servicesIndex + 1, servicesEnd)
+        .map((line) => /^  ([A-Za-z0-9_.-]+):\s*(?:#.*)?$/.exec(line)?.[1])
+        .filter(Boolean)
+    );
+    const missing = desiredServices.filter(({ name }) => !existingNames.has(name));
+    if (missing.length) {
+      const insertion = missing.flatMap(({ content: serviceContent }, index) => [
+        ...(index || (servicesEnd > servicesIndex + 1 && lines[servicesEnd - 1]?.trim()) ? [''] : []),
+        ...serviceContent.split('\n')
+      ]);
+      lines.splice(servicesEnd, 0, ...insertion);
+    }
+    if (!lines.some((line) => /^networks:\s*(?:#.*)?$/.test(line))) {
+      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+      lines.push('', 'networks:', '  nginx-network:', '    external: true');
+    }
+    const merged = lines.join('\n').replace(/\n+$/, '');
+    return `${merged}${hadTrailingNewline ? '\n' : ''}`.replace(/\n/g, newline);
+  };
+
+  const buildMonorepoNginxRoutes = ({ projectKey, serviceKey, environment }) => {
+    const normalizedService = serviceKey.replace(/-/g, '_');
+    return [
+    {
+      serviceKey: `${serviceKey}-bff`,
+      routeOptions: {
+        containerName: `${projectKey}_${normalizedService}_bff_${environment}`,
+        location: '/api/',
+        internalPort: 3000,
+        frontend: false
+      }
+    },
+    {
+      serviceKey,
+      routeOptions: {
+        containerName: `${projectKey}_${normalizedService}_${environment}`,
+        location: '/',
+        internalPort: 80,
+        frontend: true
+      }
+    }
+    ];
+  };
+
+  const buildMonorepoNginxSample = ({ projectHost, projectKey, serviceKey, environment, domain }) => {
+    const certificateName = domain;
+    const serverName = `${projectHost}.${domain}`;
+    const routes = buildMonorepoNginxRoutes({ projectKey, serviceKey, environment })
+      .map(({ serviceKey, routeOptions }) =>
+        buildNginxRouteBlock({ projectKey, serviceKey, environment, ...routeOptions }).content
+      );
+    return [
+      'server {',
+      '    listen 80;',
+      `    server_name ${serverName};`,
+      '    return 301 https://$host$request_uri;',
+      '}',
+      '',
+      'server {',
+      '    listen 443 ssl;',
+      `    server_name ${serverName};`,
+      '',
+      '    client_max_body_size 0;',
+      `    ssl_certificate /etc/nginx/conf.d/${certificateName}.pem;`,
+      `    ssl_certificate_key /etc/nginx/conf.d/${certificateName}.key;`,
+      '',
+      NGINX_MANAGED_ROUTES_START,
+      ...routes.flatMap((route, index) => (index ? ['', route] : [route])),
+      NGINX_MANAGED_ROUTES_END,
+      '}',
+      ''
+    ].join('\n');
+  };
+
+  const mergeMonorepoNginxRoutes = ({ content, serverName, projectKey, serviceKey, environment }) =>
+    buildMonorepoNginxRoutes({ projectKey, serviceKey, environment }).reduce(
+      (merged, { serviceKey, routeOptions }) => mergeNginxServiceRoute({
+        content: merged,
+        serverName,
+        projectKey,
+        serviceKey,
+        environment,
+        routeOptions
+      }),
+      content
+    );
+
+  const buildMonorepoSupportRepositorySpecs = ({ projectName, environment, domain, service }) => {
+    const compactProject = String(projectName || '').replace(/\s+/g, '');
+    const normalizedEnvironment = normalizeResourceSegment(environment, 'Environment');
+    if (!compactProject || /[\\/\0\r\n]/.test(compactProject)) {
+      throw new Error('Project name cannot be converted to a safe DevOps repository name.');
+    }
+    if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(domain || '')) {
+      throw new Error(`Environment ${environment || '(empty)'} has no valid domain.`);
+    }
+    const projectKey = normalizeResourceSegment(compactProject.toLowerCase(), 'Project key');
+    const serviceKey = normalizeResourceSegment(service, 'Service name');
+    const projectHost = projectKey;
+    const composeDirectory = `${normalizedEnvironment}_${compactProject.toLowerCase()}`;
+    const nginxDirectory = normalizedEnvironment;
+    return [
+      {
+        kind: 'docker',
+        name: `${compactProject}_Docker_DevOps`,
+        directory: composeDirectory,
+        filePath: `/${composeDirectory}/compose.yml`,
+        content: buildMonorepoComposeSample({
+          compactProject,
+          projectKey,
+          serviceKey,
+          environment: normalizedEnvironment
+        }),
+        mergeExisting: (content) => mergeMonorepoComposeServices({
+          content,
+          compactProject,
+          projectKey,
+          serviceKey,
+          environment: normalizedEnvironment
+        })
+      },
+      {
+        kind: 'nginx',
+        name: `${compactProject}_Nginx_DevOps`,
+        directory: nginxDirectory,
+        filePath: `/${nginxDirectory}/${projectHost}-${normalizedEnvironment}.conf`,
+        content: buildMonorepoNginxSample({
+          projectHost,
+          projectKey,
+          serviceKey,
+          environment: normalizedEnvironment,
+          domain: String(domain).toLowerCase()
+        }),
+        mergeExisting: (content) => mergeMonorepoNginxRoutes({
+          content,
+          serverName: `${projectHost}.${String(domain).toLowerCase()}`,
+          projectKey,
+          serviceKey,
+          environment: normalizedEnvironment
+        })
+      }
+    ];
   };
 
   const buildSupportRepositorySpecs = ({
@@ -1857,8 +2197,7 @@
       branch: branchName,
       accessToken
     });
-    const environmentFile = { path: '/environments', content: 'mattermost_channel=changeme' };
-    const desiredFiles = [environmentFile, sampleFile];
+    const desiredFiles = [sampleFile];
     let existingFiles = desiredFiles.map(() => null);
     if (oldObjectId !== ZERO_OBJECT_ID) {
       existingFiles = await Promise.all(
@@ -1927,15 +2266,18 @@
     domain,
     service,
     repositoryAddress,
-    accessToken
+    accessToken,
+    mode = 'pipeline'
   }) => {
-    const specs = buildSupportRepositorySpecs({
-      projectName,
-      environment,
-      domain,
-      service,
-      repositoryAddress
-    });
+    const specs = normalizeGeneratorMode(mode) === 'monorepo'
+      ? buildMonorepoSupportRepositorySpecs({ projectName, environment, domain, service })
+      : buildSupportRepositorySpecs({
+          projectName,
+          environment,
+          domain,
+          service,
+          repositoryAddress
+        });
     const results = [];
     for (const spec of specs) {
       const repo = await ensureRepositoryByName({
@@ -2041,6 +2383,58 @@
       error.detail = detail;
       throw error;
     }
+  };
+
+  const postGeneratedFiles = async ({ hostUri, projectId, repoId, accessToken, files, comment }) => {
+    const branchName = SCAFFOLD_BRANCH;
+    const branchRef = `refs/heads/${branchName}`;
+    const oldObjectId = await getBranchObjectId({ hostUri, projectId, repoId, branch: branchName, accessToken });
+    const normalizedFiles = files.map((file) => ({
+      ...file,
+      path: file.path.startsWith('/') ? file.path : `/${file.path}`,
+      content: String(file.content || '')
+    }));
+    const existing = oldObjectId === ZERO_OBJECT_ID
+      ? normalizedFiles.map(() => null)
+      : await Promise.all(normalizedFiles.map((file) => getRepositoryFileContent({
+          hostUri,
+          projectId,
+          repoId,
+          branchName,
+          path: file.path,
+          accessToken
+        })));
+    const changes = [];
+    normalizedFiles.forEach((file, index) => {
+      const previous = existing[index];
+      if (previous === null) {
+        changes.push({ ...file, changeType: 'add' });
+      } else if (file.overwrite !== false && previous !== file.content) {
+        changes.push({ ...file, changeType: 'edit' });
+      }
+    });
+    if (!changes.length) return { skipped: true, unchanged: true, paths: [] };
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=6.0`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { ...authHeaders(accessToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        refUpdates: [{ name: branchRef, oldObjectId }],
+        commits: [{
+          comment: comment || 'Generate Monorepo pipeline files',
+          changes: changes.map((file) => ({
+            changeType: file.changeType,
+            item: { path: file.path },
+            newContent: { content: file.content, contentType: 'rawtext' }
+          }))
+        }]
+      })
+    });
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw buildHttpError('Failed to save generated Monorepo files', res, detail);
+    }
+    return { skipped: false, paths: changes.map((file) => file.path) };
   };
 
   const buildPipelineConfiguration = ({ repoId, repositoryName, pipelinePath, branch }) => ({
@@ -2185,6 +2579,7 @@
     repo,
     pipelineName,
     desiredConfig,
+    pipelineFolder = PIPELINE_FOLDER,
     accessToken
   }) => {
     // Azure DevOps requires the current revision and recommends GET-modify-PUT
@@ -2200,7 +2595,7 @@
     const updated = {
       ...current,
       name: pipelineName,
-      path: PIPELINE_FOLDER,
+      path: pipelineFolder,
       comment: 'Updated by Pipeline Generator.',
       process: {
         ...(current.process || {}),
@@ -2227,14 +2622,14 @@
     return readBuildDefinitionResponse(res, `Failed to update Build Definition ${current.id}`);
   };
 
-  const pipelineBindingMatches = ({ pipeline, pipelineName, desiredConfig }) => {
+  const pipelineBindingMatches = ({ pipeline, pipelineName, desiredConfig, pipelineFolder = PIPELINE_FOLDER }) => {
     const configuration = pipeline?.configuration;
     const repository = configuration?.repository || pipeline?.repository;
     const yamlPath = configuration?.path || pipeline?.process?.yamlFilename;
     const folder = pipeline?.folder || pipeline?.path;
     return (
       pipeline?.name === pipelineName &&
-      normalizeComparableFolder(folder) === normalizeComparableFolder(PIPELINE_FOLDER) &&
+      normalizeComparableFolder(folder) === normalizeComparableFolder(pipelineFolder) &&
       normalizeComparableYamlPath(yamlPath) === normalizeComparableYamlPath(desiredConfig.path) &&
       String(repository?.id || '') === String(desiredConfig.repository.id) &&
       repository?.defaultBranch === desiredConfig.repository.defaultBranch
@@ -2250,6 +2645,7 @@
     legacyPipelineNames = [],
     legacyPipelinePaths = [],
     branch,
+    pipelineFolder = PIPELINE_FOLDER,
     accessToken
   }) => {
     const repositoryName = `${state.projectName || projectId}/${repo.name}`;
@@ -2279,7 +2675,7 @@
         definitionId: existing.id,
         accessToken
       });
-      if (pipelineBindingMatches({ pipeline: current, pipelineName, desiredConfig })) {
+      if (pipelineBindingMatches({ pipeline: current, pipelineName, desiredConfig, pipelineFolder })) {
         return current || existing;
       }
       return updateBuildDefinition({
@@ -2289,6 +2685,7 @@
         repo,
         pipelineName,
         desiredConfig,
+        pipelineFolder,
         accessToken
       });
     }
@@ -2304,7 +2701,8 @@
       const alreadyDesired = pipelineBindingMatches({
         pipeline: existingForYaml,
         pipelineName,
-        desiredConfig
+        desiredConfig,
+        pipelineFolder
       });
       if (alreadyDesired) {
         return existingForYaml;
@@ -2316,6 +2714,7 @@
         repo,
         pipelineName,
         desiredConfig,
+        pipelineFolder,
         accessToken
       });
     }
@@ -2337,6 +2736,7 @@
           repo,
           pipelineName,
           desiredConfig,
+          pipelineFolder,
           accessToken
         });
       }
@@ -2353,7 +2753,7 @@
         ...authHeaders(accessToken),
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ name: pipelineName, folder: PIPELINE_FOLDER, configuration: desiredConfig })
+      body: JSON.stringify({ name: pipelineName, folder: pipelineFolder, configuration: desiredConfig })
     });
 
     return readPipelineResponse(res, 'Failed to create pipeline');
@@ -2845,9 +3245,10 @@
     environment,
     branch,
     queueName,
-    accessToken
+    accessToken,
+    mode = 'pipeline'
   }) => {
-    const releaseConfig = getReleaseConfig();
+    const releaseConfig = getReleaseConfig(mode);
     if (!releaseConfig.enabled) {
       return { skipped: true, reason: 'Release creation is disabled in dist/release-config.js.' };
     }
@@ -2858,7 +3259,7 @@
       throw markErrorDomain(new Error('Release variableGroupName is empty in dist/release-config.js.'), 'release');
     }
 
-    const releaseName = buildReleaseName({ service, environment });
+    const releaseName = buildReleaseName({ service, environment, mode });
     const existingByName = await getReleaseDefinitionByName({ hostUri, projectId, releaseName, accessToken });
     const existingByPipeline = existingByName?.id
       ? undefined
@@ -2964,6 +3365,98 @@
     return trimmed || '.';
   };
 
+  const buildMonorepoDeploymentContract = () => [
+    'version: 1',
+    'kind: nx-monorepo',
+    'install_command: "pnpm install --frozen-lockfile"',
+    'build_command: "node tools/scripts/with-env.cjs production pnpm exec nx run-many -t build --projects={projects} --parallel=3"',
+    'artifact_name: "mr-drop"',
+    'shell_projects:',
+    '  - "shell"',
+    '  - "host"',
+    'bff_projects:',
+    '  - "bff"',
+    'bff_entry: "main.js"',
+    'continue_on_module_error: true',
+    'orphan_policy: "retain"',
+    '',
+    '# The extension creates this contract once and preserves later edits.',
+    '# New Nx applications are discovered automatically. Each affected module is built independently.',
+    '# A failed module keeps its previous deployed version; a failed shell blocks deployment.',
+    '# A shell change rebuilds every application.',
+    '# Removed or renamed applications are retained as orphans for manual review; nothing is auto-deleted.',
+    ''
+  ].join('\n');
+
+  const quoteYaml = (value) => `'${String(value || '').replace(/'/g, "''")}'`;
+
+  const buildMonorepoPipelineYaml = (payload, options = {}) => {
+    const sourceBranchName = (options.sourceBranch || 'main').replace(/^refs\/heads\//, '');
+    const sourceRepositoryName =
+      options.rawRepositoryName || options.repositoryName || options.sourceRepositoryName || 'repository';
+    const projectName = options.rawProjectName || options.projectName || 'PROJECTNAME';
+    const compactProject = String(projectName).replace(/\s+/g, '');
+    const projectKey = normalizeResourceSegment(compactProject.toLowerCase(), 'Project key');
+    const serviceKey = normalizeResourceSegment(
+      payload.service || deriveServiceNameFromRepository(sourceRepositoryName, projectName),
+      'Service name'
+    );
+    const environment = normalizeResourceSegment(payload.environment, 'Environment');
+    const normalizedService = serviceKey.replace(/-/g, '_');
+    const deploymentRoot = buildMonorepoDeploymentRoot({ compactProject, projectKey, serviceKey, environment });
+    const staticContainer = `${projectKey}_${normalizedService}_${environment}`;
+    const bffContainer = `${projectKey}_${normalizedService}_bff_${environment}`;
+    const runtimeVariablePrefix = `MR_${projectKey}_${serviceKey}_${environment}`
+      .replace(/[^a-z0-9]+/gi, '_')
+      .toUpperCase();
+    const bffProfile = `mr-${serviceKey}-bff`;
+    const composeRepository = `${compactProject}_Docker_DevOps`;
+    const composePath = `/${environment}_${compactProject.toLowerCase()}/compose.yml`;
+    const komodoResources = buildMonorepoKomodoResourceNames({ compactProject, environment });
+    return [
+      'trigger: none',
+      '',
+      'resources:',
+      '  repositories:',
+      '    - repository: SharedTemplatesRepo',
+      '      type: git',
+      '      endpoint: ShonizCollection',
+      '      name: SharedTemplates/SharedTemplates',
+      '      ref: refs/heads/main',
+      '',
+      '    - repository: sourceRepo',
+      '      type: git',
+      `      name: ${quoteYaml(`${projectName}/${sourceRepositoryName}`)}`,
+      `      ref: ${quoteYaml(`refs/heads/${sourceBranchName}`)}`,
+      '      trigger:',
+      '        branches:',
+      '          include:',
+      `            - ${quoteYaml(sourceBranchName)}`,
+      '',
+      'variables:',
+      '  - group: KomodoAPI',
+      '',
+      'stages:',
+      '  - template: monorepo/pipeline.yml@SharedTemplatesRepo',
+      '    parameters:',
+      `      pool: ${quoteYaml(payload.pool)}`,
+      `      projectKey: ${quoteYaml(projectKey)}`,
+      `      serviceKey: ${quoteYaml(serviceKey)}`,
+      `      environment: ${quoteYaml(environment)}`,
+      `      komodoServer: ${quoteYaml(payload.komodoServer)}`,
+      `      deploymentRoot: ${quoteYaml(deploymentRoot)}`,
+      `      staticContainer: ${quoteYaml(staticContainer)}`,
+      `      bffContainer: ${quoteYaml(bffContainer)}`,
+      `      runtimeVariablePrefix: ${quoteYaml(runtimeVariablePrefix)}`,
+      `      bffProfile: ${quoteYaml(bffProfile)}`,
+      `      composeRepository: ${quoteYaml(composeRepository)}`,
+      `      composePath: ${quoteYaml(composePath)}`,
+      `      komodoRepository: ${quoteYaml(komodoResources.repository)}`,
+      `      komodoStack: ${quoteYaml(komodoResources.stack)}`,
+      ''
+    ].join('\n');
+  };
+
   const buildPipelineYaml = (payload, options = {}) => {
     const sourceBranchName = (options.sourceBranch || 'main').replace(/^refs\/heads\//, '');
     const sourceRepositoryName =
@@ -3044,14 +3537,17 @@
       setSubmitting(false);
       return;
     }
-    const yaml = buildPipelineYaml(payload, {
+    const generatorOptions = {
       sourceBranch: state.sourceBranch,
       rawProjectName: state.rawProjectName,
       projectName: state.projectName,
       rawRepositoryName: state.rawRepositoryName,
       repositoryName: state.repositoryName,
       sourceRepositoryName: state.rawRepositoryName || state.repositoryName || state.projectName
-    });
+    };
+    const yaml = isMonorepoMode()
+      ? buildMonorepoPipelineYaml(payload, generatorOptions)
+      : buildPipelineYaml(payload, generatorOptions);
 
     setStatus('Generating pipeline template...');
     setSubmitting(true);
@@ -3082,7 +3578,8 @@
       projectName: state.projectName,
       repositoryName: sourceRepositoryName,
       environment: payload.environment,
-      branchName: state.sourceBranch
+      branchName: state.sourceBranch,
+      mode: state.mode
     });
     const legacyPipelineFilename = buildLegacyPipelineFilename({
       projectName: state.projectName,
@@ -3098,8 +3595,10 @@
     const pipelineName = buildPipelineName(pipelineFilename);
     const releaseName = buildReleaseName({
       service: payload.service,
-      environment: payload.environment
+      environment: payload.environment,
+      mode: state.mode
     });
+    const pipelineFolder = getPipelineFolder();
 
     if (!state.accessToken || !state.projectId) {
       setStatus('Open the extension from Azure DevOps to create the repositories, files, Pipeline, and Release.', true);
@@ -3128,7 +3627,8 @@
             domain: environmentConfig.domain,
             service: payload.service,
             repositoryAddress: payload.repositoryAddress,
-            accessToken: state.accessToken
+            accessToken: state.accessToken,
+            mode: state.mode
           });
           return pipelineRepo;
         }
@@ -3136,16 +3636,34 @@
       state.generatedRepoId = repo.id || state.generatedRepoId;
       state.generatedRepositoryName = repo.name || state.generatedRepositoryName;
       state.branch = targetBranch;
-      await runProvisioningStep(`Step 2/5: saving YAML file /${pipelineFilename}...`, () =>
-        postScaffold({
-          hostUri: state.hostUri,
-          projectId: state.projectId,
-          repoId: repo.id,
-          branch: targetBranch,
-          accessToken: state.accessToken,
-          content: yaml,
-          pipelineFilename
-        })
+      await runProvisioningStep(
+        isMonorepoMode()
+          ? `Step 2/5: saving MR Pipeline and /.devops deployment files...`
+          : `Step 2/5: saving YAML file /${pipelineFilename}...`,
+        async () => {
+          if (!isMonorepoMode()) {
+            return postScaffold({
+              hostUri: state.hostUri,
+              projectId: state.projectId,
+              repoId: repo.id,
+              branch: targetBranch,
+              accessToken: state.accessToken,
+              content: yaml,
+              pipelineFilename
+            });
+          }
+          return postGeneratedFiles({
+            hostUri: state.hostUri,
+            projectId: state.projectId,
+            repoId: repo.id,
+            accessToken: state.accessToken,
+            comment: `Generate MR Pipeline ${pipelineFilename}`,
+            files: [
+              { path: `/${pipelineFilename}`, content: yaml },
+              { path: '/.devops/deployments.yml', content: buildMonorepoDeploymentContract(), overwrite: false }
+            ]
+          });
+        }
       );
       await runProvisioningStep('Step 3/5: setting the generated repository default branch...', () =>
         ensureDefaultBranch({
@@ -3158,7 +3676,7 @@
       );
 
       const pipelineDefinition = await runProvisioningStep(
-        `Step 4/5: creating or updating Pipeline ${pipelineName} in ${PIPELINE_FOLDER}...`,
+        `Step 4/5: creating or updating Pipeline ${pipelineName} in ${pipelineFolder}...`,
         () =>
           upsertPipelineDefinition({
             hostUri: state.hostUri,
@@ -3166,12 +3684,14 @@
             repo,
             pipelineName,
             pipelinePath: `/${pipelineFilename}`,
-            legacyPipelineNames: [legacyEnvironmentFirstPipelineFilename, legacyPipelineFilename],
-            legacyPipelinePaths: [
-              `/${legacyEnvironmentFirstPipelineFilename}`,
-              `/${legacyPipelineFilename}`
-            ],
+            legacyPipelineNames: isMonorepoMode()
+              ? []
+              : [legacyEnvironmentFirstPipelineFilename, legacyPipelineFilename],
+            legacyPipelinePaths: isMonorepoMode()
+              ? []
+              : [`/${legacyEnvironmentFirstPipelineFilename}`, `/${legacyPipelineFilename}`],
             branch: targetBranch,
+            pipelineFolder,
             accessToken: state.accessToken
           })
       );
@@ -3190,7 +3710,8 @@
             environment: payload.environment,
             branch: targetBranch,
             queueName: payload.pool,
-            accessToken: state.accessToken
+            accessToken: state.accessToken,
+            mode: state.mode
           })
       );
 
@@ -3200,10 +3721,15 @@
             releaseDefinition.created ? 'created' : releaseDefinition.updated ? 'updated' : 'already up to date'
           } (ID: ${releaseDefinition.id}).`;
       setStatus(
-        `Done. Pipeline ${pipelineName} is linked to /${pipelineFilename} in ${PIPELINE_FOLDER} (ID: ${pipelineDefinition?.id || 'unknown'}). ${releaseMessage} Review the generated Nginx and Compose files below, then run the Pipeline manually.`,
+        `Done. Pipeline ${pipelineName} is linked to /${pipelineFilename} in ${pipelineFolder} (ID: ${pipelineDefinition?.id || 'unknown'}). ${releaseMessage} Review the generated ${isMonorepoMode() ? 'deployment contract, ' : ''}Nginx and Compose files below, then run the Pipeline manually.`,
         false
       );
-      showCompletionLinks({ supportRepositories, pipelineDefinition });
+      showCompletionLinks({
+        supportRepositories,
+        pipelineDefinition,
+        generatedRepo: repo,
+        contractPath: isMonorepoMode() ? '/.devops/deployments.yml' : undefined
+      });
     } catch (error) {
       console.error(error);
       const detail = sanitizeErrorDetail(error?.detail || error?.message || '');
@@ -3258,6 +3784,8 @@
     setStatus('Loading Azure DevOps context...');
     populateDefaults();
     const query = new URLSearchParams(window.location.search);
+    const modeFromQuery = normalizeGeneratorMode(getQueryValue(query.get('mode')));
+    applyModePresentation(modeFromQuery);
     const branchFromQuery = getQueryValue(query.get('branch'));
     const projectIdFromQuery = getQueryValue(query.get('projectId'));
     const projectNameFromQuery = getQueryValue(query.get('projectName')) || projectIdFromQuery;
@@ -3360,6 +3888,7 @@
       const dialogConfiguration = getDialogConfiguration(sdk);
       const hostNavigationState = await getHostNavigationState(sdk);
       const hostedConfiguration = { ...hostNavigationState, ...dialogConfiguration };
+      applyModePresentation(hostedConfiguration.mode || modeFromQuery);
 
       const branch =
         getQueryValue(hostedConfiguration.branch) ||
@@ -3445,13 +3974,20 @@
             console.warn('Failed to fetch repository metadata', repoError);
           }
         }
-        await loadDeploymentTargets({ hostUri, accessToken, branch });
-        await Promise.all([
-          loadPools({ hostUri, projectId, accessToken }),
-          loadContainerRegistries({ hostUri, projectId, accessToken }),
-          refreshDockerfiles({ hostUri, projectId, repoId, branch, accessToken })
-        ]);
-        setStatus('Azure DevOps context ready. Generate the pipeline when you are ready.');
+        await loadDeploymentTargets({ hostUri, branch });
+        const resourceLoads = [loadPools({ hostUri, projectId, accessToken })];
+        if (!isMonorepoMode()) {
+          resourceLoads.push(
+            loadContainerRegistries({ hostUri, projectId, accessToken }),
+            refreshDockerfiles({ hostUri, projectId, repoId, branch, accessToken })
+          );
+        }
+        await Promise.all(resourceLoads);
+        setStatus(
+          isMonorepoMode()
+            ? 'Azure DevOps context ready. Generate the MR Pipeline when you are ready.'
+            : 'Azure DevOps context ready. Generate the pipeline when you are ready.'
+        );
       } catch (tokenError) {
         console.error('Failed to initialize Azure DevOps context', tokenError);
         const detail = sanitizeErrorDetail(tokenError?.detail || tokenError?.message || '');
@@ -3468,7 +4004,7 @@
             detail || 'Verify the file, branch, YAML structure, and repository Read permission.'
           }`;
         }
-        if (isUnauthorizedError(tokenError)) {
+        if (isUnauthorizedError(tokenError) && tokenError?.authenticationMode !== 'browser-session') {
           setReauthenticationVisibility(
             true,
             'The Azure DevOps host token could not access the required APIs. Sign out and authenticate again, then reopen the generator.'

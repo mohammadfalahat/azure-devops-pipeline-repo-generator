@@ -1,6 +1,6 @@
 # Architecture and runtime flow
 
-This document describes version 0.1.43 from the implementation in
+This document describes version 0.1.52 from the implementation in
 `vss-extension.json`, `dist/menu-action.js`, `dist/ui.js`, and
 `dist/release-config.js`.
 
@@ -36,18 +36,20 @@ already exist.
 
 | Component | Loaded by | Main responsibilities |
 | --- | --- | --- |
-| `vss-extension.json` | Azure DevOps extension host | Declares the branch-menu action, Dialog control, Azure Repos Hub, supported hosts, addressable files, and token scopes |
-| `menu-action.html` / `menu-action.js` | Hidden action contribution iframe | Initializes VSS SDK, registers `generate-pipeline-action`, extracts branch context, warms assets, and asks the host to open the form |
+| `vss-extension.json` | Azure DevOps extension host | Declares the normal and Monorepo branch-menu actions, Dialog control, Azure Repos Hub, supported hosts, addressable files, and token scopes |
+| `menu-action.html` / `menu-action.js` | Hidden action contribution iframe | Initializes VSS SDK, registers `generate-pipeline-action` and `generate-monorepo-action`, extracts branch context/mode, warms assets, and asks the host to open the form |
 | `index.html` / `ui.js` | Dialog or `pipeline-generator-hub` host iframe | Reads host configuration/navigation state, obtains the current-user host token, hydrates the form, performs five provisioning steps, displays errors, and renders Nginx/Compose/Pipeline review links |
 | `release-config.js` | Loaded before `ui.js` | Exposes immutable `window.PipelineGeneratorReleaseConfig` with Release settings, `KomodoAPI` requirements, and Bash source selection |
 | `release-inline-task.sh` | Fetched by `ui.js` from the installed extension assets | Provides the wrapper text embedded into the classic Release Bash task |
+| `monorepo-build.cjs` | Maintained mirror of `SharedTemplates:/monorepo/mr-build.cjs` | Discovers buildable Nx apps, computes affected apps, applies shell rebuild-all, resolves output paths, and creates `mr-drop` |
+| `monorepo-release-inline-task.sh` | Embedded by `ui.js` into MR classic Releases | Uses Komodo 1.19.5 Terminal calls to stage the Build artifact, executes the shared ADO Git-linked Docker Stack, and polls the asynchronous Update |
 | `VSS.SDK*.js` | Action and generator pages | Supplies the legacy VSS extension APIs required by the supported on-premises host |
 | `provision-pipeline-release.sh` | Terminal operator or automation | Creates/reuses a Pipeline and Release definition using REST and Basic PAT authentication |
 
 ## Extension contribution lifecycle
 
-The manifest contributes an `ms.vss-web.action` with registered object ID
-`generate-pipeline-action`, an invisible `ms.vss-web.control` named
+The manifest contributes two `ms.vss-web.action` objects with registered object
+IDs `generate-pipeline-action` and `generate-monorepo-action`, an invisible `ms.vss-web.control` named
 `pipeline-generator-dialog`, and an `ms.vss-web.hub` named
 `pipeline-generator-hub`. The action targets several legacy and current
 branch-menu contribution IDs because Azure DevOps Server versions expose
@@ -63,8 +65,8 @@ When Azure DevOps loads the action:
 3. It calls `VSS.init({ usePlatformScripts: true, explicitNotifyLoaded: true })`
    and waits for `VSS.ready`.
 4. It preloads and warms the generator assets.
-5. It registers an object whose `execute(context)` method calls
-   `openGenerator`.
+5. It registers both action objects; their `execute(context)` methods call
+   `openGenerator` with `pipeline` or `monorepo` mode.
 6. `openGenerator` requests the core host page-layout service and calls
    `openCustomDialog` with the fully-qualified control contribution ID.
 7. If that service is unavailable, it uses the legacy host navigation service
@@ -222,8 +224,10 @@ The form starts with these defaults:
 | Komodo server | Loaded directly from Komodo using the central SharedTemplates credential file; only resources with `config.enabled === true` are retained, then the selected environment is used for label inference |
 | Target repository | Read-only `<ProjectName>_Azure_DevOps` |
 
-The hosted UI concurrently reads the environment and credential files with the
-signed-in user's Bearer token through the Git Items API. It then sends the
+The hosted UI concurrently reads the environment and credential files through
+the same-origin signed-in browser session, without forwarding the current
+collection's Bearer token to the sibling collection. Current-project REST calls
+continue to use that scoped Bearer token. The UI then sends the
 credential only in `X-Api-Key` and `X-Api-Secret` headers to Komodo `/read`.
 The YAML `environments` list must contain a valid domain for every name, and
 the filtered Komodo result must be non-empty. The preferred record shape is
@@ -273,9 +277,8 @@ removed from the project name while casing is preserved in repository names:
 <ProjectNameWithoutSpaces>_Nginx_DevOps
 ```
 
-Each repository uses `main` and receives `/environments` with
-`mattermost_channel=changeme` only when that file is missing. The selected
-environment receives starter files instead of empty placeholders:
+Each repository uses `main`. The selected environment receives starter files
+instead of empty placeholders:
 
 ```text
 Docker: /<environment>_<lowercase-project-without-spaces>/compose.yml
@@ -293,8 +296,9 @@ in `$target`. Root uses `proxy_pass http://$target:80/`. A non-root route adds
 the original request URI—including its service prefix—is forwarded unchanged.
 This keeps container DNS dynamic. The root Location is
 always placed after every other managed Location. WebSocket forwarding is enabled,
-`client_max_body_size` is zero, and certificate filenames use the first domain
-label. A later run reads the shared Nginx file, identifies its unique HTTPS
+`client_max_body_size` is zero, and certificate filenames use the complete
+environment domain (for example, `bulutco.cloud.pem` and `bulutco.cloud.key`).
+A later run reads the shared Nginx file, identifies its unique HTTPS
 `server` by exact `server_name` plus port 443, and enumerates direct-child
 Locations with a quote/comment/brace-aware tokenizer. Existing non-root
 `/<service>` paths are migrated to `/<service>/`, exact rewrite lines from the
@@ -414,8 +418,9 @@ Each step updates the status element and attaches its label to any thrown error.
 The UI lists project repositories using Git API 6.0 and compares exact names.
 If the generated, Docker DevOps, or Nginx DevOps repository is missing, it
 creates it in the current project. The two support repositories are initialized
-idempotently with their root `environments` file, selected-environment starter
-configuration, and `main` default branch before Step 2 begins.
+idempotently with their selected-environment starter configuration and `main`
+default branch before Step 2 begins. The extension does not create a root
+`environments` file in either repository.
 
 ### Step 2: add or edit YAML
 
@@ -515,15 +520,96 @@ The environment has a `ReleaseStarted` event condition, automated pre- and
 post-deployment approvals, 30-day/3-release retention, and the selected queue.
 No continuous deployment trigger is configured.
 
+## Nx Monorepo (`MR`) execution model
+
+Monorepo mode uses the same five provisioning steps but selects separate
+renderers and identities. The generated Pipeline/Release live under
+`\komodo\MR`, the Pipeline filename contains `-MR-<Branch>To<ENV>`, and the
+Release is named `MR <ENV>`. Normal Pipeline definitions are never considered
+legacy candidates for MR reconciliation.
+
+Step 1 creates/reuses the same project Docker and Nginx repositories and merges
+the Monorepo runtime into the existing project/Environment Compose instead of
+creating another Compose directory. The logical Monorepo service uses one generic
+`nginx:1.27-alpine` container for shell/static assets and an optional generic
+`node:20-alpine` companion for the discovered BFF output (default name `bff`). Both mount the service
+deployment directory, so changing its `current` symlink is visible without
+rebuilding or replacing the static runtime image. The outer Nginx configuration
+routes `/api/` to the BFF and `/` to the static runtime, uses Docker's dynamic
+resolver, performs no rewrite, and keeps `/` after non-root Locations.
+The Compose file stays on `main` in the project's Docker DevOps repository and
+is the deployment source of truth; no generated or downloaded target-side copy
+replaces it.
+
+Step 2 atomically pushes two files into the generated repository:
+
+- the MR Pipeline YAML, which references
+  `monorepo/pipeline.yml@SharedTemplatesRepo` (managed on every generator rerun);
+- `/.devops/deployments.yml` (created only when absent, preserving operator
+  edits on later runs).
+
+The central template checks out the generated repository, source Monorepo, and
+SharedTemplates, then runs `SharedTemplates:/monorepo/mr-build.cjs` and packages
+`SharedTemplates:/monorepo/nginx/default.conf` below `mr-drop/runtime/nginx`.
+It also creates or updates the normal Komodo Repo pointing to
+`<Project>_Docker_DevOps@main` and partially reconciles the same normal Docker Stack whose
+`linked_repo`, `run_directory`, and `file_paths` resolve the exact Git-managed
+shared `compose.yml`. Existing Stack environment and extra arguments are retained;
+only namespaced Monorepo variables/profile arguments are merged. The Pipeline configures resources but never deploys the Stack.
+Compose bind-mounts the deployed stable copy instead of constructing Nginx
+configuration with an inline command. At Build
+time the runner installs with `pnpm install --frozen-lockfile`, asks Nx
+for buildable applications and affected applications, and invokes the contract
+build command separately for each affected project with `{projects}` replaced
+by that project. A configured shell/host application in the affected set
+promotes the run to rebuild all applications. An ordinary failed project is
+recorded and omitted from the overlay, so its prior deployed version remains;
+successful projects continue and the Build is marked `SucceededWithIssues`.
+A failed shell or a run in which every affected project fails produces no
+deployable artifact. Nx metadata supplies each build output path. The single
+`mr-drop` Build artifact contains a complete `inventory.tsv`, a JSON manifest,
+the successful output directories, and the failed-project list.
+
+The MR Release embeds `monorepo-release-inline-task.sh`. The Release agent finds
+the downloaded manifest, then calls Komodo 1.19.5 `POST /terminal/execute` with
+the version-appropriate `{server, terminal, command}` body. The target server
+downloads `mr-drop` from Azure DevOps, hard-links/copies the prior active tree,
+overlays changed modules, writes the new inventory, and atomically switches the
+`current` symlink. The Release then calls Komodo `/execute` with `DeployStack`
+for the shared Git-linked Docker Stack and polls `/read` with `GetUpdate` until the Update
+is `Complete`; `success` must be true.
+The Release syntax-checks the packaged Nginx configuration, installs it below
+`<deployment-root>/runtime/nginx`, and validates/reloads the static container.
+Static project directories are symlinked below the shell root by Nx project
+name, making `/<project-name>/` available through the catch-all static Runtime.
+The discovered BFF project name is passed to Compose and its profile is enabled
+only when that output exists in the selected release tree; a deployment or
+validation failure restores the prior symlink/Nginx file and redeploys the
+Stack against the restored state. Modules missing from the new inventory are logged and
+retained as orphans; ambiguous rename/removal never triggers automatic delete.
+The BFF container is restarted only when the artifact contains a BFF module.
+
+The browser's central Server-list key remains Server-Read only. The separate
+credentials expanded from the current project's `KomodoAPI` Variable Group at
+Build/Release execution need Repo/Stack read-create-update permissions,
+`DeployStack` execution, and Terminal permission on the selected Server. The Azure
+PAT is transmitted to the target only inside the authenticated terminal task
+so that the target can download its Build artifact; secret headers are fed to
+curl through config/stdin and shell xtrace is not enabled.
+
 ## Reconciliation and retry behavior
 
 | Resource | Lookup identity | Existing-resource behavior |
 | --- | --- | --- |
-| Generated/support repository | Exact repository name | Reuse; add missing bootstrap files and merge only missing Nginx service Locations |
+| Generated/support repository | Exact repository name | Reuse; add missing bootstrap files and merge only missing Compose services and Nginx Locations |
 | YAML file | Generated path on `main` | Reuse without Push when byte-identical; otherwise add/edit with a new commit |
 | Default branch | Repository ID | Always patch to `refs/heads/main` |
 | Pipeline | Exact BranchToEnvironment name/path, then 0.1.37 Environment-first and older branch-only identities | Reuse or GET-modify-PUT through Build Definitions |
 | Release definition | Exact Release name, then Pipeline artifact ID | Reuse or reconcile through Release Definitions PUT |
+| MR deployment contract | `/.devops/deployments.yml` on `main` | Create when missing; preserve all later edits |
+| MR Compose Git source | `<Project>_Docker_DevOps:/<environment>_<project>/compose.yml@main` | Reuse the ordinary shared Compose; merge only absent Monorepo service entries and preserve existing/operator-edited services |
+| MR Komodo Repo/Stack | The same `<Project>_Docker_DevOps-<environment>` Repo and Stack identities used by ordinary services | Apply only partial Stack updates, preserving unrelated config; deploy only from Release |
+| MR runtime state | `<deployment-root>/current` and per-build release directory | Overlay affected modules and atomically switch; retain removed/renamed orphans |
 
 Because there is no rollback, a later failure leaves earlier successful
 resources in place. This is intentional and makes most retries convergent. For

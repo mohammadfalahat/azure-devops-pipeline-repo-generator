@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.43
+This document is the integration contract between Pipeline Generator 0.1.52
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 
@@ -130,8 +130,8 @@ All calls send the Bearer and redirect-suppression headers.
 | Set default branch | `PATCH {project}/_apis/git/repositories/{repo}` | `6.0` | Set `defaultBranch` to `refs/heads/main` |
 | Scan Dockerfiles | `GET {project}/_apis/git/repositories/{sourceRepo}/items?recursionLevel=Full...` | `6.0` | Find files whose basename is `Dockerfile` |
 | Read one repository | `GET {project}/_apis/git/repositories/{repo}` | `6.0` | Fallback source-repository name lookup |
-| Read environments | `GET /ShonizCollection/SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/pipeline-generator.yml...` | `6.0` | Always target the central sibling collection, then read and validate non-empty Environment name/domain records from `main`; legacy `servers` entries are ignored |
-| Read Komodo credentials | `GET /ShonizCollection/SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/komodo-servers-creds.env...` | `6.0` | Always target the central sibling collection, then read and validate `KOMODO_ADDRESS`, `KOMODO_API_KEY`, and `KOMODO_API_SECRET` from `main` using the current-user Bearer token |
+| Read environments | `GET /ShonizCollection/SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/pipeline-generator.yml...` | `6.0` | Always target the central sibling collection with the same-origin browser session and no `Authorization` header, then validate non-empty Environment name/domain records from `main`; legacy `servers` entries are ignored |
+| Read Komodo credentials | `GET /ShonizCollection/SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/komodo-servers-creds.env...` | `6.0` | Always target the central sibling collection with the same-origin browser session and no `Authorization` header, then validate `KOMODO_ADDRESS`, `KOMODO_API_KEY`, and `KOMODO_API_SECRET` from `main` |
 | Ensure support repositories | List/create repository plus refs, items, pushes, and repository PATCH under the current project | `6.0` | Create/reuse Docker/Nginx DevOps repositories, add missing bootstrap files, merge only absent service Locations into the shared Nginx file, and set `main` |
 | List agent queues | `GET {project}/_apis/distributedtask/queues` | `6.0` | Populate Pool options and resolve Release queue ID |
 | Resolve Release Variable Group | `GET {project}/_apis/distributedtask/variablegroups?groupName=KomodoAPI&actionFilter=Use` | `7.1` | Find the exact group, validate required variable names, and retain only its numeric ID |
@@ -176,8 +176,8 @@ host:       locanit.bulutdev.ir
 container:  locanit_api_dev
 route:      /api/
 proxy:      http://$target:8080
-certificate /etc/nginx/conf.d/bulutdev.pem
-key:         /etc/nginx/conf.d/bulutdev.key
+certificate /etc/nginx/conf.d/bulutdev.ir.pem
+key:         /etc/nginx/conf.d/bulutdev.ir.key
 ```
 
 `ui`, `front`, `frontend`, `newui`, and service names ending in `-ui` use `/`,
@@ -267,10 +267,9 @@ provisioning relies on the POST completing successfully and on the server being
 able to resolve the new path immediately.
 
 The Docker and Nginx support repositories use the same Git push contract. A
-missing `main` branch receives one initial commit containing `/environments`
-and the selected Environment's Compose or shared Nginx starter. On an existing
-branch, the UI reads both exact file paths. `/environments` and `compose.yml`
-are add-only. The shared Nginx file is add-or-semantic-edit: only a missing
+missing `main` branch receives one initial commit containing the selected
+Environment's Compose or shared Nginx starter. On an existing branch, the UI
+reads the exact starter-file path. `compose.yml` is add-only. The shared Nginx file is add-or-semantic-edit: only a missing
 managed Location is inserted; existing Location blocks and manual content are
 not rewritten. The ref `oldObjectId` protects all writes from silently
 overwriting a concurrent branch update.
@@ -409,6 +408,89 @@ revision, and environment ID preserved. Duplicate-name conflicts are re-read
 and reconciled. Historical unrelated definitions are never deleted
 automatically.
 
+## Monorepo artifact and Komodo GitOps contracts
+
+An MR Build publishes one container artifact named `mr-drop` with
+`PublishBuildArtifacts@1`. Its `manifest.json` records the Build ID, current
+collection/project, selected Komodo Server, managed deployment root, complete
+Nx application inventory, the subset packaged in the current Build, the
+Komodo Stack name, discovered BFF project, and any independently failed modules whose previous
+deployed versions must be retained. The central Pipeline template additionally
+places `SharedTemplates:/monorepo/nginx/default.conf` at
+`mr-drop/runtime/nginx/default.conf`.
+
+The classic Release downloads that artifact on its agent. The target server
+then downloads the same immutable Build artifact with the Azure DevOps Build
+Artifacts route:
+
+```http
+GET <collection>/<project-id>/_apis/build/builds/<build-id>/artifacts
+    ?artifactName=mr-drop&%24format=zip&api-version=6.0
+Authorization: Basic base64(pat:<AZP_TOKEN>)
+```
+
+This target-side request is necessary because the Release agent and Komodo
+Server do not share a filesystem. The PAT is expanded only when the Release
+runs. It is not stored in generated Git files or browser assets.
+
+The Compose file remains on `main` in the current project's Docker DevOps
+repository. During Build, the central template uses Komodo `/read` and `/write`
+to create/update:
+
+- a Repo configured for that exact private ADO Git repository and `main`;
+- the same project/Environment Docker Stack used by ordinary services, linked
+  to that Repo with `files_on_host: false`, the shared Compose directory as
+  `run_directory`, and `file_paths: ["compose.yml"]`. Updates are partial and
+  merge namespaced Monorepo environment/Profile values without replacing
+  unrelated Stack configuration.
+
+The Pipeline does not deploy. During Release, the target-side Terminal command
+only prepares the versioned module tree and packaged Nginx configuration. The
+Release then sends `DeployStack` to Komodo `/execute` and polls `GetUpdate` on
+`/read` until `status` is `Complete`; it accepts the deployment only when
+`success` is true. A failed deploy/validation restores the previous `current`
+symlink and Nginx file and best-effort redeploys the same Git Stack against the
+restored runtime state. A successful deployment is followed by `nginx -t` and
+`nginx -s reload`. Successful static modules are exposed below
+`/<nx-project-name>/` by symlinks in the versioned shell root; no image rebuild
+is involved.
+
+The installed Komodo version is 1.19.5. Its streaming terminal endpoint is:
+
+```http
+POST https://komodo.example/terminal/execute
+X-Api-Key: <KOMODO_API_KEY>
+X-Api-Secret: <KOMODO_API_SECRET>
+Content-Type: application/json
+
+{
+  "server": "<selected-server-id-or-name>",
+  "terminal": "ado-mr-<build-id>",
+  "command": "bash -lc '<validated deployment command>'"
+}
+```
+
+Do not replace this with the Komodo v2 `{target, init, command}` body while the
+server remains on 1.19.5. A successful stream must end with
+`__KOMODO_EXIT_CODE__:0`; an HTTP 200 without that marker is treated as a
+failed/early terminal exit.
+
+The Komodo resource/action calls use the normal 1.19.5 typed envelopes:
+
+```json
+{"type":"CreateRepo","params":{"name":"...","config":{"server_id":"...","repo":"...","branch":"main","path":"..."}}}
+{"type":"CreateStack","params":{"name":"<Project>_Docker_DevOps-<env>","config":{"linked_repo":"...","run_directory":"...","file_paths":["compose.yml"],"files_on_host":false}}}
+{"type":"DeployStack","params":{"stack":"<Project>_Docker_DevOps-<env>"}}
+{"type":"GetUpdate","params":{"id":"<update-id>"}}
+```
+
+The central credential used by the browser for `ListFullServers` needs only
+Server Read. The separate `KomodoAPI` Variable Group credential needs enough
+Repo/Stack access to list, create and update those resources, permission to
+execute `DeployStack`, and Terminal permission on the selected Server. Header values are
+provided to curl via stdin/config, never `-H` process arguments, and the MR
+wrapper never enables shell xtrace.
+
 ## API versions: browser versus shell
 
 The browser uses fixed versions close to each call:
@@ -464,7 +546,11 @@ The current-user extension token must be able to read
 `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml` on
 `main`, including when the extension is launched from a sibling collection.
 The extension uses the existing `vso.code` scope; project/repository ACLs still
-apply. Missing access, a missing file, malformed YAML, or an empty list is a
+apply to its current-collection operations. The central read relies on the
+same signed-in user's host session and repository ACL, sets
+`credentials: same-origin`, suppresses authentication redirects, and never
+forwards the current collection's extension Bearer token. Missing access, a
+missing file, malformed YAML, or an empty list is a
 blocking form-initialization error rather than a fallback to stale values.
 
 ### Internal proxy bypass
@@ -546,3 +632,8 @@ in API version or URL shape.
 - [Update a classic Release definition](https://learn.microsoft.com/en-us/rest/api/azure/devops/release/definitions/update?view=azure-devops-rest-7.1)
 - [List classic Release definitions and continuation-token parameters](https://learn.microsoft.com/en-us/rest/api/azure/devops/release/definitions/list?view=azure-devops-rest-7.1)
 - [Get Variable Groups by project and name](https://learn.microsoft.com/en-us/rest/api/azure/devops/distributedtask/variablegroups/get-variable-groups?view=azure-devops-rest-7.1)
+- [Komodo 1.19.5 Repo configuration contract](https://docs.rs/crate/komodo_client/1.19.5/source/src/entities/repo.rs)
+- [Komodo 1.19.5 Stack configuration contract](https://docs.rs/crate/komodo_client/1.19.5/source/src/entities/stack.rs)
+- [Komodo 1.19.5 Stack write request contract](https://docs.rs/crate/komodo_client/1.19.5/source/src/api/write/stack.rs)
+- [Komodo 1.19.5 TypeScript terminal client and `/terminal/execute` contract](https://github.com/moghtech/komodo/blob/v1.19.5/client/core/ts/src/terminal.ts)
+- [Komodo API and client overview](https://komo.do/docs/ecosystem/api)

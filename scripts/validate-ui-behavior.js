@@ -9,6 +9,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const yaml = require('js-yaml');
 
 const root = path.resolve(__dirname, '..');
 const uiPath = path.join(root, 'dist/ui.js');
@@ -26,6 +27,17 @@ const instrumented = source.replace(
 	    buildLegacyEnvironmentFirstPipelineFilename,
 	    buildPipelineName,
 	    buildReleaseName,
+	    normalizeGeneratorMode,
+	    applyModePresentation,
+	    getPipelineFolder,
+	    getReleaseConfig,
+	    buildMonorepoDeploymentContract,
+	    buildMonorepoPipelineYaml,
+	    buildMonorepoSupportRepositorySpecs,
+	    buildMonorepoComposeSample,
+	    mergeMonorepoComposeServices,
+	    buildMonorepoNginxSample,
+	    mergeMonorepoNginxRoutes,
 	    buildCollectionUri,
 	    buildCentralGitItemUrl,
 	    parseDeploymentTargetsYaml,
@@ -61,6 +73,7 @@ const instrumented = source.replace(
 	    resolveReleaseVariableGroup,
 	    resolveReleaseInlineScript,
 	    postScaffold,
+	    postGeneratedFiles,
 	    pipelineBindingMatches,
     upsertPipelineDefinition,
     ensureReleaseDefinition,
@@ -98,6 +111,8 @@ const environment = element({
 });
 const elements = new Map([
   ['branch-label', element()],
+  ['page-title', element()],
+  ['form-hint', element()],
   ['branch', element()],
   ['environment', environment],
   ['pool', element()],
@@ -115,7 +130,14 @@ const elements = new Map([
   ['completion-panel', element({ className: 'completion-panel hidden' })],
   ['nginx-result-link', element()],
   ['compose-result-link', element()],
-  ['pipeline-result-link', element()]
+  ['pipeline-result-link', element()],
+  ['contract-result-item', element({ className: 'hidden' })],
+  ['contract-result-link', element()],
+  ['completion-hint', element()],
+  ['service-field', element()],
+  ['dockerfile-field', element()],
+  ['registry-address-field', element()],
+  ['registry-service-field', element()]
 ]);
 
 const document = {
@@ -210,6 +232,69 @@ assert.strictEqual(previousEnvironmentFirstFilename, 'ridesharing-ridesharing_ba
 assert.strictEqual(legacyFilename, 'ridesharing-ridesharing_backend-feature-definezones.yml');
 assert.strictEqual(hooks.buildPipelineName(filename), filename);
 assert.strictEqual(hooks.buildReleaseName({ service: 'api', environment: 'demo' }), 'API DEMO');
+assert.strictEqual(
+  hooks.buildPipelineFilename({
+    projectName: 'RideSharing',
+    repositoryName: 'RideSharing_Backend',
+    environment: 'demo',
+    branchName: 'feature/defineZones',
+    mode: 'monorepo'
+  }),
+  'ridesharing-ridesharing_backend-MR-Feature-DefineZonesToDEMO.yml'
+);
+assert.strictEqual(
+  hooks.buildReleaseName({ service: 'ignored', environment: 'demo', mode: 'monorepo' }),
+  'MR DEMO'
+);
+hooks.applyModePresentation('monorepo');
+assert.strictEqual(hooks.state.mode, 'monorepo');
+assert.strictEqual(hooks.getPipelineFolder(), '\\komodo\\MR');
+assert.strictEqual(elements.get('service-field').hidden, false);
+assert.strictEqual(elements.get('dockerfile-field').hidden, true);
+assert.strictEqual(submitButton.textContent, 'Create MR runtime, pipeline, and release');
+const monorepoReleaseConfig = hooks.getReleaseConfig('monorepo');
+assert.strictEqual(monorepoReleaseConfig.folder, '\\komodo\\MR');
+assert.strictEqual(monorepoReleaseConfig.scriptSource.path, 'monorepo-release-inline-task.sh');
+assert.strictEqual(monorepoReleaseConfig.bashTaskName, 'Deploy affected MR modules through Komodo');
+hooks.applyModePresentation('pipeline');
+assert.strictEqual(hooks.getPipelineFolder(), '\\komodo');
+assert.strictEqual(elements.get('service-field').hidden, false);
+
+const monorepoContract = hooks.buildMonorepoDeploymentContract();
+assert(monorepoContract.includes('kind: nx-monorepo'));
+assert(monorepoContract.includes('install_command: "pnpm install --frozen-lockfile"'));
+assert(monorepoContract.includes('continue_on_module_error: true'));
+assert(monorepoContract.includes('orphan_policy: "retain"'));
+const monorepoYaml = hooks.buildMonorepoPipelineYaml(
+  {
+    pool: 'PublishDockerAgent',
+    environment: 'demo',
+    komodoServer: 'DEMO-192.168.62.91'
+  },
+  {
+    sourceBranch: 'feature/defineZones',
+    rawProjectName: 'RideSharing',
+    rawRepositoryName: 'RideSharing_FrontEnd'
+  }
+);
+assert.doesNotThrow(() => yaml.load(monorepoYaml));
+assert(monorepoYaml.includes('name: \'RideSharing/RideSharing_FrontEnd\''));
+assert(monorepoYaml.includes('repository: SharedTemplatesRepo'));
+assert(monorepoYaml.includes('endpoint: ShonizCollection'));
+assert(monorepoYaml.includes('template: monorepo/pipeline.yml@SharedTemplatesRepo'));
+assert(monorepoYaml.includes('- group: KomodoAPI'));
+assert(monorepoYaml.includes("environment: 'demo'"));
+assert(monorepoYaml.includes("serviceKey: 'frontend'"));
+assert(monorepoYaml.includes("komodoServer: 'DEMO-192.168.62.91'"));
+assert(monorepoYaml.includes("composeRepository: 'RideSharing_Docker_DevOps'"));
+assert(monorepoYaml.includes("composePath: '/demo_ridesharing/compose.yml'"));
+assert(monorepoYaml.includes("komodoRepository: 'RideSharing_Docker_DevOps-demo'"));
+assert(monorepoYaml.includes("komodoStack: 'RideSharing_Docker_DevOps-demo'"));
+assert(monorepoYaml.includes("staticContainer: 'ridesharing_frontend_demo'"));
+assert(monorepoYaml.includes("bffContainer: 'ridesharing_frontend_bff_demo'"));
+assert(monorepoYaml.includes("bffProfile: 'mr-frontend-bff'"));
+assert(!monorepoYaml.includes('/.devops/mr-build.cjs'));
+assert(!monorepoYaml.includes('PublishBuildArtifacts@1'));
 assert.strictEqual(
   hooks.buildPipelineFilename({
     projectName: 'RideSharing',
@@ -311,6 +396,86 @@ assert.deepStrictEqual(
     }
   ]
 );
+const monorepoSpecs = hooks.buildMonorepoSupportRepositorySpecs({
+  projectName: '180 Feedback',
+  environment: 'demo',
+  domain: 'bulutdemo.ir',
+  service: 'frontend'
+});
+assert.deepStrictEqual(
+  Array.from(monorepoSpecs, (item) => ({ name: item.name, directory: item.directory, filePath: item.filePath })),
+  [
+    {
+      name: '180Feedback_Docker_DevOps',
+      directory: 'demo_180feedback',
+      filePath: '/demo_180feedback/compose.yml'
+    },
+    {
+      name: '180Feedback_Nginx_DevOps',
+      directory: 'demo',
+      filePath: '/demo/180feedback-demo.conf'
+    }
+  ]
+);
+const monorepoCompose = monorepoSpecs.find((item) => item.kind === 'docker').content;
+assert.doesNotThrow(() => yaml.load(monorepoCompose));
+assert(!monorepoCompose.includes('name: 180feedback-mr-demo'));
+assert(monorepoCompose.includes('container_name: 180feedback_frontend_demo'));
+assert(monorepoCompose.includes('container_name: 180feedback_frontend_bff_demo'));
+assert(monorepoCompose.includes('image: nginx:1.27-alpine'));
+assert(monorepoCompose.includes('image: node:20-alpine'));
+assert(monorepoCompose.includes('/runtime/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro'));
+assert(!monorepoCompose.includes('cat > /etc/nginx/conf.d/default.conf'));
+assert(monorepoCompose.includes('profiles: ["mr-frontend-bff"]'));
+assert(monorepoCompose.includes('working_dir: /srv/monorepo/current/modules/${MR_180FEEDBACK_FRONTEND_DEMO_BFF_PROJECT:-bff}'));
+assert(monorepoCompose.includes('exec node \\"${MR_180FEEDBACK_FRONTEND_DEMO_BFF_ENTRY:-main.js}\\"'));
+assert(monorepoCompose.includes('/mnt/graid/projects/180Feedback_Docker_DevOps/demo_180feedback/monorepo/frontend'));
+assert(!monorepoCompose.includes('registry.buluttakin.com'));
+const existingCompose = [
+  'services:',
+  '  180feedback_api_demo:',
+  '    image: registry.example/api:123',
+  '    networks:',
+  '      - nginx-network',
+  '',
+  'networks:',
+  '  nginx-network:',
+  '    external: true',
+  ''
+].join('\n');
+const mergedMonorepoCompose = hooks.mergeMonorepoComposeServices({
+  content: existingCompose,
+  compactProject: '180Feedback',
+  projectKey: '180feedback',
+  serviceKey: 'frontend',
+  environment: 'demo'
+});
+assert.doesNotThrow(() => yaml.load(mergedMonorepoCompose));
+assert(mergedMonorepoCompose.includes('180feedback_api_demo:'));
+assert(mergedMonorepoCompose.includes('180feedback_frontend_demo:'));
+assert(mergedMonorepoCompose.includes('180feedback_frontend_bff_demo:'));
+assert.strictEqual(
+  hooks.mergeMonorepoComposeServices({
+    content: mergedMonorepoCompose,
+    compactProject: '180Feedback',
+    projectKey: '180feedback',
+    serviceKey: 'frontend',
+    environment: 'demo'
+  }),
+  mergedMonorepoCompose
+);
+const monorepoNginx = monorepoSpecs.find((item) => item.kind === 'nginx').content;
+assert(monorepoNginx.includes('server_name 180feedback.bulutdemo.ir;'));
+assert(monorepoNginx.includes('/etc/nginx/conf.d/bulutdemo.ir.pem'));
+assert(monorepoNginx.includes('/etc/nginx/conf.d/bulutdemo.ir.key'));
+assert(monorepoNginx.includes('location /api/ {'));
+assert(monorepoNginx.includes('set              $target            180feedback_frontend_bff_demo;'));
+assert(monorepoNginx.includes('proxy_pass                          http://$target:3000;'));
+assert(monorepoNginx.includes('location / {'));
+assert(monorepoNginx.includes('set              $target            180feedback_frontend_demo;'));
+assert(monorepoNginx.includes('proxy_pass                          http://$target:80/;'));
+assert(!monorepoNginx.includes('rewrite '));
+assert(monorepoNginx.indexOf('location /api/ {') < monorepoNginx.indexOf('location / {'));
 const nginxApiSample = hooks.buildNginxSample({
   projectHost: 'locanit',
   projectKey: 'locanit',
@@ -326,7 +491,9 @@ assert(!nginxApiSample.includes('rewrite '));
 assert(nginxApiSample.includes('proxy_pass                          http://$target:8080;'));
 assert(!nginxApiSample.includes('proxy_pass                          http://$target:8080/;'));
 assert(!nginxApiSample.includes('proxy_pass http://locanit_api_dev:8080;'));
-assert(nginxApiSample.includes('/etc/nginx/conf.d/bulutdev.pem'));
+assert(nginxApiSample.includes('/etc/nginx/conf.d/bulutdev.ir.pem'));
+assert(nginxApiSample.includes('/etc/nginx/conf.d/bulutdev.ir.key'));
+assert(!nginxApiSample.includes('/etc/nginx/conf.d/bulutdev.pem'));
 assert(nginxApiSample.includes('client_max_body_size 0;'));
 assert(nginxApiSample.includes('proxy_set_header Upgrade $http_upgrade;'));
 const nginxUiSample = hooks.buildNginxSample({
@@ -341,6 +508,25 @@ assert(nginxUiSample.includes('set              $target            locanit_newui
 assert(nginxUiSample.includes('proxy_pass                          http://$target:80/;'));
 assert(!nginxUiSample.includes('proxy_pass                          http://$target:80;'));
 assert(!nginxUiSample.includes('proxy_pass http://locanit_newui_dev:80;'));
+const cloudCertificateSample = hooks.buildNginxSample({
+  projectHost: 'example',
+  projectKey: 'example',
+  serviceKey: 'ui',
+  environment: 'pro',
+  domain: 'bulutco.cloud'
+});
+const irCertificateSample = hooks.buildNginxSample({
+  projectHost: 'example',
+  projectKey: 'example',
+  serviceKey: 'ui',
+  environment: 'pro',
+  domain: 'bulutco.ir'
+});
+assert(cloudCertificateSample.includes('/etc/nginx/conf.d/bulutco.cloud.pem'));
+assert(cloudCertificateSample.includes('/etc/nginx/conf.d/bulutco.cloud.key'));
+assert(irCertificateSample.includes('/etc/nginx/conf.d/bulutco.ir.pem'));
+assert(irCertificateSample.includes('/etc/nginx/conf.d/bulutco.ir.key'));
+assert(!cloudCertificateSample.includes('/etc/nginx/conf.d/bulutco.ir.pem'));
 const mergedNginxSample = hooks.mergeNginxServiceRoute({
   content: `${nginxApiSample.replace('    client_max_body_size 0;', '    # manual setting is preserved\n    client_max_body_size 0;')}`,
   serverName: 'locanit.bulutdev.ir',
@@ -580,8 +766,11 @@ const run = async () => {
   let targetConfigUrl;
   context.fetch = async (url, options = {}) => {
     targetConfigUrl = url;
-    assert.strictEqual(options.headers.Authorization, 'Bearer extension-session-token');
+    assert.strictEqual(options.headers.Authorization, undefined);
+    assert.strictEqual(options.headers['X-TFS-FedAuthRedirect'], 'Suppress');
     assert.strictEqual(options.cache, 'no-store');
+    assert.strictEqual(options.credentials, 'same-origin');
+    assert.strictEqual(options.redirect, 'manual');
     return response({
       body: 'servers:\n  - "QA-192.168.62.153"\nenvironments:\n  - name: qa\n    domain: bulutqa.ir\n',
       url
@@ -606,6 +795,18 @@ const run = async () => {
   assert.deepStrictEqual(Array.from(fetchedTargets.servers), ['QA-192.168.62.153']);
   assert.deepStrictEqual(Array.from(fetchedTargets.environments), ['qa']);
 
+  context.fetch = async (url, options = {}) => {
+    assert.strictEqual(options.headers.Authorization, undefined);
+    return response({ status: 401, body: 'TF400813: Client authentication required.', url });
+  };
+  await assert.rejects(
+    () => hooks.fetchDeploymentTargets({ hostUri, accessToken: 'must-not-be-forwarded' }),
+    (error) =>
+      error.status === 401 &&
+      error.authenticationMode === 'browser-session' &&
+      error.requiredExtensionScope === undefined
+  );
+
   const parsedKomodoCredentials = hooks.parseKomodoCredentialFile(`
 KOMODO_ADDRESS=https://komodo.example.local
 KOMODO_API_KEY=synthetic-read-key
@@ -619,7 +820,10 @@ KOMODO_API_SECRET="synthetic-read-secret"
   context.fetch = async (url, options = {}) => {
     komodoCalls.push({ url, options });
     if (url.includes('path=%2Fkomodo-servers-creds.env')) {
-      assert.strictEqual(options.headers.Authorization, 'Bearer extension-session-token');
+      assert.strictEqual(options.headers.Authorization, undefined);
+      assert.strictEqual(options.headers['X-TFS-FedAuthRedirect'], 'Suppress');
+      assert.strictEqual(options.credentials, 'same-origin');
+      assert.strictEqual(options.redirect, 'manual');
       return response({
         body: [
           'KOMODO_ADDRESS=https://komodo.example.local',
@@ -746,8 +950,8 @@ KOMODO_API_SECRET="synthetic-read-secret"
   const nginxPaths = supportPushes
     .get('nginx-repo-id')
     .commits[0].changes.map((change) => change.item.path);
-  assert.deepStrictEqual(dockerPaths, ['/environments', '/demo_ridesharing/compose.yml']);
-  assert.deepStrictEqual(nginxPaths, ['/environments', '/demo/ridesharing-demo.conf']);
+  assert.deepStrictEqual(dockerPaths, ['/demo_ridesharing/compose.yml']);
+  assert.deepStrictEqual(nginxPaths, ['/demo/ridesharing-demo.conf']);
   const dockerComposeContent = supportPushes
     .get('docker-repo-id')
     .commits[0].changes.find((change) => change.item.path.endsWith('/compose.yml')).newContent.content;
@@ -814,7 +1018,7 @@ KOMODO_API_SECRET="synthetic-read-secret"
     if (url.includes('/items?') && method === 'GET') {
       const filePath = new URL(url).searchParams.get('path');
       return response({
-        body: filePath === '/environments' ? 'mattermost_channel=already-configured' : nginxApiSample,
+        body: nginxApiSample,
         url
       });
     }
@@ -847,6 +1051,47 @@ KOMODO_API_SECRET="synthetic-read-secret"
   assert.strictEqual(nginxMergePush.commits[0].changes[0].changeType, 'edit');
   assert.strictEqual(nginxMergePush.commits[0].changes[0].item.path, '/dev/locanit-dev.conf');
   assert(nginxMergePush.commits[0].changes[0].newContent.content.includes('location / {'));
+
+  let monorepoGeneratedPush;
+  context.fetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    if (url.includes('/refs?') && method === 'GET') {
+      return response({ body: { value: [{ objectId: '4444444444444444444444444444444444444444' }] }, url });
+    }
+    if (url.includes('/items?') && method === 'GET') {
+      const filePath = new URL(url).searchParams.get('path');
+      if (filePath === '/.devops/deployments.yml') {
+        return response({ body: 'version: 1\n# operator customization\n', url });
+      }
+      return response({ body: 'old pipeline yaml\n', url });
+    }
+    if (url.includes('/pushes?') && method === 'POST') {
+      monorepoGeneratedPush = JSON.parse(options.body);
+      return response({ body: { pushId: 4 }, url });
+    }
+    throw new Error(`Unexpected generated Monorepo request: ${method} ${url}`);
+  };
+  const generatedFiles = await hooks.postGeneratedFiles({
+    hostUri,
+    projectId,
+    repoId: repo.id,
+    accessToken: 'extension-session-token',
+    files: [
+      { path: '/mr.yml', content: 'new pipeline yaml\n' },
+      { path: '/.devops/deployments.yml', content: monorepoContract, overwrite: false }
+    ]
+  });
+  assert.strictEqual(generatedFiles.skipped, false);
+  assert.deepStrictEqual(
+    monorepoGeneratedPush.commits[0].changes.map((change) => [change.changeType, change.item.path]),
+    [['edit', '/mr.yml']]
+  );
+  assert(
+    !monorepoGeneratedPush.commits[0].changes.some(
+      (change) => change.item.path === '/.devops/deployments.yml'
+    ),
+    'Operator-edited deployments.yml must never be overwritten.'
+  );
 
   let packagedScriptRequest;
   context.fetch = async (url, options = {}) => {

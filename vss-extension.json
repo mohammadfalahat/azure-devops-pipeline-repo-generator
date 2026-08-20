@@ -2,9 +2,9 @@
   "manifestVersion": 1,
   "id": "pipeline-generator",
   "publisher": "mohammad-falahat",
-  "version": "0.1.43",
+  "version": "0.1.53",
   "name": "Pipeline Generator",
-  "description": "Create a YAML pipeline and its classic Komodo release definition from a branch.",
+  "description": "Create standard or Nx Monorepo YAML pipelines and classic Komodo release definitions from a branch.",
   "public": false,
   "categories": ["Azure Pipelines", "Azure Repos"],
   "icons": {
@@ -60,6 +60,31 @@
         "icon": "dist/images/icon.svg",
         "uri": "dist/menu-action.html",
         "registeredObjectId": "generate-pipeline-action"
+      }
+    },
+    {
+      "id": "generate-monorepo-action",
+      "type": "ms.vss-web.action",
+      "targets": [
+        "ms.vss-code-web.git-branches-menu",
+        "ms.vss-code-web.branches-menu",
+        "ms.vss-code-web.git-branches-tree-menu",
+        "ms.vss-code-web.git-branches-toolbar-menu",
+        "ms.vss-code-web.repository-branches-menu",
+        "ms.vss-code-web.repository-branches-tree-menu",
+        "ms.vss-code-web.repository-branches-toolbar-menu",
+        "ms.vss-code-web.repository-branches-list-menu",
+        "ms.vss-code-web.repository-branches-list-toolbar-menu",
+        "ms.vss-code-web.vc-branches-menu",
+        "ms.vss-code-web.vc-branches-tree-menu",
+        "ms.vss-code-web.vc-branches-toolbar-menu"
+      ],
+      "properties": {
+        "text": "Generate MonoRepo",
+        "title": "Generate one MR pipeline and release for this Nx monorepo branch",
+        "icon": "dist/images/icon.svg",
+        "uri": "dist/menu-action.html",
+        "registeredObjectId": "generate-monorepo-action"
       }
     }
   ],

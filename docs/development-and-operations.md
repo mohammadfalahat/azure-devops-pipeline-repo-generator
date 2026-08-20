@@ -32,9 +32,13 @@ The Azure DevOps deployment must already contain or authorize:
   centrally managed Komodo address and Server-Read API credential;
 - service endpoint `ShonizCollection` for that repository resource;
 - template `build-push-komodo.yml` on its `main` branch;
+- central Monorepo files `monorepo/pipeline.yml`, `monorepo/mr-build.cjs`, and
+  `monorepo/nginx/default.conf` on the same branch;
 - variable group `KomodoAPI` with secret variables `AZP_TOKEN`,
   `KOMODO_API_KEY`, and `KOMODO_API_SECRET`; the extension identity/user must
-  be able to resolve and use the group;
+  be able to resolve and use the group. For MR execution, its Komodo identity
+  must be able to list/create/update Repo and Stack resources, execute
+  `DeployStack`, and use Terminal on the selected Server;
 - the selected Docker Registry service connection;
 - the selected agent queue.
 
@@ -227,6 +231,58 @@ only uppercased Service and Environment values. If either naming contract
 changes, update migration lookups, artifact aliases, tests, and documentation
 together.
 
+### Generated Nx Monorepo assets
+
+Monorepo mode is selected only through the **Generate MonoRepo** action. It
+uses `buildMonorepoPipelineYaml` and creates these files on generated-repository
+`main`:
+
+| Path | Update rule |
+| --- | --- |
+| `/<project>-<repo>-MR-<Branch>To<ENV>.yml` | Reconciled on every generator run |
+| `/.devops/deployments.yml` | Created only when missing; later edits are preserved |
+
+The generated YAML imports `monorepo/pipeline.yml@SharedTemplatesRepo`; that
+template checks out and runs the central `monorepo/mr-build.cjs`, then packages
+`monorepo/nginx/default.conf` in the Build artifact. Project repositories never
+receive a private Runner or Nginx-config copy; Compose mounts the config deployed
+under `<deployment-root>/runtime/nginx/default.conf`.
+
+The generated MR runtime is merged into
+`<Project>_Docker_DevOps:/<environment>_<project>/compose.yml@main`, the same
+GitOps Compose used by ordinary project services. The central template upserts
+the normal Komodo Repo and partially reconciles the same normal Docker Stack
+linked to that Compose directory/file. Existing Compose services, Stack
+environment values, and unrelated extra arguments are preserved. It
+does not deploy during Build. The classic Release stages the artifact, calls
+`DeployStack`, polls `GetUpdate`, and validates or rolls back the runtime.
+
+The default contract contains the developer-supplied install/build commands,
+shell names (`shell`, `host`), BFF name (`bff`), independent-module failure
+policy, and orphan-retain policy. It
+does not contain a static module list: Nx discovers new applications and
+affected applications during each Build. Use Nx `deploy:shell` or `deploy:bff`
+tags when a project name does not match the defaults. A shell change promotes
+the current run to build all applications. Ordinary applications are built one
+at a time; failures retain the last deployed output while successful modules
+continue. A shell failure blocks the artifact because shell compatibility is a
+whole-application concern. Set `continue_on_module_error: false` in the
+preserved contract when partial success is not acceptable.
+
+`dist/monorepo-release-inline-task.sh` is deliberately separate from the
+normal shared-script wrapper. It targets the installed Komodo 1.19.5
+`/terminal/execute` contract and must keep the legacy
+`{server, terminal, command}` payload until Komodo is upgraded. Its Stack call
+uses `/execute` plus `/read` `GetUpdate`. The central browser credential remains
+Server-Read only; the project Variable Group deployment key needs the Repo,
+Stack, Execute, and Terminal permissions described above.
+
+Before publishing an MR change, inspect a generated YAML/contract/Compose/Nginx
+set, run `node --check dist/monorepo-build.cjs`, run
+`bash -n dist/monorepo-release-inline-task.sh`, and execute `npm test`. Do not
+live-run the Pipeline or Release without explicit authorization because it
+will create a Build artifact and can change the target deployment symlink.
+
 ### Bundled SDK
 
 The SDK files under `dist/lib/` are intentionally packaged for on-premises
@@ -259,6 +315,8 @@ This executes five independent checks.
   Authorization-header xtrace safety;
 - verifies load order of Release config before UI;
 - checks the Dialog control and Azure Repos Hub manifest contracts;
+- parses the central Monorepo YAML and checks the required Komodo GitOps and
+  packaged MR Release contracts;
 - checks for required Pipeline URL binding and Release approval contracts.
 
 Most UI checks are source-string assertions. The validator does not execute the
@@ -285,7 +343,8 @@ REST responses to assert that:
   navigation service to open the collection-relative `_signout` route;
 - `pipeline-generator.yml` is parsed into dynamic Environment/domain options
   and read from the exact shared repository path;
-- the exact central credential-file Git URL is called with the ADO Bearer token;
+- both exact central Git URLs use the same-origin signed-in browser session,
+  suppress authentication redirects, and contain no `Authorization` header;
 - the subsequent direct Komodo request uses the parsed synthetic credentials
   in tests, filters disabled/template records, and keeps only server names;
 - Docker/Nginx DevOps repository names, Compose/shared-Nginx paths, project
@@ -591,11 +650,17 @@ During the browser test:
    Pipeline links without queueing a run;
 7. do not infer success solely from the UI message.
 
+For **Generate MonoRepo**, additionally verify the `MR` Pipeline/Release names
+and `\komodo\MR` folders, the fourth `deployments.yml` review link, the three
+generated repository files, generic runtime container names, `/api/` before
+`/`, and no rewrite. Do not run the Pipeline or Release during a read-only UI
+verification.
+
 After the test, read back and compare:
 
 - exact YAML path and branch;
-- Docker/Nginx DevOps repositories, `/environments`, and selected Environment
-  Compose/Nginx starter files;
+- Docker/Nginx DevOps repositories and selected Environment Compose/Nginx
+  starter files; confirm no root `/environments` file was generated;
 - Pipeline ID, name, folder, repository ID, default branch, and YAML path;
 - classic Build Definition `process.yamlFilename`;
 - Release ID/name/folder, artifact Pipeline and repository IDs;
@@ -616,10 +681,10 @@ resources that were cleaned up.
 | --- | --- | --- |
 | Action missing from branch menu | Extension not enabled, stale browser assets, or menu target mismatch | Confirm installed version/state, hard-refresh, inspect manifest contribution targets |
 | Session-token HTTP 401/403 or an expired-session error | The current browser sign-in is stale or the user lost project access | Use **Sign out and authenticate again**, complete the full login flow, then reopen the branch action |
-| Generator opens in a separate tab | Version 0.1.25 or older is still served, or stale action assets remain cached | Verify installed/asset version 0.1.43 and hard-refresh; current code has no detached-window path |
+| Generator opens in a separate tab | Version 0.1.25 or older is still served, or stale action assets remain cached | Verify installed/asset version 0.1.52 and hard-refresh; current code has no detached-window path |
 | Generator opens as an Azure Repos Hub instead of a modal | This Azure DevOps Server does not expose the custom Dialog service | Expected compatibility behavior; the Hub is still a host iframe |
-| Hub width repeatedly shrinks while blank space grows on the right | Legacy `VSS.resize()` used the form's changing `scrollWidth`, creating a host/iframe width feedback loop | Install 0.1.43; it never calls host resize and keeps contribution width fixed |
-| Hub form is clipped or mouse-wheel scrolling does nothing | Legacy iframe root/body scrolling is suppressed by the host | Version 0.1.43 uses a fixed full-viewport `.wrapper` as an explicit scroll container; verify the served asset version and hard-refresh |
+| Hub width repeatedly shrinks while blank space grows on the right | Legacy `VSS.resize()` used the form's changing `scrollWidth`, creating a host/iframe width feedback loop | Install 0.1.52; it never calls host resize and keeps contribution width fixed |
+| Hub form is clipped or mouse-wheel scrolling does nothing | Legacy iframe root/body scrolling is suppressed by the host | Version 0.1.52 uses a fixed full-viewport `.wrapper` as an explicit scroll container; verify the served asset version and hard-refresh |
 | `HostAuthorizationNotFound` inside Dialog/Hub | Collection installation has no authorization record for the extension scopes, or that record is stale | Select **Open extension authorization**; a Collection Administrator must authorize Pipeline Generator in Collection Settings → Extensions. If no action exists, reinstall the same published version |
 | Generator says another access-token error | Page opened directly, hosted iframe SDK handshake failed, or host denied token | Launch from a branch action; retry full sign-in only after extension authorization is confirmed |
 | Browser displays Basic login prompts | Platform SDK/API request received an auth challenge | Confirm bundled SDK is used, Bearer token is present, and fed-auth redirects are suppressed |
@@ -629,12 +694,12 @@ resources that were cleaned up.
 | Pipeline create fails despite repository in JSON body | Missing on-prem `repositoryId` query parameter or wrong API contract | Inspect final URL and generated repository GUID |
 | HTTP 2xx but no Pipeline ID | Unexpected server/proxy response shape | Inspect response safely; the UI intentionally rejects it |
 | Release fails with `VS402877` | Empty/missing pre/post approvals | Keep automated approvals and correct execution orders in both payload builders |
-| Environment stays unavailable | `pipeline-generator.yml` is missing/invalid, an Environment lacks a valid domain, `main` is absent, or the user cannot read the central repository | Verify the URL targets `ShonizCollection/SharedTemplates/SharedTemplates`, structured non-empty `environments` records, and repository Read permission; there is no static fallback |
+| Environment stays unavailable | `pipeline-generator.yml` is missing/invalid, an Environment lacks a valid domain, `main` is absent, or the signed-in browser user cannot read the central repository | Verify the URL targets `ShonizCollection/SharedTemplates/SharedTemplates`, structured non-empty `environments` records, the browser session, and repository Read permission; central reads intentionally do not use the current collection's Bearer token and there is no static fallback |
 | Komodo Server remains on Loading/unavailable | Central credential file is missing/invalid/unreadable, Komodo CORS blocks the ADO origin/custom headers, Komodo rejects the read credential, or no visible Server has `config.enabled: true` | Verify the exact SharedTemplates file path/branch and Read permission, inspect OPTIONS/POST status without logging header values, confirm `KOMODO_CORS_ALLOWED_ORIGINS`, and test `ListFullServers` with the dedicated user |
 | Step 1 fails after creating the Azure DevOps repository | Docker/Nginx support repository creation, bootstrap push, or shared Nginx merge was denied/ambiguous | Grant Create repository/Contribute permission; for Nginx also verify balanced braces, complete managed markers, and exactly one matching port-443 server block before rerunning |
-| Release Step 5 gets 401 while resolving a queue | Extension token lacks `vso.agentpools`, has not been reauthorized after adding it, or the user cannot view/use the queue | Verify installed version 0.1.43 scopes, reauthorize/reinstall it, then confirm the current user can read and Use the queue |
-| Registry choices fall back to defaults with a 401 in Console | Extension token lacks `vso.serviceendpoint` or has not been reauthorized | Authorize the updated 0.1.43 scopes; the extension only reads endpoint names/types |
-| Release Step 5 cannot resolve `KomodoAPI` | The extension lacks `vso.variablegroups_read`, the new scope has not been authorized, or the group/user lacks Use permission | Reauthorize/install 0.1.43, confirm `KomodoAPI` exists in the current project, and grant the user/extension permission to use it |
+| Release Step 5 gets 401 while resolving a queue | Extension token lacks `vso.agentpools`, has not been reauthorized after adding it, or the user cannot view/use the queue | Verify installed version 0.1.52 scopes, reauthorize/reinstall it, then confirm the current user can read and Use the queue |
+| Registry choices fall back to defaults with a 401 in Console | Extension token lacks `vso.serviceendpoint` or has not been reauthorized | Authorize the updated 0.1.52 scopes; the extension only reads endpoint names/types |
+| Release Step 5 cannot resolve `KomodoAPI` | The extension lacks `vso.variablegroups_read`, the new scope has not been authorized, or the group/user lacks Use permission | Reauthorize/install 0.1.52, confirm `KomodoAPI` exists in the current project, and grant the user/extension permission to use it |
 | Release reports missing required variables | `KomodoAPI` exists but lacks one of the wrapper inputs | Add secret variables `AZP_TOKEN`, `KOMODO_API_KEY`, and `KOMODO_API_SECRET` with exact casing; do not put their values in source control |
 | Release cannot be created after a Pipeline error | Step 5 never ran because Step 4 aborted | Fix/read back Pipeline first; then rerun so Release migration/create can execute |
 | Release has a legacy name/configuration | It was created by an older extension | Version 0.1.27 finds it by Pipeline artifact ID and reconciles it without deleting it |
@@ -645,7 +710,16 @@ resources that were cleaned up.
 | Dockerfile is not auto-detected | No Dockerfile exists on the selected source branch or the tree read failed | Enter the path manually and inspect the Git Items response |
 | Terminal calls return nginx 403 | Internal Azure DevOps request went through environment proxy | Configure `NO_PROXY`/unset proxy variables for the host |
 | `DELETE /_apis/pipelines/{id}` returns 405 | Endpoint unsupported for deletion on this server | Delete disposable Pipeline via Build Definitions API |
-| Page redirects after success, leaves the completed form active, or does not show three review links | Stale extension version/assets | Verify installed asset version 0.1.43 and hard-refresh; current flow locks/collapses the form and focuses the Nginx, Compose, and Pipeline links |
+| Generate MonoRepo is missing but Generate pipeline exists | The installed manifest predates 0.1.52 or branch-menu assets are stale | Verify the installed manifest contains `generate-monorepo-action`, then hard-refresh Azure Repos |
+| MR Pipeline builds every module unexpectedly | Build was manual/first run, or a shell/host project is affected | Expected for manual/first/shell changes; inspect `deployments.yml` shell names and Nx affected output |
+| New Nx module is not packaged | It lacks a Build target, Nx does not classify it as an app, or outputPath is not resolvable | Add/fix the Nx Build target and `targets.build.options.outputPath`; no module list edit is required |
+| Renamed/removed module remains on the server | MR orphan policy is deliberately non-destructive | Confirm the new module is active, review the orphan log/state, then remove the old directory manually after validation |
+| MR Pipeline gets Komodo 403 while ensuring GitOps resources | `KomodoAPI` cannot list/create/update Repo or Stack resources | Keep the central list key read-only; grant only the required Repo/Stack permissions to the separate Variable Group deployment identity |
+| MR Release gets Komodo 403/permission error | `KomodoAPI` cannot execute the Stack or use Terminal on the selected Server | Grant `DeployStack` execution plus selected-Server Terminal access to the separate Variable Group deployment identity |
+| MR `DeployStack` completes with failure | Komodo could not clone/pull the private ADO Repo, resolve `compose.yml`, or start the Stack | Inspect the returned Update logs, verify the Komodo Git provider account, ADO repo path/main branch, Stack `run_directory`, and Compose content |
+| MR Release HTTP 200 ends without `__KOMODO_EXIT_CODE__:0` | Terminal exited early, wrong Komodo payload/version, or target command failed | Confirm Komodo is 1.19.5, payload is `{server, terminal, command}`, and inspect streamed terminal output |
+| MR target cannot download `mr-drop` | Target server cannot reach Azure DevOps, lacks internal CA trust, or `AZP_TOKEN` cannot read Build artifacts | Test the exact artifact URL from the target without `-k`; fix routing/CA/PAT scope |
+| Page redirects after success, leaves the completed form active, or does not show review links | Stale extension version/assets | Verify installed asset version 0.1.52 and hard-refresh; normal mode shows three links and MR mode shows the additional contract link |
 
 For environment-specific IDs, exact recovery endpoints, failed automation
 approaches, and the last verified successful resource graph, use

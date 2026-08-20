@@ -1,12 +1,12 @@
 # Azure DevOps Pipeline Repo Generator
 
-Pipeline Generator is a static Azure DevOps extension that adds a **Generate
-pipeline** action to Azure Repos branch menus. From a selected source branch it
+Pipeline Generator is a static Azure DevOps extension that adds **Generate
+pipeline** and **Generate MonoRepo** actions to Azure Repos branch menus. From a selected source branch it
 creates or reuses a project-level repository, writes a generated YAML file,
 registers a YAML Pipeline that points to that file, and creates a classic
 Release definition that consumes the Pipeline as a Build artifact.
 
-The manifest version documented here is **0.1.43**. The manifest targets Azure
+The manifest version documented here is **0.1.53**. The manifest targets Azure
 DevOps Services and Azure DevOps Server range `[16.0,20.0)`. The complete live
 workflow has been verified on the documented on-premises Server environment;
 the Azure DevOps Services Release API route still requires a separate
@@ -41,12 +41,61 @@ Classic Release definition in \komodo
 one agent-based Bash@3 deployment job with packaged wrapper stored Inline
 ```
 
+## Nx Monorepo mode
+
+**Generate MonoRepo** creates a separate, non-conflicting MR path while leaving
+the normal generator unchanged:
+
+- one Pipeline named
+  `<project>-<repository>-MR-<Branch>To<ENVIRONMENT>.yml` under `\komodo\MR`;
+- one classic Release named `MR <ENVIRONMENT>` under `\komodo\MR`;
+- an automatically created `/.devops/deployments.yml` project contract, with
+  the shared `monorepo/pipeline.yml` and `monorepo/mr-build.cjs` loaded from
+  `ShonizCollection/SharedTemplates`; the same template packages the central
+  `monorepo/nginx/default.conf` instead of generating it inside Compose;
+- one logical Monorepo service, represented by a generic Nginx static runtime
+  and an optional Node BFF companion, merged into the existing project and
+  Environment `compose.yml`. That shared file remains on `main` in ADO and is
+  the GitOps source of truth, so modules do not need separate Dockerfiles;
+- `/api/` routing to the BFF and root routing to the shell/static runtime,
+  without URI rewrite and with the root Location last;
+- one `mr-drop` artifact containing a full module inventory plus only the
+  affected build outputs. A shell/host change rebuilds every buildable Nx app;
+  other changes build only affected applications. Each module is built
+  independently: a failed ordinary module retains its previous deployed
+  version while successful modules continue; a failed shell blocks deployment;
+- versioned deployment below
+  `/mnt/graid/projects/<Project>_Docker_DevOps/<environment>_<project>/monorepo/<service>`
+  and an atomic `current` symlink switch through the selected Komodo server.
+  The central Pipeline template creates or updates a Komodo Repo linked to the
+  ADO Docker repository and partially reconciles the same project/Environment
+  Stack used by ordinary services. Existing Stack settings and existing
+  Compose services are retained. The Release stages the immutable `mr-drop`, asks Komodo to
+  `DeployStack`, polls the returned Update to completion, and then validates
+  the runtime. The optional BFF profile is configured only when Nx discovers a
+  BFF; its project name is passed into the generic container, so it is not
+  fixed to the literal directory `bff`.
+
+New buildable Nx applications are discovered on the next run. A rename is
+treated as a new application plus an orphaned old application: the new output
+is activated, while the old output is retained and reported instead of being
+deleted. The generated contract is created only when missing, so later manual
+command/name overrides are preserved.
+Static module outputs are linked under `/<nx-project-name>/` inside the generic
+runtime, while the shell remains at `/` and BFF traffic remains at `/api/`.
+
+The central `komodo-servers-creds.env` key remains read-only and is used only
+to populate the Server select. The separate `KomodoAPI` Variable Group
+credentials used by MR Build/Release need permission to create/update Komodo
+Repo and Stack resources, execute `DeployStack`, and use Terminal on the
+selected Server; they are not read from or embedded in the browser bundle.
+
 The browser workflow performs five visible steps:
 
 1. Create or reuse `<ProjectName>_Azure_DevOps`,
    `<ProjectNameWithoutSpaces>_Docker_DevOps`, and
    `<ProjectNameWithoutSpaces>_Nginx_DevOps`; initialize the two support
-   repositories with `/environments`, a starter `compose.yml`, and one shared
+   repositories with a starter `compose.yml` and one shared
    project/Environment Nginx configuration with managed service routes.
 2. Add or edit the generated YAML file on `main`.
 3. set `refs/heads/main` as the generated repository's default branch.
@@ -92,8 +141,6 @@ Pipeline run and does not create a Release instance.
   request URI. The root Location is always ordered below all other managed
   Locations. Older managed paths, generated rewrites, and proxy forms are
   migrated automatically.
-  Both support repositories are initialized with an `/environments` file when
-  it is missing.
 - The **scaffold branch** is always `main`; generated YAML files and Pipeline
   definitions point to this branch.
 - The Pipeline display name is exactly the generated YAML filename, including
@@ -106,6 +153,7 @@ Pipeline run and does not create a Release instance.
 
 | Document | Use it for |
 | --- | --- |
+| [دستورالعمل استقرار سرویس مونوریپو](docs/monorepo-service-deployment-fa.md) | آماده‌سازی Nx، نیازمندی Dockerfile، Compose استاندارد و مراحل Build/Release |
 | [Architecture and runtime flow](docs/architecture.md) | Components, state transfer, generated YAML, provisioning sequence, reconciliation, naming, and design constraints |
 | [Azure DevOps REST contracts](docs/rest-api-contracts.md) | Authentication, scopes, permissions, endpoints, API versions, payload invariants, and on-premises behavior |
 | [Development and operations](docs/development-and-operations.md) | Local setup, configuration, testing, packaging, installation, shell automation, release procedure, and troubleshooting |
@@ -127,6 +175,8 @@ be deleted during routine cleanup.
 | `dist/ui.js` | Form hydration, starter-file/YAML rendering, Azure DevOps REST orchestration, error handling, and completion links |
 | `dist/release-config.js` | Token-free classic Release settings, required Variable Group, and packaged Bash source selection |
 | `dist/release-inline-task.sh` | Bash wrapper embedded as inline task text in each generated/reconciled Release definition |
+| `dist/monorepo-build.cjs` | Maintained mirror of the central SharedTemplates runner that discovers Nx applications, computes affected projects, builds them, and writes `mr-drop` metadata/output |
+| `dist/monorepo-release-inline-task.sh` | Komodo 1.19.5-compatible Release task that stages `mr-drop`, deploys the ADO Git-managed Stack, polls its Update, and atomically rolls runtime state forward/back |
 | `dist/lib/VSS.SDK*.js` | Bundled legacy VSS Web Extension SDK used by the on-premises host |
 | `dist/styles.css` | Generator page styling |
 | `scripts/validate-extension.js` | Offline static contract validation |
@@ -134,7 +184,7 @@ be deleted during routine cleanup.
 | `scripts/validate-ui-behavior.js` | Mocked REST regression tests for exact naming and non-destructive Pipeline/Release migration |
 | `scripts/provision-pipeline-release.sh` | Terminal fallback for provisioning a Pipeline and classic Release after YAML already exists |
 | `scripts/service-hook-listener.js` | Development-only listener for inspecting Azure DevOps Service Hook payloads |
-| `scripts/release-inline-task.example.sh` | Example Bash source for the shell provisioner |
+| `scripts/release-inline-task.example.sh` | Example Bash source for the normal shell provisioner |
 
 There is no compilation or bundling stage. The files in `dist/` are the actual
 runtime assets packaged into the VSIX.
@@ -214,8 +264,10 @@ Komodo deployment credentials through the `KomodoAPI` Variable Group.
 Pool and registry defaults are declared in `dist/ui.js`. Environment names and
 domains are read at runtime from
 `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml` on
-`main`, using the
-signed-in user's Azure DevOps token. The preferred contract is:
+`main`, using the signed-in browser session. The extension deliberately omits
+the current collection's Bearer token for these same-origin cross-collection
+reads because Azure DevOps Server rejects that token in a sibling collection.
+The preferred contract is:
 
 ```yaml
 environments:

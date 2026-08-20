@@ -140,8 +140,22 @@ const run = async () => {
   assert.strictEqual(options.configuration.projectId, project.id);
   assert.strictEqual(options.configuration.repoId, repository.id);
   assert.strictEqual(options.configuration.hostUri, hostUri);
+  assert.strictEqual(options.configuration.mode, 'pipeline');
   assert(!Object.prototype.hasOwnProperty.call(options.configuration, 'accessToken'));
   assert(!Object.prototype.hasOwnProperty.call(options.configuration, 'accessTokenError'));
+
+  await hooks.openGenerator(
+    {
+      gitRepository: repository,
+      project,
+      branch: { name: 'refs/heads/feature/defineZones', repository }
+    },
+    sdk,
+    'monorepo'
+  );
+  assert.strictEqual(dialogCalls.length, 2);
+  assert.strictEqual(dialogCalls[1].options.configuration.mode, 'monorepo');
+  assert(dialogCalls[1].options.title.startsWith('Generate MonoRepo'));
 
   dialogUnavailable = true;
   await hooks.openGenerator(
@@ -165,6 +179,7 @@ const run = async () => {
   assert.strictEqual(hubUrl.searchParams.get('projectId'), project.id);
   assert.strictEqual(hubUrl.searchParams.get('repoId'), repository.id);
   assert.strictEqual(hubUrl.searchParams.get('hostUri'), hostUri);
+  assert.strictEqual(hubUrl.searchParams.get('mode'), 'pipeline');
 
   console.log('Action behavior regression test passed: dialog or in-host Repos hub opens with token-free context.');
 };

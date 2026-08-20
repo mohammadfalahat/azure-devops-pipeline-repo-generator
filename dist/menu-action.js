@@ -334,8 +334,11 @@ const buildGeneratorHubUrl = ({ hostUri, projectName, extensionContext, params }
   }`;
 };
 
-const openGenerator = async (context, sdk) => {
+const normalizeGeneratorMode = (mode) => (mode === 'monorepo' ? 'monorepo' : 'pipeline');
+
+const openGenerator = async (context, sdk, requestedMode = 'pipeline') => {
   try {
+    const mode = normalizeGeneratorMode(requestedMode);
     const actionContext = getActionContext(context);
     const repository = getRepository(actionContext) || VSS.getWebContext?.()?.repository;
     const branchName = getBranchName(actionContext);
@@ -352,6 +355,7 @@ const openGenerator = async (context, sdk) => {
     if (projectName) params.set('projectName', projectName);
     if (repoId) params.set('repoId', repoId);
     if (repoName) params.set('repoName', repoName);
+    params.set('mode', mode);
 
     const hostUri = (VSS.getWebContext?.()?.collection?.uri || getHostBase()).replace(/\/+$/, '') + '/';
     params.set('hostUri', hostUri);
@@ -361,14 +365,15 @@ const openGenerator = async (context, sdk) => {
       projectName,
       repoId,
       repoName,
-      hostUri
+      hostUri,
+      mode
     };
 
     try {
       const hostService = await sdk.getService(getHostPageLayoutServiceId(sdk));
       if (hostService?.openCustomDialog) {
         hostService.openCustomDialog(buildDialogContributionId(extContext), {
-          title: `Generate pipeline for ${branchName || 'branch'}`,
+          title: `${mode === 'monorepo' ? 'Generate MonoRepo' : 'Generate pipeline'} for ${branchName || 'branch'}`,
           lightDismiss: false,
           configuration: bootstrapPayload
         });
@@ -434,19 +439,20 @@ const initializeAction = () => {
       return false;
     }
 
-    const action = {
+    const buildAction = (mode) => ({
       execute: async (context) => {
         const sdkInstance = await ensureSdkReady();
         if (assetWarmupPromise) {
           await assetWarmupPromise.catch(() => {});
         }
-        await openGenerator(context, sdkInstance);
+        await openGenerator(context, sdkInstance, mode);
         sdkInstance.notifyLoadSucceeded?.();
       }
-    };
+    });
 
     try {
-      sdk.register('generate-pipeline-action', action);
+      sdk.register('generate-pipeline-action', buildAction('pipeline'));
+      sdk.register('generate-monorepo-action', buildAction('monorepo'));
       readySdk.notifyLoadSucceeded?.();
     } catch (error) {
       console.error('Failed to register branch action', error);

@@ -4,9 +4,9 @@ Last complete five-step provisioning verification: **2026-08-10**
 
 Complete five-step workflow verified version: **0.1.30**
 
-Latest installed launch behavior observed: **0.1.30 on 2026-08-10**
+Latest installed launch behavior observed: **0.1.44 read-only authentication probe on 2026-08-18**
 
-Current local candidate awaiting live verification: **0.1.43**
+Current local candidate awaiting live verification: **0.1.52**
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -19,9 +19,53 @@ No credentials belong in either file. Credentials exposed in conversation,
 including PATs and Komodo API credentials, must never be copied into commands,
 documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local candidate — version 0.1.43
+## Current local candidate — version 0.1.52
 
-Version 0.1.43 carries the uninstalled direct Komodo discovery, Environment
+Version 0.1.52 includes the uninstalled 0.1.45 cross-collection authentication
+fix below and adds the first complete Nx Monorepo candidate. It contributes a
+separate **Generate MonoRepo** branch action and passes `mode=monorepo` through
+the same Dialog/Hub paths without transferring credentials. The normal
+generator remains the default mode.
+
+The MR path creates one Pipeline named
+`<project>-<repository>-MR-<Branch>To<ENV>.yml` and one Release named
+`MR <ENV>`, both under `\komodo\MR`. It generates/reconciles the Pipeline and
+creates `/.devops/deployments.yml` only when missing. The Pipeline imports the
+central `monorepo/pipeline.yml` and `monorepo/mr-build.cjs` from SharedTemplates,
+packages the central `monorepo/nginx/default.conf` in every MR artifact,
+and provisions generic Nginx/Node runtime Compose plus shared outer Nginx
+routes. The Monorepo service entries are merged into the existing project and
+Environment Compose file in the Docker DevOps repository on `main`. The central
+template upserts the normal Komodo Repo and partially reconciles the same
+normal Docker Stack linked to that Compose path, without deploying it during
+Build or replacing unrelated Stack settings. Nx discovers buildable applications at Build time; affected apps are
+built independently, while shell/host changes rebuild all. Ordinary failures
+retain their prior deployed version and allow successful modules to continue;
+a shell failure blocks deployment. The one `mr-drop` artifact contains full
+inventory, failed-module state, and only successful newly built outputs.
+
+The MR Release uses a distinct packaged inline task. A source-code check
+against the exact official Komodo v1.19.5 tag confirmed that
+`POST /terminal/execute` requires `{server, terminal, command}` rather than the
+newer v2 `target/init` body. The target downloads the immutable Azure Build
+artifact, overlays it into a versioned deployment tree, retains removed/renamed
+modules as reported orphans, links static modules below their Nx project-name
+paths, discovers the BFF directory name, and atomically switches `current`.
+The Release then calls `DeployStack`, polls `GetUpdate` until
+`Complete/success=true`, and validates the runtime. On failure it restores the
+prior symlink/Nginx state and attempts to redeploy the shared Git-managed Stack. The central
+browser key remains Server-Read only; actual Release execution requires the
+separate `KomodoAPI` Variable Group key to have the necessary Repo/Stack,
+DeployStack, and selected-Server Terminal permissions.
+
+Offline syntax, manifest/action/UI behavior, route/Compose generation, naming,
+legacy normal-flow reconciliation, and the full existing test suite pass. VSIX
+0.1.52 has been packaged but not installed; no Pipeline/Release was run and no live
+Azure DevOps or Komodo resource was changed for 0.1.52.
+
+## Cross-collection authentication candidate history — version 0.1.45
+
+Version 0.1.45 carries the uninstalled direct Komodo discovery, Environment
 domains, starter deployment files, explicit review links, and locked completion
 state. It also fixes a cross-collection initialization defect reported from a
 collection other than `ShonizCollection`: versions through 0.1.42 combined the
@@ -29,7 +73,13 @@ current collection URI with project `SharedTemplates`, which produced
 `TF200016` because that project exists in the sibling central collection. Both
 central Git Items reads now replace only the collection segment with
 `ShonizCollection` while preserving an optional Azure DevOps Server virtual
-directory such as `/tfs`.
+directory such as `/tfs`. A read-only live probe of installed 0.1.44 then proved
+that the current collection's extension Bearer token returns 401 in the sibling
+collection, while the same signed-in browser session reads the exact central
+file with HTTP 200. Candidate 0.1.45 therefore uses same-origin browser-session
+authentication, without an `Authorization` header, only for the two central
+Git reads. All current-project provisioning APIs continue to use the scoped
+extension Bearer token.
 
 The inherited feature set is:
 
@@ -40,19 +90,20 @@ The inherited feature set is:
   accepted for migration and legacy `servers` entries are ignored.
 - The Komodo Select starts disabled with `Loading active Komodo servers...`,
   reads `ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main`
-  with
-  the current-user ADO token, then calls Komodo directly. Empty/invalid/error
+  with the same-origin signed-in browser session, then calls Komodo directly.
+  The current collection's Bearer token is never sent to the sibling collection.
+  Empty/invalid/error
   responses block Submit.
 - The central file contains `KOMODO_ADDRESS`, `KOMODO_API_KEY`, and
   `KOMODO_API_SECRET`. By explicit operator policy this is a non-confidential,
   Server-Read-only credential available to every authorized extension user.
-- The browser calls Komodo 1.19.4 `ListFullServers`, retains only
+- The browser calls Komodo 1.19.5 `ListFullServers`, retains only
   `config.enabled === true`, excludes templates, and keeps names only. It does
   not log, persist, generate YAML from, or package credential values.
 - Step 1 creates/reuses `<ProjectWithoutSpaces>_Docker_DevOps` and
   `<ProjectWithoutSpaces>_Nginx_DevOps` alongside the Azure DevOps repository.
-  It adds `/environments` and the selected Environment's `compose.yml` only
-  when missing. Nginx uses one `<project>-<environment>.conf`; later service
+  It adds the selected Environment's `compose.yml` only when missing and does
+  not create `/environments`. Nginx uses one `<project>-<environment>.conf`; later service
   runs parse its unique matching HTTPS server and insert only an absent direct
   Location between managed markers. Existing Locations and manual content are
   preserved, while ambiguous/malformed files block the edit.
@@ -79,10 +130,36 @@ The inherited feature set is:
 
 Offline tests cover YAML Environment/domain and dotenv credential parsing, exact
 cross-collection SharedTemplates Git Items URLs (including `/tfs` preservation),
+same-origin credentials with redirect suppression and no Authorization header,
 direct Komodo request shape, enabled/template
 filtering, starter content/paths, result links, short Release naming, and
 existing Pipeline/Release reconciliation guarantees. No VSIX has been packaged
-or installed and no live resource was changed for 0.1.43.
+or installed and no live resource was changed for 0.1.45.
+
+## Read-only live authentication diagnosis — installed 0.1.44
+
+On 2026-08-18 the normal signed-in Chrome session exposed its loopback DevTools
+endpoint at `127.0.0.1:9222`. A read-only probe attached to the existing
+Pipeline Generator tab in `BulutCollection`; it did not click Submit, write a
+repository, queue a Pipeline, create a Release, or print/store any token or
+cookie value.
+
+The probe normalized the opaque `VSS.getAccessToken()` result in the same way as
+the production runtime and established:
+
+- installed version 0.1.44 had `installState.flags=none` in both
+  `BulutCollection` and `ShonizCollection`, with all requested scopes present;
+- the current-collection Bearer token read the selected source repository with
+  HTTP 200;
+- the same Bearer token read the central `pipeline-generator.yml` with HTTP 401;
+- the exact central request with no Authorization header and
+  `credentials: same-origin` returned HTTP 200 through the signed-in browser
+  session.
+
+This isolates the failure to the cross-collection Bearer boundary. It is not a
+missing file, repository ACL failure, Komodo CORS failure, stale installation,
+or missing extension scope. Candidate 0.1.45 implements the proven
+browser-session path only for the two central reads.
 
 ## Previous packaged candidate — version 0.1.32
 
@@ -455,7 +532,7 @@ The generated resources are:
 
 These are the latest verification resources. **Do not delete Pipeline IDs 344
 or 347, or Release-definition IDs 5 or 7, as routine cleanup.** On the first
-0.1.43 run must preserve Pipeline ID 347 while advancing its revision once to
+0.1.45 run must preserve Pipeline ID 347 while advancing its revision once to
 the new BranchToEnvironment name and YAML path. Release 7 is expected to
 advance once from revision 1 to receive the same Pipeline artifact, new Inline
 wrapper, `KomodoAPI` linkage, and short Service/Environment name. A second
@@ -748,7 +825,7 @@ this missing-file failure with the corrected RideSharing end-to-end result.
    environment uses queue 111.
 8. Record whether authentication was interactive-session, adapted browser, or
    direct REST.
-9. For candidate 0.1.43, confirm the form reads Environment name/domain records
+9. For candidate 0.1.45, confirm the form reads Environment name/domain records
    from the exact `ShonizCollection` shared `pipeline-generator.yml`, including
    `soc`, reads the exact central
    `komodo-servers-creds.env`, and lists only enabled non-template servers from
@@ -776,6 +853,6 @@ this missing-file failure with the corrected RideSharing end-to-end result.
    packaged wrapper without logging a secret-derived Authorization header.
 16. Update both context files with the date, resulting IDs, and cleanup status.
 17. Read back the Docker/Nginx support repositories and verify only the missing
-    `/environments`, Compose starter, shared route, or managed normalization was
+    Compose starter, shared route, or managed normalization was
     added; verify non-root slash/no-rewrite behavior, root-last ordering, and that
     a repeated same-service run performs no Nginx edit.

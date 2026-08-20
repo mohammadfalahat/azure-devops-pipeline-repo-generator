@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const yaml = require('js-yaml');
 
 const root = path.resolve(__dirname, '..');
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
@@ -18,10 +19,56 @@ const fail = (message) => {
 const manifest = JSON.parse(read('vss-extension.json'));
 const readme = read('README.md');
 const developerDocs = [
+  'docs/monorepo-service-deployment-fa.md',
   'docs/architecture.md',
   'docs/rest-api-contracts.md',
   'docs/development-and-operations.md'
 ];
+
+const centralMonorepoTemplatePath = 'examples/shared-templates/monorepo/pipeline.yml';
+if (!fs.existsSync(path.join(root, centralMonorepoTemplatePath))) {
+  fail(`central Monorepo template example is missing: ${centralMonorepoTemplatePath}`);
+}
+const centralMonorepoNginxPath = 'examples/shared-templates/monorepo/nginx/default.conf';
+if (!fs.existsSync(path.join(root, centralMonorepoNginxPath))) {
+  fail(`central Monorepo Nginx example is missing: ${centralMonorepoNginxPath}`);
+}
+const centralMonorepoTemplate = read(centralMonorepoTemplatePath);
+let centralMonorepoTemplateDocument;
+try {
+  centralMonorepoTemplateDocument = yaml.load(centralMonorepoTemplate);
+} catch (error) {
+  fail(`central Monorepo template is not valid YAML: ${error.message}`);
+}
+for (const requiredTemplateBehavior of [
+  'monorepo/mr-build.cjs',
+  'monorepo/nginx/default.conf',
+  'mr-drop/runtime/nginx',
+  'ListFullRepos',
+  'CreateRepo',
+  'UpdateRepo',
+  'ListFullStacks',
+  'CreateStack',
+  'UpdateStack',
+  'linked_repo:$linked_repo',
+  'server_id:$server,path:$path',
+  'files_on_host:false',
+  'MR_KOMODO_STACK',
+  'PublishBuildArtifacts@1'
+]) {
+  if (!centralMonorepoTemplate.includes(requiredTemplateBehavior)) {
+    fail(`central Monorepo template is missing ${requiredTemplateBehavior}.`);
+  }
+}
+if (centralMonorepoTemplate.includes('"DeployStack"')) {
+  fail('central Monorepo Build template must configure GitOps resources without deploying the Stack.');
+}
+const ensureKomodoStep = centralMonorepoTemplateDocument?.stages?.[0]?.jobs?.[0]?.steps?.find(
+  (step) => step.displayName === 'Ensure Komodo GitOps repository and shared Docker Stack'
+);
+if (!ensureKomodoStep?.inputs?.script) {
+  fail('central Monorepo template must contain the Komodo GitOps upsert Bash step.');
+}
 
 for (const docPath of developerDocs) {
   if (!fs.existsSync(path.join(root, docPath))) {
@@ -75,6 +122,17 @@ if (
   fail('manifest must declare dist/index.html as an Azure Repos Pipeline Generator hub.');
 }
 
+const monorepoAction = manifest.contributions?.find(
+  (contribution) => contribution.id === 'generate-monorepo-action'
+);
+if (
+  monorepoAction?.type !== 'ms.vss-web.action' ||
+  monorepoAction?.properties?.registeredObjectId !== 'generate-monorepo-action' ||
+  monorepoAction?.properties?.text !== 'Generate MonoRepo'
+) {
+  fail('manifest must declare the separate Generate MonoRepo branch action.');
+}
+
 const menuAction = read('dist/menu-action.js');
 for (const requiredDialogImplementation of [
   'ms.vss-features.host-page-layout-service',
@@ -91,6 +149,13 @@ for (const requiredDialogImplementation of [
 }
 if (/window\.open\s*\(|openWindow\s*\(|getAccessTokenWithRetry|postBootstrapMessage/.test(menuAction)) {
   fail('the branch action must never open a detached generator or acquire/transfer a token.');
+}
+if (
+  !menuAction.includes("sdk.register('generate-monorepo-action'") ||
+  !menuAction.includes("params.set('mode', mode)") ||
+  !menuAction.includes("buildAction('monorepo')")
+) {
+  fail('menu-action.js must register and propagate the separate monorepo mode.');
 }
 
 const releaseConfigContext = { window: {} };
@@ -184,9 +249,70 @@ if (
   !html.includes('tabindex="-1"') ||
   !html.includes('id="nginx-result-link"') ||
   !html.includes('id="compose-result-link"') ||
-  !html.includes('id="pipeline-result-link"')
+  !html.includes('id="pipeline-result-link"') ||
+  !html.includes('id="contract-result-link"')
 ) {
-  fail('index.html must expose review links for Nginx, Compose, and Pipeline results.');
+  fail('index.html must expose review links for Nginx, Compose, MR contract, and Pipeline results.');
+}
+
+const monorepoBuildScript = read('dist/monorepo-build.cjs');
+for (const requiredBuildBehavior of [
+  'pnpm install --frozen-lockfile',
+  'show projects --affected',
+  'deploy:shell',
+  'deploy:bff',
+  'continue_on_module_error',
+  'successfulProjects',
+  'failedProjects',
+  'task.complete result=SucceededWithIssues',
+  'bffProject',
+  'komodoStack',
+  'staticContainer',
+  'manifest.json',
+  'inventory.tsv',
+  'modules.tsv'
+]) {
+  if (!monorepoBuildScript.includes(requiredBuildBehavior)) {
+    fail(`Monorepo build script is missing ${requiredBuildBehavior}.`);
+  }
+}
+
+const monorepoReleaseScript = read('dist/monorepo-release-inline-task.sh');
+for (const requiredReleaseBehavior of [
+  '$(AZP_TOKEN)',
+  '$(KOMODO_API_KEY)',
+  '$(KOMODO_API_SECRET)',
+  '/terminal/execute',
+  'artifactName=mr-drop',
+  'composeRepository',
+  'komodoStack',
+  'bffProject',
+  'DeployStack',
+  'GetUpdate',
+  '.success == true',
+  'Komodo Stack deployed from ADO Git',
+  'current symlink and runtime Nginx configuration rolled back',
+  'MR orphan retained for manual review',
+  'ln -s "../modules/$module_name"',
+  'runtime/nginx/default.conf',
+  'nginx-default.conf',
+  'nginx:1.27-alpine -t',
+  'nginx -s reload',
+  'mv -Tf "$link" "$root/current"',
+  'server: process.env.MR_TERMINAL_SERVER'
+]) {
+  if (!monorepoReleaseScript.includes(requiredReleaseBehavior)) {
+    fail(`Monorepo Release script is missing ${requiredReleaseBehavior}.`);
+  }
+}
+if (monorepoReleaseScript.includes('target: { type: \'Server\'')) {
+  fail('Monorepo Release must use the Komodo 1.19.5 terminal payload, not the v2 target/init shape.');
+}
+if (/docker compose\s/.test(monorepoReleaseScript)) {
+  fail('Monorepo Release must deploy the ADO Git-managed Compose through Komodo DeployStack.');
+}
+if (/set\s+-x/.test(monorepoReleaseScript) || /curl[^\n]*-H\s+/.test(monorepoReleaseScript)) {
+  fail('Monorepo Release must not expose secret headers through xtrace or process arguments.');
 }
 
 for (const removedProxyAsset of [
@@ -202,10 +328,20 @@ for (const removedProxyAsset of [
 const ui = read('dist/ui.js');
 for (const requiredImplementation of [
   'ensureReleaseDefinition',
+  'buildMonorepoPipelineYaml',
+  'buildMonorepoKomodoResourceNames',
+  'buildMonorepoDeploymentContract',
+  'buildMonorepoSupportRepositorySpecs',
+  'buildMonorepoComposeSample',
+  'buildMonorepoNginxSample',
+  'mergeMonorepoNginxRoutes',
+  'postGeneratedFiles',
+  'monorepo-release-inline-task.sh',
   'parseDeploymentTargetsYaml',
   'fetchDeploymentTargets',
   'buildCollectionUri',
   'buildCentralGitItemUrl',
+  'centralGitRequestOptions',
   "CENTRAL_COLLECTION_NAME = 'ShonizCollection'",
   'parseKomodoCredentialFile',
   'fetchKomodoCredentials',
@@ -224,7 +360,7 @@ for (const requiredImplementation of [
   'buildNginxSample',
   'normalizeNginxManagedRoutes',
   'findManagedRootRouteIndex',
-  "const location = frontend ? '/' : `/${serviceKey}/`;",
+  "const location = requestedLocation || (frontend ? '/' : `/${serviceKey}/`);",
   'resolver         127.0.0.11         ipv6=off;',
   'proxy_pass                          http://$target:${internalPort}/;',
   'proxy_pass                          http://$target:${internalPort};',
@@ -264,6 +400,18 @@ for (const requiredImplementation of [
   if (!ui.includes(requiredImplementation)) {
     fail(`ui.js is missing ${requiredImplementation}.`);
   }
+}
+for (const centralTemplateReference of [
+  'repository: SharedTemplatesRepo',
+  'endpoint: ShonizCollection',
+  'template: monorepo/pipeline.yml@SharedTemplatesRepo'
+]) {
+  if (!ui.includes(centralTemplateReference)) {
+    fail(`Monorepo Pipeline renderer is missing central template reference: ${centralTemplateReference}`);
+  }
+}
+if (ui.includes("{ path: '/.devops/mr-build.cjs'")) {
+  fail('The extension must not copy mr-build.cjs into project repositories after centralization.');
 }
 if (ui.includes('proxy_pass http://${containerName}')) {
   fail('managed Nginx routes must never proxy directly to a compiled container hostname.');
@@ -339,14 +487,14 @@ if (
 if (
   !ui.includes("`${compactProject}_Docker_DevOps`") ||
   !ui.includes("`${compactProject}_Nginx_DevOps`") ||
-  !ui.includes("{ path: '/environments', content: 'mattermost_channel=changeme' }") ||
+  ui.includes("{ path: '/environments', content: 'mattermost_channel=changeme' }") ||
   !ui.includes('compose.yml') ||
   !ui.includes('client_max_body_size 0;') ||
   !ui.includes('proxy_set_header Upgrade $http_upgrade;') ||
   !ui.includes('BEGIN PIPELINE-GENERATOR MANAGED ROUTES') ||
   !ui.includes('multiple HTTPS server blocks') ||
   !ui.includes('`/${nginxDirectory}/${projectHost}-${normalizedEnvironment}.conf`') ||
-  !ui.includes('Review the generated Nginx and Compose files below')
+  !ui.includes('Nginx and Compose files below')
 ) {
   fail('Step 1 must provision the Docker/Nginx repositories and idempotent starter configuration files.');
 }

@@ -1,28 +1,43 @@
 schema_version: 1
-last_verified_at: "2026-08-10"
-status: "live_release_created_candidate_0_1_43_targets_central_collection_explicitly"
+last_verified_at: "2026-08-18"
+status: "candidate_adds_unverified_shared_stack_gitops_nx_monorepo_mode_on_top_of_read_only_auth_fix"
 
 development_candidate:
-  version: "0.1.43"
-  package_path: null
-  package_sha256: null
-  local_validation: "passed: both central Git Items reads replace the current collection with ShonizCollection, preserve an optional /tfs virtual-directory prefix, and retain current-user Bearer authentication; npm test/build, diff check, credential scan, and structured E2E-state YAML parse passed"
+  version: "0.1.52"
+  package_path: "mohammad-falahat.pipeline-generator-0.1.52.vsix"
+  package_sha256: "7afe5b0581681348064794f2255ba1a4421835917cb862a187fe1474eaab8f52"
+  local_validation: "passed: existing normal-flow regressions plus separate Generate MonoRepo action/mode, MR naming/folders, generated Nx contract/runner, independent affected-module and shell-failure policy assertions, shared ADO GitOps Compose and normal Komodo Stack reconciliation, async DeployStack/GetUpdate contract, dynamic BFF/static-module runtime, generic Compose/Nginx routing, Komodo 1.19.5 terminal payload and generated remote Bash syntax validation, npm test, syntax checks, and YAML parse"
   installed: false
   live_verified: false
   intended_pipeline_name: "ridesharing-ridesharing_backend-Feature-ZonesToDEMO.yml"
   intended_release_name: "BACKEND DEMO"
+  intended_monorepo_pipeline_name: "ridesharing-ridesharing_frontend-MR-Feature-ZonesToDEMO.yml"
+  intended_monorepo_release_name: "MR DEMO"
   migration:
     pipeline: "Find by desired BranchToEnvironment name/path, then 0.1.37 Environment-first and earlier branch-only identities; GET-modify-PUT the same Build Definition ID."
     release: "Find by exact uppercased Service/Environment name or Pipeline artifact ID, then reconcile the full Release definition."
   fixes:
+    - "Contribute a separate Generate MonoRepo branch action and propagate mode=monorepo through token-free Dialog/Hub context."
+    - "Name MR Pipelines <project>-<repository>-MR-<Branch>To<ENV>.yml and MR Releases MR <ENV>, under \\komodo\\MR, without migrating normal definitions."
+    - "Generate only the create-once /.devops/deployments.yml project contract and make every MR Pipeline import monorepo/pipeline.yml plus monorepo/mr-build.cjs from SharedTemplates."
+    - "Package SharedTemplates:/monorepo/nginx/default.conf into mr-drop, deploy it as a read-only Compose mount, and validate/reload the static Nginx container without rebuilding an image."
+    - "Merge missing Monorepo service entries into the ordinary <environment>_<project>/compose.yml on main in <Project>_Docker_DevOps; preserve existing services and never create a target-side Compose copy."
+    - "Have SharedTemplates:/monorepo/pipeline.yml create or update the normal Komodo Repo and partially reconcile the same normal Docker Stack linked to the shared ADO Compose file, without deploying during Build or replacing unrelated Stack settings."
+    - "Have the MR Release execute DeployStack, poll GetUpdate until status Complete and success true, and restore runtime state plus redeploy on failure."
+    - "Discover buildable Nx applications and affected applications dynamically; build each selected project independently, retain the prior version of an ordinary failed module, block on shell failure, and build all when shell/host is affected."
+    - "Provision one generic Nginx static runtime and Node BFF runtime without per-module Dockerfiles or service image rebuilds; expose successful static modules below /<nx-project-name>/ and pass the discovered BFF project directory to Compose."
+    - "Route /api/ to the MR BFF and / to MR static runtime with Docker DNS, no rewrite, and root last."
+    - "Use Komodo 1.19.5 POST /terminal/execute with {server, terminal, command}; download the immutable Build artifact on target and atomically switch the current symlink."
+    - "Retain removed or renamed module outputs as reported orphans instead of deleting them automatically."
     - "Always resolve both central Git Items reads against the sibling ShonizCollection while preserving an optional Azure DevOps Server /tfs virtual-directory prefix."
-    - "Load Environment name/domain records at runtime from ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml on main with the current-user Bearer token; accept compact name:domain values for migration and ignore legacy servers entries."
-    - "Read ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env on main with the current-user Bearer token and require KOMODO_ADDRESS, KOMODO_API_KEY, and KOMODO_API_SECRET."
-    - "Call Komodo 1.19.4 POST /read ListFullServers directly from the browser using the operator-designated non-confidential Server-Read credential."
+    - "Use the same-origin signed-in browser session with redirect suppression and no Authorization header for both central Git reads; never send the current collection's scoped Bearer token to the sibling collection."
+    - "Load Environment name/domain records at runtime from ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml on main; accept compact name:domain values for migration and ignore legacy servers entries."
+    - "Read ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env on main and require KOMODO_ADDRESS, KOMODO_API_KEY, and KOMODO_API_SECRET."
+    - "Call Komodo 1.19.5 POST /read ListFullServers directly from the browser using the operator-designated non-confidential Server-Read credential."
     - "Keep deployment selects and Submit disabled when the shared YAML environment list, credential file, or enabled-server result is missing, unreadable, malformed, or empty; never fall back to compiled-in targets."
     - "Retain only config.enabled === true non-template server names and never log, persist, generate YAML from, or package credential values."
     - "Create/reuse <ProjectWithoutSpaces>_Docker_DevOps and <ProjectWithoutSpaces>_Nginx_DevOps during Step 1."
-    - "Add /environments and selected-environment compose.yml only when missing; use one shared <project>-<environment>.conf and merge only a missing direct-child service Location."
+    - "Do not create /environments in Docker or Nginx repositories; add selected-environment compose.yml only when missing, use one shared <project>-<environment>.conf, and merge only a missing direct-child service Location."
     - "Parse Nginx comments, quotes, and brace depth; select exactly one matching port-443 server, preserve existing Location/manual bytes, and reject ambiguous or malformed files."
     - "Use sanitized lowercase project plus Environment domain for Nginx server_name, project/service/environment container names, UI/frontend route / on port 80, and other service routes /<service>/ on port 8080."
     - "Enable WebSocket forwarding, client_max_body_size 0, and domain-derived PEM/key paths in Nginx starters."
@@ -66,6 +81,25 @@ development_candidate:
     - "Never PUT to /_apis/pipelines/{id}; update through /_apis/build/definitions/{id}."
     - "Compare Pipeline and Release folder casing case-insensitively."
     - "Migrate same-Pipeline Release definitions instead of creating name-based duplicates."
+
+latest_read_only_auth_probe:
+  observed_at: "2026-08-18"
+  method: "normal signed-in Chrome session inspected through the user-authorized loopback DevTools endpoint; read-only same-page fetch probes; no PAT or authentication adaptation"
+  installed_version: "0.1.44"
+  extension_installations:
+    BulutCollection:
+      status: 200
+      install_state_flags: "none"
+    ShonizCollection:
+      status: 200
+      install_state_flags: "none"
+  request_results:
+    current_collection_bearer: 200
+    central_collection_bearer: 401
+    central_collection_same_origin_browser_session_without_authorization_header: 200
+  conclusion: "The current collection's extension Bearer token is valid locally but rejected by the sibling collection. The same signed-in browser user can read the central repository through the same-origin host session. Central reads must use that session; current-project provisioning must retain Bearer authentication."
+  token_or_cookie_values_observed_or_recorded: false
+  azure_devops_mutations: false
 
 previous_packaged_candidate:
   version: "0.1.32"
@@ -360,12 +394,14 @@ implementation_contracts:
     preferred_environment_shape: "list of objects with required name and domain"
     migration_environment_shape: "quoted name:domain scalar"
     static_fallback_allowed: false
+    authentication: "same-origin signed-in browser session, X-TFS-FedAuthRedirect=Suppress, no Authorization header"
   komodo_server_discovery:
     credential_collection: "ShonizCollection"
     credential_project: "SharedTemplates"
     credential_repository: "SharedTemplates"
     credential_path: "/komodo-servers-creds.env"
     credential_branch: "main"
+    credential_file_authentication: "same-origin signed-in browser session, X-TFS-FedAuthRedirect=Suppress, no Authorization header"
     credential_policy: "Operator-designated non-confidential Server-Read-only credential; browser-readable by authorized repository users."
     komodo_request: "POST {KOMODO_ADDRESS}/read with ListFullServers and X-Api-Key/X-Api-Secret"
     enabled_filter: "config.enabled === true and template !== true"
@@ -384,9 +420,9 @@ implementation_contracts:
     container_name: "<sanitized-lowercase-project>_<service>_<environment>"
     frontend_contract: "ui/front/frontend/newui and *-ui use / and port 80"
     other_service_contract: "use /<service>/ with no rewrite and proxy to port 8080 without a URI slash, preserving the request URI"
-    nginx_defaults: "WebSocket forwarding, client_max_body_size 0, and /etc/nginx/conf.d/<first-domain-label>.pem/.key"
-    bootstrap_file: "/environments"
-    bootstrap_content: "mattermost_channel=changeme"
+    nginx_defaults: "WebSocket forwarding, client_max_body_size 0, and /etc/nginx/conf.d/<complete-environment-domain>.pem/.key"
+    bootstrap_file: null
+    bootstrap_content: null
     overwrite_existing_files: false
     nginx_merge: "Read exact file; normalize managed paths/proxies, remove exact generated rewrites, enforce root-last ordering, insert only a missing marked route, and Git-edit with current branch object ID."
   completion:
@@ -519,19 +555,24 @@ next_run:
   - "Record the authentication/test method explicitly."
   - "Create/verify ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main with the dedicated Server-Read-only Komodo address/key/secret."
   - "Verify Komodo CORS permits https://azure.buluttakin.com and the X-Api-Key/X-Api-Secret preflight headers."
-  - "Package/install 0.1.43 and reauthorize its inherited vso.variablegroups_read scope."
-  - "From a collection other than ShonizCollection, verify Environment name/domain options come from ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main and include soc; verify Komodo options contain only enabled non-template servers returned by the direct request."
+  - "Package/install 0.1.52; no new extension scope is required by the central browser-session or Monorepo changes."
+  - "From a collection other than ShonizCollection, verify both central Git reads contain no Authorization header, use the same-origin browser session, and return HTTP 200; confirm Environment includes soc and Komodo contains only enabled non-template servers."
   - "Rerun feature/Zones and verify Pipeline ID 347 is migrated in place to Feature-ZonesToDEMO; allow Release definition 7 to advance once for the preserved Pipeline artifact, Inline wrapper, KomodoAPI linkage, and short Release name."
-  - "Read back the Docker/Nginx support repositories and verify only missing /environments, compose.yml, a shared route, or managed-route normalization was committed; prove root is last, root keeps its proxy URI slash, and every non-root route has /<service>/ with no rewrite and a no-URI-slash proxy target."
+  - "Read back the Docker/Nginx support repositories and verify no /environments file was generated and only missing compose.yml, a shared route, or managed-route normalization was committed; prove root is last, root keeps its proxy URI slash, and every non-root route has /<service>/ with no rewrite and a no-URI-slash proxy target."
   - "Read Release 7 back: top-level variableGroups includes ID 7, environment variableGroups is empty, and the Inline task text matches the packaged wrapper."
-  - "Rerun 0.1.43 a second time and verify Release 7 revision is stable with no PUT and no support repository commit."
+  - "Rerun 0.1.52 normal mode a second time and verify Release 7 revision is stable with no PUT and no support repository commit."
   - "On the second identical run, verify exact-name Pipeline reuse reads Build Definition 347 and sends no Pipeline or Build Definition PUT."
   - "Verify the extension-token queue and Docker Registry endpoint reads return HTTP 200 before submitting."
   - "Verify mouse wheel, touchpad, Page Down, and scrollbar can reach every form field plus the submit button."
   - "If HostAuthorizationNotFound appears, use Open extension authorization as a Collection Administrator and authorize the requested scopes."
-  - "If no authorization action is exposed, clean-install the same published 0.1.43 version and verify installState.flags."
+  - "If no authorization action is exposed, clean-install the same published 0.1.52 version and verify installState.flags."
   - "Verify the generator opens in an Azure DevOps Dialog or the Azure Repos Pipeline Generator Hub, never a separate tab."
   - "Verify the hosted generator itself obtains VSS.getAccessToken without a PAT prompt or token transfer."
   - "Verify success stays on the page, locks/collapses the form, focuses valid Nginx, Compose, and Pipeline links, and performs no automatic navigation."
+  - "Open Generate MonoRepo read-only first and verify MR presentation, visible auto-filled Service name, hidden Dockerfile/registry inputs, dynamic Environment/Server values, and no browser write before Submit."
+  - "With explicit mutation approval, verify one disposable MR Submit creates the three generated files, generic Compose/Nginx content, one MR Pipeline under \\komodo\\MR, one MR Release named MR <ENV>, and four review links; do not run either definition unless separately authorized."
+  - "Before the first MR Build, replace SharedTemplates:/monorepo/pipeline.yml and monorepo/mr-build.cjs with the candidate mirrors and confirm monorepo/nginx/default.conf is present."
+  - "With explicit execution approval, verify the MR Build upserts the normal Docker Komodo Repo and partially reconciles the same normal Stack linked to the shared ADO compose.yml on main, but does not deploy it or replace unrelated settings."
+  - "With separate Release approval, verify DeployStack is polled through GetUpdate to Complete/success=true and no direct docker compose command or target-side Compose download is used."
   - "Do not queue a run or create a release instance unless requested."
   - "Update this snapshot and the layered Markdown document."
