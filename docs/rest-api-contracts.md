@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.52
+This document is the integration contract between Pipeline Generator 0.1.65
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 
@@ -157,15 +157,21 @@ The preferred `pipeline-generator.yml` shape is:
 environments:
   - name: pro
     domain: bulutcom.cloud
+    projects_root: /mnt/graid/projects
   - name: dev
     domain: bulutdev.ir
+    projects_root: /var/data/projects
 ```
 
 Names must be safe path segments and unique case-insensitively. Domains must be
-plain DNS names without scheme, port, path, or wildcard. The parser also
+plain DNS names without scheme, port, path, or wildcard. `projects_root` must
+be `/mnt/graid/projects` or `/var/data/projects`; when omitted for legacy
+records it defaults to GRAID only for `pro`/`prod`/`production` and to
+`/var/data/projects` otherwise. The parser also
 accepts `"dev:bulutdev.ir"` as a migration-only compact value. The selected
-name remains the Pipeline/Release Environment value; its paired domain is used
-only to render the Nginx starter.
+name remains the Pipeline/Release Environment value; its paired domain renders
+the Nginx starter. `projects_root` remains accepted as legacy environment metadata
+but immutable Monorepo Compose/Release does not use it.
 
 The project display name has whitespace removed and is lowercased for runtime
 resource names. For project `Locanit`, service `api`, Environment `dev`, and
@@ -181,7 +187,7 @@ key:         /etc/nginx/conf.d/bulutdev.ir.key
 ```
 
 `ui`, `front`, `frontend`, `newui`, and service names ending in `-ui` use `/`,
-port 80, and a trailing-slash proxy target. Other services use
+port 80, and a no-URI-slash proxy target. Other services use
 `/<normalized-service>/` and proxy to port 8080 without a URI slash or rewrite,
 preserving the original request URI. Compose is Git-added only when absent. Nginx uses one
 `/<environment>/<project>-<environment>.conf` per project/Environment. On each
@@ -223,6 +229,18 @@ names. No credential is logged, written to browser storage, embedded in the
 generated YAML, or shipped in the VSIX. Because custom authentication headers
 trigger browser CORS enforcement, Komodo must allow the Azure DevOps origin
 `https://azure.buluttakin.com`; no cookie credential is required.
+
+On Submit and before any repository write, the browser uses the same in-memory
+credential for a second read-only request:
+
+- method/path: `POST {KOMODO_ADDRESS}/read`;
+- body: `{ "type": "ListDockerNetworks", "params": { "server": "<selected-server>" } }`;
+- accepted result: an exact network name `nginx-network` or `nginx-net`.
+
+Only validated network names are retained and the selected value is passed to
+the in-memory Compose renderer. Existing logical Compose references are
+preserved by setting the external network's explicit `name` to the actual host
+network. If neither supported network exists, Step 1 stops before Git writes.
 
 The UI does not call the Pipeline run API or Release instance API. After
 provisioning it does not redirect; it constructs browser links to the Nginx
@@ -268,8 +286,10 @@ able to resolve the new path immediately.
 
 The Docker and Nginx support repositories use the same Git push contract. A
 missing `main` branch receives one initial commit containing the selected
-Environment's Compose or shared Nginx starter. On an existing branch, the UI
-reads the exact starter-file path. `compose.yml` is add-only. The shared Nginx file is add-or-semantic-edit: only a missing
+Environment's Compose plus adjacent `.env`, or the shared Nginx starter. On an
+existing branch, the UI reads the exact starter-file paths. Monorepo
+`compose.yml` and `.env` are add-or-semantic-edit only for their managed
+service blocks/tag keys. The shared Nginx file is add-or-semantic-edit: only a missing
 managed Location is inserted; existing Location blocks and manual content are
 not rewritten. The ref `oldObjectId` protects all writes from silently
 overwriting a concurrent branch update.
@@ -299,8 +319,10 @@ On creation, `repositoryId=<generated-repository-guid>` is also required in the
 query string. The target on-premises server can otherwise fail to bind the YAML
 repository even though the body contains its ID.
 
-The Pipeline display name is the exact generated YAML filename, including its
-`.yml` suffix. Before writing, the UI compares:
+The Pipeline display name is the exact Service-aware generated YAML filename,
+including its `.yml` suffix. Its normal shape is
+`<project>-<repository>-<service>-<Branch>To<ENV>.yml`; MR inserts `-MR-`
+before the Service segment. Before writing, the UI compares:
 
 - `folder` against `\komodo`, case-insensitively;
 - `configuration.path`;
@@ -314,12 +336,13 @@ Azure DevOps Server's Pipelines by-ID model can omit
 mismatch would cause a needless Build Definition PUT and revision increment on
 every otherwise-idempotent rerun.
 
-When the desired `BranchToEnvironment` name does not exist, the lookup also
-accepts the 0.1.37 Environment-first name and the earlier branch-only name.
-Build Definitions are likewise filtered by generated repository ID and
-`process.yamlFilename` in this order: desired transition path, 0.1.37 path,
-then branch-only path. A legacy match is renamed and rebound to the new path
-instead of creating a duplicate.
+When the desired Service-aware `BranchToEnvironment` name does not exist, the
+lookup also accepts the immediately preceding Service-less transition name,
+the 0.1.37 Environment-first name, and the earlier branch-only name. Build
+Definitions are likewise filtered by generated repository ID and
+`process.yamlFilename` in that order. MR migration considers only its
+Service-less `-MR-` predecessor, never a normal definition. A legacy match is
+renamed and rebound to the new path instead of creating a duplicate.
 
 The target server rejects `PUT /_apis/pipelines/{id}` with HTTP 405. Therefore
 updates follow the official Build Definitions GET-modify-PUT pattern:
@@ -408,30 +431,30 @@ revision, and environment ID preserved. Duplicate-name conflicts are re-read
 and reconciled. Historical unrelated definitions are never deleted
 automatically.
 
+MR uses the exact desired name
+`MR <UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>`. This prevents two Services
+from the same repository, branch, and Environment from sharing a Release
+definition. The same Pipeline-artifact fallback reconciles an earlier
+Service-less `MR <ENVIRONMENT>` definition in place when applicable.
+
 ## Monorepo artifact and Komodo GitOps contracts
 
 An MR Build publishes one container artifact named `mr-drop` with
 `PublishBuildArtifacts@1`. Its `manifest.json` records the Build ID, current
-collection/project, selected Komodo Server, managed deployment root, complete
+collection/project, selected Komodo Server, complete
 Nx application inventory, the subset packaged in the current Build, the
-Komodo Stack name, discovered BFF project, and any independently failed modules whose previous
-deployed versions must be retained. The central Pipeline template additionally
-places `SharedTemplates:/monorepo/nginx/default.conf` at
-`mr-drop/runtime/nginx/default.conf`.
+Komodo Stack name, discovered BFF project, failed modules, and the new/previous
+static and BFF image references. Schema 2 fixes `deploymentMode` to
+`immutable-images` and contains no deployment-root path.
 
-The classic Release downloads that artifact on its agent. The target server
-then downloads the same immutable Build artifact with the Azure DevOps Build
-Artifacts route:
-
-```http
-GET <collection>/<project-id>/_apis/build/builds/<build-id>/artifacts
-    ?artifactName=mr-drop&%24format=zip&api-version=6.0
-Authorization: Basic base64(pat:<AZP_TOKEN>)
-```
-
-This target-side request is necessary because the Release agent and Komodo
-Server do not share a filesystem. The PAT is expanded only when the Release
-runs. It is not stored in generated Git files or browser assets.
+All generic MR build/runtime images are pulled through the internal
+registry: `registry.buluttakin.com/nginx:1.27-alpine` and
+`registry.buluttakin.com/node:20-alpine`.
+Compose reconciliation upgrades only the exact legacy bare references on the
+two managed MR services and removes their legacy bind-mount/command fields; it
+does not rewrite active immutable tags, custom fields, or unrelated services.
+It also maps the preserved logical Nginx network key to the exact
+`nginx-network` or `nginx-net` discovered on the selected Komodo Server.
 
 The Compose file remains on `main` in the current project's Docker DevOps
 repository. During Build, the central template uses Komodo `/read` and `/write`
@@ -441,39 +464,20 @@ to create/update:
 - the same project/Environment Docker Stack used by ordinary services, linked
   to that Repo with `files_on_host: false`, the shared Compose directory as
   `run_directory`, and `file_paths: ["compose.yml"]`. Updates are partial and
-  merge namespaced Monorepo environment/Profile values without replacing
+  reconcile the optional BFF Profile without replacing
   unrelated Stack configuration.
 
-The Pipeline does not deploy. During Release, the target-side Terminal command
-only prepares the versioned module tree and packaged Nginx configuration. The
-Release then sends `DeployStack` to Komodo `/execute` and polls `GetUpdate` on
+The Pipeline does not deploy. During Release, the Bash task clones the Docker
+DevOps repository using `AZP_TOKEN`, changes the managed Static/BFF tag keys in
+the adjacent `.env`, and pushes a release commit to `main`. Compose keeps the
+stable image repository plus `${service_key}` reference; the first new Release
+atomically migrates any legacy hard-coded managed image. It then sends `DeployStack` to Komodo
+`/execute` and polls `GetUpdate` on
 `/read` until `status` is `Complete`; it accepts the deployment only when
-`success` is true. A failed deploy/validation restores the previous `current`
-symlink and Nginx file and best-effort redeploys the same Git Stack against the
-restored runtime state. A successful deployment is followed by `nginx -t` and
-`nginx -s reload`. Successful static modules are exposed below
-`/<nx-project-name>/` by symlinks in the versioned shell root; no image rebuild
-is involved.
-
-The installed Komodo version is 1.19.5. Its streaming terminal endpoint is:
-
-```http
-POST https://komodo.example/terminal/execute
-X-Api-Key: <KOMODO_API_KEY>
-X-Api-Secret: <KOMODO_API_SECRET>
-Content-Type: application/json
-
-{
-  "server": "<selected-server-id-or-name>",
-  "terminal": "ado-mr-<build-id>",
-  "command": "bash -lc '<validated deployment command>'"
-}
-```
-
-Do not replace this with the Komodo v2 `{target, init, command}` body while the
-server remains on 1.19.5. A successful stream must end with
-`__KOMODO_EXIT_CODE__:0`; an HTTP 200 without that marker is treated as a
-failed/early terminal exit.
+`success` is true. Failure creates and pushes a rollback commit with the exact
+previous Compose/`.env` state and best-effort redeploys that state. The Release remains failed.
+No `/terminal/execute` request, target-side download, host path, Node, or Docker
+is part of this contract.
 
 The Komodo resource/action calls use the normal 1.19.5 typed envelopes:
 
@@ -487,7 +491,8 @@ The Komodo resource/action calls use the normal 1.19.5 typed envelopes:
 The central credential used by the browser for `ListFullServers` needs only
 Server Read. The separate `KomodoAPI` Variable Group credential needs enough
 Repo/Stack access to list, create and update those resources, permission to
-execute `DeployStack`, and Terminal permission on the selected Server. Header values are
+execute `DeployStack`, plus Registry and ADO Git permissions for the Build/Release.
+Terminal permission is not required. Header values are
 provided to curl via stdin/config, never `-H` process arguments, and the MR
 wrapper never enables shell xtrace.
 
@@ -635,5 +640,4 @@ in API version or URL shape.
 - [Komodo 1.19.5 Repo configuration contract](https://docs.rs/crate/komodo_client/1.19.5/source/src/entities/repo.rs)
 - [Komodo 1.19.5 Stack configuration contract](https://docs.rs/crate/komodo_client/1.19.5/source/src/entities/stack.rs)
 - [Komodo 1.19.5 Stack write request contract](https://docs.rs/crate/komodo_client/1.19.5/source/src/api/write/stack.rs)
-- [Komodo 1.19.5 TypeScript terminal client and `/terminal/execute` contract](https://github.com/moghtech/komodo/blob/v1.19.5/client/core/ts/src/terminal.ts)
 - [Komodo API and client overview](https://komo.do/docs/ecosystem/api)

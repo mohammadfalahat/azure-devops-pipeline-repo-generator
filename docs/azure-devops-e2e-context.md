@@ -4,9 +4,9 @@ Last complete five-step provisioning verification: **2026-08-10**
 
 Complete five-step workflow verified version: **0.1.30**
 
-Latest installed launch behavior observed: **0.1.44 read-only authentication probe on 2026-08-18**
+Latest installed live execution observed: **0.1.62 Build and Release success on 2026-08-24**
 
-Current local candidate awaiting live verification: **0.1.52**
+Current local candidate awaiting packaging and installation: **0.1.65**
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -19,10 +19,175 @@ No credentials belong in either file. Credentials exposed in conversation,
 including PATs and Komodo API credentials, must never be copied into commands,
 documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local candidate — version 0.1.52
+## Current local candidate — version 0.1.65
 
-Version 0.1.52 includes the uninstalled 0.1.45 cross-collection authentication
-fix below and adds the first complete Nx Monorepo candidate. It contributes a
+Version 0.1.65 makes the editable Service name part of every generated YAML
+path and Pipeline display name. Normal names now use
+`<project>-<repository>-<service>-<Branch>To<ENV>.yml`; Monorepo names use
+`<project>-<repository>-MR-<service>-<Branch>To<ENV>.yml`. MR Release names now
+use `MR <SERVICE> <ENV>` instead of the colliding `MR <ENV>` identity. Normal
+Release names already used `<SERVICE> <ENV>` and retain that contract.
+
+The immediately preceding Service-less transition Pipeline name/path is a
+migration identity. A matching normal or MR Build Definition is renamed and
+rebound in place through Build Definitions GET-modify-PUT, preserving its ID.
+Release lookup continues to fall back to Pipeline artifact ID, so a matching
+legacy Release is reconciled instead of duplicated. Focused naming and
+migration regression tests cover distinct Services on the same project,
+repository, branch, and Environment.
+
+The complete local `npm test` suite passes, including manifest/documentation
+contract checks, action/UI behavior, immediate Service-less Pipeline migration,
+older migration fallbacks, MR Release migration/idempotency/exact rollback,
+listener self-test, and shell provisioner self-test.
+
+Installed/live status: **pending**. No Azure DevOps resource was changed while
+validating this naming fix.
+
+## Previous local candidate — version 0.1.64
+
+Version 0.1.64 reserves `/api/` for Locanit's main .NET backend and moves the
+Monorepo BFF contract to `/bff/`. Reconciliation is identity-aware: an old
+Monorepo BFF block at `/api/` is migrated only when its managed marker or
+upstream container identifies it as the BFF. An ordinary `api` service route is
+preserved byte-for-byte, and an unrelated owner of `/bff/` stops generation
+instead of being overwritten.
+
+Build 15185 exposed a separate Komodo/Compose ordering defect. Komodo appended
+Stack `extra_args` after `docker compose ... up -d`, producing
+`up -d --profile mr-front-monorepo-bff`; Compose rejected the global option as
+`unknown flag: --profile`. Both the first deployment and rollback redeploy
+failed for that same reason, although the rollback Git commit was pushed. The
+new Pipeline removes that managed pair from `extra_args`; the Release enables
+the optional BFF through `COMPOSE_PROFILES` in the tracked `.env`, which Komodo
+already supplies through `--env-file .env`. The Release test preserves unrelated
+profiles and proves idempotency plus exact rollback.
+
+Focused Nginx and Release tests, the complete local suite, Bash/Node and inline
+Pipeline Bash syntax checks, YAML parsing, SharedTemplates mirror comparison,
+VSIX integrity, manifest readback, and packaged-source comparison pass:
+
+- File: `mohammad-falahat.pipeline-generator-0.1.64.vsix`
+- SHA-256: `ba2dc85278a323c0c75dbd6aa3fbce9d6d09657518b3f4dbb92c73df5a335a96`
+- Installed/live status: **pending**.
+
+A later SharedTemplates-only delta keeps this VSIX unchanged: the central
+Monorepo template now points both Corepack and pnpm at
+`https://registry.buluttakin.com/repository/npm-group`, verifies the resolved
+registry inside the Node container, and explicitly configures pnpm's store at
+the existing `/cache/pnpm-store` mount. Existing generated Pipelines inherit
+this after the SharedTemplates `main` update; no form rerun is required. Local
+YAML/inline-Bash validation and the complete extension suite pass. A direct
+proxy-bypassed check resolved the Nexus host to `192.168.62.86` and returned
+HTTP 200 for the Nexus root, `onetime` metadata, and the exact
+`onetime-5.1.2.tgz` tarball through `npm-group`. The earlier timeout came from
+the Codex environment's HTTP(S) proxy path, not Nexus availability.
+
+## Previous local candidate — version 0.1.63
+
+Version 0.1.63 removes immutable Monorepo tag churn from `compose.yml`.
+Managed image repositories now remain stable and interpolate service-derived
+keys such as `${front_monorepo}` and `${front_monorepo_bff}` from the adjacent
+tracked `.env`. Build resolves the prior immutable image from those keys while
+remaining compatible with legacy hard-coded Compose images. The first new
+Release migrates Compose and `.env` atomically; later Releases normally update
+only `.env`. A failed deployment restores the exact prior contents of both
+files and redeploys that state.
+
+The focused Release self-test uses a temporary real Git remote and proves
+legacy migration, idempotent replay without an extra commit, and exact
+Compose/`.env` rollback. The complete local suite, Bash/Node syntax checks,
+inline Pipeline Bash validation, SharedTemplates mirror comparison, VSIX
+integrity, manifest readback, and packaged-source comparisons pass. Candidate
+artifact:
+
+- File: `mohammad-falahat.pipeline-generator-0.1.63.vsix`
+- SHA-256:
+  `84299e9f700c3ac9b41ccb1d794fd9e23aad54125faf25d167d7ca0d6499bff6`
+- Installed/live migration status: **pending**.
+
+## Previous candidate — version 0.1.62
+
+Version 0.1.62 repairs Nginx files created by the legacy certificate naming
+rule. When reconciliation finds the exact generated paths based on only the
+first domain label (for example, `bulutdemo.pem` and `bulutdemo.key`) inside
+the unique matching HTTPS server, it replaces them with the complete
+Environment domain (`bulutdemo.ir.pem` and `bulutdemo.ir.key`). Quoting is
+preserved, custom paths and other server blocks are untouched, and a repeated
+run is byte-stable.
+
+Focused UI behavior tests cover normal and Monorepo reconciliation, quoted and
+unquoted legacy paths, an unrelated manual HTTPS server, and idempotency. The
+complete local suite, Bash/Node syntax checks, E2E-state YAML parse,
+SharedTemplates mirror comparisons, VSIX integrity, manifest version readback,
+and packaged-source comparisons pass. Candidate artifact:
+
+- File: `mohammad-falahat.pipeline-generator-0.1.62.vsix`
+- SHA-256:
+  `8b2cf1cb4bde6848e349d19d58b275914330bbf82c78125e6ed70a660ac719e9`
+- Installed/live migration status: **pending**.
+
+## Successful immutable Monorepo live run — installed version 0.1.61
+
+Version 0.1.61 fixes the external Docker-network mismatch exposed by the first
+live immutable Monorepo Release. Before any repository write, Step 1 calls
+Komodo 1.19.5 `ListDockerNetworks` for the selected Server and requires an
+exact existing `nginx-network` or `nginx-net`. Compose preserves an existing
+logical network key and writes its explicit external `name` as the actual host
+network. The MR Release failure renderer now prints all non-empty Komodo
+`message`, `command`, `stdout`, and `stderr` fields instead of allowing an empty
+`message` field to hide a useful later field.
+
+The full local suite, Bash/Node syntax checks, VSIX integrity, packaged-source
+comparison, and Compose network idempotency tests passed. Installed artifact:
+
+- File: `mohammad-falahat.pipeline-generator-0.1.61.vsix`
+- SHA-256:
+  `769b39ccdb7af3bf35498d8dbc4fae380637fc97b1c2bbabb8171c74fc7897d5`
+- Installed/live retry status: **Build 15053 and Release 1219 succeeded on the
+  exceptional Demo deployment hosted by Production-31.7.65.195**.
+
+The generated Nginx repository still contained `bulutdemo.pem/key` because the
+file had originally been created by a pre-full-domain version and route
+reconciliation preserved those header lines. The user manually changed them to
+`bulutdemo.ir.pem/key`, after which Nginx reloaded and
+`https://locanit.bulutdemo.ir/` returned the immutable Shell with HTTP 200.
+Read-only public checks also returned HTTP 200 for the Shell bundle and both
+`fleetMonitoring` and `alarmManagement` remote entries. The deployed Shell
+bundle itself still embeds development entries at `localhost:4201/4202`; that
+is a source-project Module Federation configuration issue, not an Nginx/image
+publication failure. `/api/` returns 502 because this Build discovered no BFF
+and the optional BFF profile is disabled.
+
+## First immutable Monorepo live run — installed version 0.1.60
+
+On 2026-08-24, a normal signed-in Azure DevOps Chrome session ran the generated
+Locanit MR Pipeline for `Locanit_Front_MonoRepo@step-1` targeting Demo. Build
+15043 (`20260824.1`) succeeded. It built `shell`, `alarmManagement`, and
+`fleetMonitoring`, pushed
+`registry.buluttakin.com/locanit/front-monorepo-demo:1.0.15043`, published
+`mr-drop`, and reconciled the shared Komodo Repo/Stack without deploying during
+Build.
+
+Classic Release instance 1218 (`Release-3`) then committed the immutable tag to
+the shared Compose and called `DeployStack`. Komodo pulled the repository to
+release commit `6ef2507`, but Compose Pull/Up failed. The Release correctly
+committed the previous static tag back in rollback commit `4dfbef7` and made a
+best-effort rollback deploy; that deploy failed for the same infrastructure
+reason, so the Release remained red.
+
+A separate read-only `ListDockerNetworks` call through the normal browser
+session proved the selected Server `DEMO-192.168.62.91` has `nginx-net` and no
+`nginx-network`. The generated Compose declared `nginx-network` as an external
+network, which is the root cause of both deployment failures. No credential
+value was returned, logged, or recorded. This was not an image-build failure,
+host-path failure, or Release Git/rollback defect.
+
+## Previous local candidate — version 0.1.60
+
+Version 0.1.60 carries the existing cross-collection, launch, normal-pipeline,
+QA, and Nginx fixes and replaces the first host-mounted Nx Monorepo candidate
+with immutable Registry images. It contributes a
 separate **Generate MonoRepo** branch action and passes `mode=monorepo` through
 the same Dialog/Hub paths without transferring credentials. The normal
 generator remains the default mode.
@@ -32,36 +197,33 @@ The MR path creates one Pipeline named
 `MR <ENV>`, both under `\komodo\MR`. It generates/reconciles the Pipeline and
 creates `/.devops/deployments.yml` only when missing. The Pipeline imports the
 central `monorepo/pipeline.yml` and `monorepo/mr-build.cjs` from SharedTemplates,
-packages the central `monorepo/nginx/default.conf` in every MR artifact,
-and provisions generic Nginx/Node runtime Compose plus shared outer Nginx
+uses central generic Dockerfiles/package logic, and provisions Nginx/Node
+runtime Compose plus shared outer Nginx
 routes. The Monorepo service entries are merged into the existing project and
 Environment Compose file in the Docker DevOps repository on `main`. The central
 template upserts the normal Komodo Repo and partially reconciles the same
 normal Docker Stack linked to that Compose path, without deploying it during
 Build or replacing unrelated Stack settings. Nx discovers buildable applications at Build time; affected apps are
 built independently, while shell/host changes rebuild all. Ordinary failures
-retain their prior deployed version and allow successful modules to continue;
-a shell failure blocks deployment. The one `mr-drop` artifact contains full
-inventory, failed-module state, and only successful newly built outputs.
+retain their prior image output and allow successful modules to continue;
+a shell failure blocks deployment. The first run is a full baseline build.
+Later runs extract the active managed static image, overlay successful affected
+outputs, retain prior BFF/static output when appropriate, and push immutable
+`1.0.<BuildId>` tags through the selected Registry service connection.
 
-The MR Release uses a distinct packaged inline task. A source-code check
-against the exact official Komodo v1.19.5 tag confirmed that
-`POST /terminal/execute` requires `{server, terminal, command}` rather than the
-newer v2 `target/init` body. The target downloads the immutable Azure Build
-artifact, overlays it into a versioned deployment tree, retains removed/renamed
-modules as reported orphans, links static modules below their Nx project-name
-paths, discovers the BFF directory name, and atomically switches `current`.
-The Release then calls `DeployStack`, polls `GetUpdate` until
-`Complete/success=true`, and validates the runtime. On failure it restores the
-prior symlink/Nginx state and attempts to redeploy the shared Git-managed Stack. The central
-browser key remains Server-Read only; actual Release execution requires the
-separate `KomodoAPI` Variable Group key to have the necessary Repo/Stack,
-DeployStack, and selected-Server Terminal permissions.
+The MR Release uses a distinct packaged inline task. It clones the Docker
+DevOps repository, commits exact manifest image tags to the shared Compose,
+calls `DeployStack`, and polls `GetUpdate` until `Complete/success=true`. On
+failure it commits the prior image tags and best-effort redeploys them. Compose
+contains no host mount, runtime command, or working directory. Release requires
+no Node, Docker, target filesystem, artifact download, or Komodo Terminal
+permission. The central browser key remains Server-Read only; execution uses
+the project `KomodoAPI` group plus ADO Git and Registry permissions.
 
-Offline syntax, manifest/action/UI behavior, route/Compose generation, naming,
-legacy normal-flow reconciliation, and the full existing test suite pass. VSIX
-0.1.52 has been packaged but not installed; no Pipeline/Release was run and no live
-Azure DevOps or Komodo resource was changed for 0.1.52.
+Offline syntax, manifest/action/UI behavior, legacy Compose migration,
+immutable-tag preservation, naming, normal-flow reconciliation, and the full
+test suite passed. Version 0.1.60 was installed and its Demo Build succeeded;
+its first Release exposed the external-network mismatch documented above.
 
 ## Cross-collection authentication candidate history — version 0.1.45
 
@@ -112,8 +274,8 @@ The inherited feature set is:
   `locanit_api_dev`, Nginx route `/api/`, and port 8080. UI/frontend services
   use `/` and port 80. Nginx starters include SSL paths, unlimited request body,
   WebSocket forwarding, and Docker DNS runtime resolution through
-  `resolver 127.0.0.11 ipv6=off` and `$target`. Root retains a trailing-slash
-  proxy target. Non-root `/<service>/` routes use a no-URI-slash proxy target
+  `resolver 127.0.0.11 ipv6=off` and `$target`. Root and non-root
+  `/<service>/` routes use no-URI-slash proxy targets
   and no rewrite, preserving the request URI. Root is ordered after all other
   managed Locations. Older generated rewrites and managed paths/targets are
   migrated; manual content outside the managed section is preserved.

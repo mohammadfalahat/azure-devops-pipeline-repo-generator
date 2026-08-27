@@ -1,76 +1,90 @@
 # دستورالعمل استقرار یک سرویس مونوریپو
 
-این روش برای مونوریپوهای Nx است که می‌خواهند فقط ماژول‌های تغییرکرده را Build و
-Deploy کنند، بدون آنکه برای هر ماژول Dockerfile جدا یا Image جدید ساخته شود.
+این روش برای مونوریپوهای Nx است که خروجی‌ها را به Imageهای immutable تبدیل می‌کند و
+Compose مشترک Project/Environment را به‌عنوان مرجع GitOps نگه می‌دارد. پروژهٔ مبدا
+به Dockerfile نیاز ندارد و هیچ خروجی Build روی فایل‌سیستم سرور مقصد mount نمی‌شود.
 
-## ۱. آماده‌سازی مونوریپو
+## ۱. آماده‌سازی Nx
 
-هر پروژهٔ قابل استقرار باید در Nx یک target به نام `build` و یک `outputPath`
-معتبر داشته باشد. حداقل دستورات پروژه باید از ریشهٔ Repository اجرا شوند:
+هر application قابل استقرار باید target به نام `build` و `outputPath` معتبر داشته
+باشد. قرارداد پیش‌فرض این دستورات را از ریشهٔ Repository اجرا می‌کند:
 
 ```bash
 pnpm install --frozen-lockfile
 node tools/scripts/with-env.cjs production pnpm exec nx run-many -t build --projects=<project> --parallel=3
 ```
 
-قواعد تشخیص ماژول‌ها:
+قواعد تشخیص:
 
 - Shell با نام `shell` یا `host`، یا tag برابر `deploy:shell` مشخص می‌شود.
 - BFF با نام `bff`، یا tag برابر `deploy:bff` مشخص می‌شود؛ فقط یک BFF پشتیبانی می‌شود.
-- سایر پروژه‌های Buildable به‌عنوان ماژول Static شناخته می‌شوند.
-- BFF باید روی `0.0.0.0:3000` گوش کند و خروجی آن مستقیماً با Node قابل اجرا باشد؛
-  پیش‌فرض فایل شروع `main.js` است.
-- Shell از `/`، BFF از `/api/` و هر ماژول Static از
-  `/<nx-project-name>/` ارائه می‌شود. تنظیمات base path و asset URL فرانت باید با
-  این مسیرها سازگار باشد.
+- سایر applicationهای Buildable به‌عنوان ماژول Static شناخته می‌شوند.
+- خروجی BFF باید self-contained، با Node قابل اجرا و روی `0.0.0.0:3000` در دسترس
+  باشد. فایل شروع پیش‌فرض `main.js` است.
+- Shell روی `/`، BFF مونوریپو روی `/bff/` و ماژول Static روی
+  `/<nx-project-name>/` ارائه می‌شود؛ `/api/` منحصراً برای Backend اصلی پروژه
+  رزرو است و base path و asset URL پروژه‌ها باید با این قرارداد هماهنگ باشد.
 
-افزونه فایل `/.devops/deployments.yml` را خودکار ایجاد می‌کند. در حالت معمول
-نیازی به تغییر آن نیست. فقط برای نام متفاوت Shell/BFF، فایل شروع BFF یا دستور
-Build اختصاصی آن را ویرایش کنید.
+افزونه `/.devops/deployments.yml` را فقط در صورت نبودن ایجاد می‌کند. برای نام‌های
+غیرپیش‌فرض، entry BFF یا دستورهای اختصاصی install/build همین فایل را ویرایش کنید.
 
-## ۲. Dockerfile
+## ۲. Dockerfile و Registry
 
-در این روش پروژهٔ مونوریپو به Dockerfile نیاز ندارد. Pipeline کد را روی Build
-Agent کامپایل می‌کند و Release فقط خروجی Build را داخل Runtimeهای ثابت زیر قرار
-می‌دهد:
+در Repository پروژه Dockerfile نسازید. فایل‌های عمومی زیر در SharedTemplates هستند:
 
-- `nginx:1.27-alpine` برای Shell و ماژول‌های Static؛
-- `node:20-alpine` برای BFF.
+- `monorepo/docker/static.Dockerfile`: خروجی Shell/Static و کانفیگ Nginx را در
+  Image نهایی قرار می‌دهد.
+- `monorepo/docker/bff.Dockerfile`: خروجی BFF و entry آن را در Image نهایی قرار
+  می‌دهد.
+- `monorepo/package-images.sh`: Image قبلی را hydrate، خروجی‌های جدید را overlay،
+  و Imageهای جدید را build/push می‌کند.
 
-بنابراین تغییر کد یا اضافه‌شدن ماژول باعث `docker build` نمی‌شود. اگر استفاده
-از Image عمومی مجاز نیست، تیم زیرساخت باید یک‌بار معادل همین دو Runtime را در
-Registry داخلی بسازد و فقط مقدار `image` در Compose را تغییر دهد. Dockerfile
-چنین Runtimeهایی متعلق به Repository زیرساخت است، نه تک‌تک ماژول‌های مونوریپو.
+فرم **Generate MonoRepo** آدرس Registry و Docker Registry Service Connection را
+دریافت می‌کند. Build Agent باید Docker داشته باشد؛ Node/pnpm داخل Image داخلی
+`registry.buluttakin.com/node:22-bookworm` اجرا می‌شود. Runtimeهای پایه نیز از
+Registry انتخاب‌شده خوانده می‌شوند؛ پیش‌فرض‌ها:
 
-## ۳. فایل Compose
+- `registry.buluttakin.com/nginx:1.27-alpine`
+- `registry.buluttakin.com/node:20-alpine`
 
-افزونه Compose مستقلی برای مونوریپو نمی‌سازد؛ سرویس مونوریپو را داخل همان
-`compose.yml` مشترک Project و Environment قرار می‌دهد. نمونهٔ بخش افزوده‌شده
-برای Repository سرویس `frontend` در `Locanit / dev` به این صورت است:
+Corepack و pnpm داخل همان Container به‌طور پیش‌فرض از Nexus گروهی داخلی زیر
+استفاده می‌کنند و مستقیماً به `registry.npmjs.org` متصل نمی‌شوند:
+
+```text
+https://registry.buluttakin.com/repository/npm-group
+```
+
+پارامتر `npmRegistry` قالب فقط در صورت نیاز به یک npm group امن دیگر override
+می‌شود. Store مربوط به pnpm و cache مربوط به Corepack روی مسیر cache عامل
+self-hosted mount می‌شوند و نیازی به ساخت یا تغییر `.npmrc` در پروژه نیست.
+
+نام Image خروجی به‌صورت زیر است:
+
+```text
+<registry>/<project-key>/<service-key>-<environment>:1.0.<BuildId>
+<registry>/<project-key>/<service-key>-bff-<environment>:1.0.<BuildId>
+```
+
+## ۳. Compose بدون Host mount
+
+افزونه دو Service مدیریت‌شده را داخل Compose مشترک اضافه می‌کند. نمونهٔ اولیه:
 
 ```yaml
 services:
-  locanit_frontend_dev:
-    container_name: locanit_frontend_dev
-    image: nginx:1.27-alpine
+  locanit_frontend_demo:
+    container_name: locanit_frontend_demo
+    image: registry.buluttakin.com/locanit/frontend-demo:${frontend}
     restart: unless-stopped
-    volumes:
-      - /mnt/graid/projects/Locanit_Docker_DevOps/dev_locanit/monorepo/frontend:/srv/monorepo:ro
-      - /mnt/graid/projects/Locanit_Docker_DevOps/dev_locanit/monorepo/frontend/runtime/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     expose:
       - "80"
     networks:
       - nginx-network
 
-  locanit_frontend_bff_dev:
-    container_name: locanit_frontend_bff_dev
-    image: node:20-alpine
+  locanit_frontend_bff_demo:
+    container_name: locanit_frontend_bff_demo
+    image: registry.buluttakin.com/locanit/frontend-bff-demo:${frontend_bff}
     profiles: ["mr-frontend-bff"]
     restart: unless-stopped
-    working_dir: /srv/monorepo/current/modules/${MR_LOCANIT_FRONTEND_DEV_BFF_PROJECT:-bff}
-    command: ["/bin/sh", "-ec", "exec node \"${MR_LOCANIT_FRONTEND_DEV_BFF_ENTRY:-main.js}\""]
-    volumes:
-      - /mnt/graid/projects/Locanit_Docker_DevOps/dev_locanit/monorepo/frontend:/srv/monorepo:ro
     expose:
       - "3000"
     networks:
@@ -78,93 +92,118 @@ services:
 
 networks:
   nginx-network:
+    name: nginx-net
     external: true
 ```
 
-از دید استقرار، Repository مونوریپو یک سرویس منطقی داخل همان Stack است. ورودی
-اول Runtime اصلی آن است و فقط اگر Nx یک BFF پیدا کند، ورودی دوم به‌عنوان
-companion همان سرویس با Profile اختصاصی فعال می‌شود؛ هیچ Stack مستقلی ساخته
-نمی‌شود.
+فایل `demo_locanit/.env` کنار Compose در Git نگهداری می‌شود:
 
-نکات Compose:
+```text
+frontend:CHANGE_ME
+frontend_bff:CHANGE_ME
+```
 
-- این بخش در همان
-  `Locanit_Docker_DevOps:/dev_locanit/compose.yml@main` کنار سایر سرویس‌ها قرار
-  می‌گیرد و همان فایل مرجع GitOps کل Stack است؛ Compose یا Stack جداگانه‌ای با
-  پیشوند `MR` ساخته نمی‌شود.
-- اگر `compose.yml` از قبل وجود داشته باشد، افزونه فقط Service entryهای غایب را
-  اضافه می‌کند و سرویس‌های موجود یا ویرایش‌های اپراتور را تغییر نمی‌دهد.
-- نام Containerها باید با upstreamهای Nginx بیرونی یکسان بماند.
-- مسیر Host باید به ریشهٔ مدیریت‌شدهٔ همان Project و Environment اشاره کند؛
-  Release پوشه‌های نسخه‌ای و symlink به نام `current` را در همین مسیر می‌سازد.
-- Volume باید فقط‌خواندنی باشد و کل ریشهٔ Monorepo را mount کند، نه یک Build
-  مشخص را؛ با تغییر `current` نسخهٔ فعال بدون تعویض Image عوض می‌شود.
-- کانفیگ مرکزی Nginx از Artifact در
-  `<MR_DEPLOY_ROOT>/runtime/nginx/default.conf` قرار می‌گیرد و به‌صورت
-  فقط‌خواندنی روی `/etc/nginx/conf.d/default.conf` mount می‌شود.
-- `nginx-network` باید از قبل به‌صورت external وجود داشته باشد. به‌جای `ports`
-  از `expose` استفاده می‌شود چون Nginx بیرونی روی همین Network متصل است.
-- Profile مربوط به BFF فقط وقتی فعال می‌شود که خروجی BFF در Release موجود باشد.
+اولین Release مقدارهای `CHANGE_ME` را با tagهای immutable ساخته‌شده جایگزین
+می‌کند و از آن پس `image:`های Compose ثابت می‌مانند. اجرای دوبارهٔ Generator:
 
-## ۴. ایجاد و اجرای استقرار
+- Serviceهای نامرتبط و تنظیمات اپراتور را حفظ می‌کند؛
+- tag immutable فعال Service مدیریت‌شده را overwrite نمی‌کند؛
+- bind mountهای قدیمی `/mnt/graid/projects` و `/var/data/projects`، و همچنین
+  `working_dir`/`command` قدیمی BFF را از Serviceهای مدیریت‌شده حذف می‌کند؛
+- imageهای bare قدیمی را با پیشوند Registry اصلاح می‌کند.
 
-1. از منوی Branch گزینهٔ **Generate MonoRepo** را اجرا و Environment و Komodo
-   Server را انتخاب کنید.
-2. افزونه Repositoryهای Azure/Docker/Nginx DevOps، فایل قرارداد، Pipeline و
-   Release با پیشوند `MR` را ایجاد یا همگام می‌کند، اما Runtime مونوریپو را در
-   Compose و Stack معمولی همان Project/Environment merge می‌کند.
-3. لینک‌های پایان فرم را باز کنید و به‌ترتیب `deployments.yml`، `compose.yml` و
-   کانفیگ Nginx را بررسی کنید.
-4. Pipeline را بار اول دستی اجرا کنید. Pipeline پروژه‌های Buildable و affected
-   را از Nx می‌گیرد، هر ماژول را جداگانه Build می‌کند و همان Komodo Repo/Stack
-   معمولی متصل به `compose.yml` مشترک ADO را به‌صورت partial ایجاد یا
-   به‌روزرسانی می‌کند؛ تنظیمات سایر سرویس‌ها حفظ و Stack در Build اجرا نمی‌شود.
-5. Pipeline یک Artifact به نام `mr-drop` شامل inventory کامل، خروجی ماژول‌های
-   موفق و `runtime/nginx/default.conf` مرکزی می‌سازد. سپس Release مربوط به همان
-   Build را اجرا کنید.
-6. Release از طریق Terminal API نسخهٔ `1.19.5` کومودو Artifact را روی سرور
-   آماده می‌کند، نسخهٔ جدید را کنار نسخهٔ قبلی می‌سازد و symlink `current` را
-   اتمیک جابه‌جا می‌کند. سپس `DeployStack` را برای Stack متصل به Git اجرا و
-   نتیجهٔ async را با `GetUpdate` تا `Complete/success=true` پیگیری می‌کند و پس
-   از `nginx -t` کانفیگ Container استاتیک را reload می‌کند. در شکست، symlink و
-   کانفیگ قبلی برگردانده و Stack دوباره روی وضعیت قبلی Deploy می‌شود.
+پیش از هر write، افزونه با `ListDockerNetworks` شبکه‌های واقعی Server انتخابی
+Komodo را می‌خواند و فقط نام دقیق `nginx-network` یا `nginx-net` را می‌پذیرد.
+کلید منطقی موجود در Compose حفظ می‌شود و فیلد `name` آن را به نام واقعی شبکهٔ
+Host متصل می‌کند؛ در نمونهٔ بالا کلید `nginx-network` به شبکهٔ واقعی
+`nginx-net` نگاشت شده است. اگر هیچ‌کدام وجود نداشته باشد Generator پیش از
+تغییر Git متوقف می‌شود. Nginx بیرونی `/bff/` را بدون rewrite به BFF می‌فرستد،
+`/api/` را برای Backend اصلی دست‌نخورده نگه می‌دارد و Location ریشه را در انتها
+به Static Runtime می‌فرستد.
 
-در تغییرات بعدی فقط پروژه‌های affected ساخته می‌شوند. شکست یک ماژول معمولی
-نسخهٔ قبلی همان ماژول را حفظ می‌کند و مانع استقرار ماژول‌های موفق نمی‌شود؛ شکست
-Shell کل استقرار را متوقف می‌کند. ماژول جدید خودکار کشف می‌شود و ماژول حذف‌شده
-یا تغییرنام‌یافته برای بررسی دستی نگه داشته می‌شود و خودکار پاک نمی‌شود.
+در صورت وجود BFF، Release مقدار Profile مدیریت‌شده را از طریق
+`COMPOSE_PROFILES` در `.env` فعال می‌کند. Pipeline هر `--profile` قدیمی را از
+`extra_args` مربوط به Stack حذف می‌کند، زیرا Komodo آن آرگومان‌ها را بعد از
+`docker compose up -d` قرار می‌دهد و Compose آن ترتیب را با خطای
+`unknown flag: --profile` رد می‌کند.
 
-## ۵. بررسی نهایی
+## ۴. Build و حفظ خروجی قبلی
 
-- همهٔ پروژه‌های قابل استقرار `build` و `outputPath` صحیح دارند.
-- Shell و BFF با نام قراردادی یا tag مناسب مشخص شده‌اند.
-- خروجی BFF مستقل، قابل اجرای مستقیم با Node و در دسترس روی پورت 3000 است.
-- base path ماژول‌های فرانت با نام Nx آنها هماهنگ است.
-- نام Container، مسیر Host، Network و Imageهای Compose بررسی شده‌اند.
-- Komodo Repo و Stack معمولی Project/Environment به Repository داکر ADO روی
-  `main` و مسیر دقیق `compose.yml` مشترک متصل هستند؛ Stack جداگانهٔ MR وجود ندارد.
-- کانفیگ Nginx بیرونی `/api/` را بدون rewrite به BFF و `/` را در آخر به Runtime
-  Static می‌فرستد.
+Pipeline در شروع Compose فعال را از `<Project>_Docker_DevOps@main` می‌خواند و فقط
+Imageای را previous می‌پذیرد که متعلق به Repository مدیریت‌شده باشد و از Registry
+pull شود.
 
-## ۶. قالب مرکزی SharedTemplates
+- اگر previous معتبر نباشد، همهٔ applicationها Build می‌شوند و baseline ساخته
+  می‌شود.
+- در اجراهای بعدی Nx فقط applicationهای affected را انتخاب می‌کند؛ تغییر Shell
+  همچنان full build است.
+- Static Image قبلی extract می‌شود؛ خروجی‌های موفق روی آن overlay می‌شوند و
+  خروجی‌های unaffected یا ناموفق قبلی باقی می‌مانند.
+- اگر BFF موفق و affected باشد Image جدید می‌گیرد؛ در غیر این صورت tag BFF قبلی
+  حفظ می‌شود.
+- شکست Shell همیشه Build را متوقف می‌کند. شکست ماژول معمولی بدون نسخهٔ قبلی نیز
+  خطاست. در حضور نسخهٔ قبلی، Build با `SucceededWithIssues` ادامه می‌یابد.
 
-برای استفادهٔ همهٔ Pipelineهای مونوریپو از یک پیاده‌سازی، این سه فایل را در
-`ShonizCollection/SharedTemplates/SharedTemplates:/monorepo` قرار دهید:
+Artifact به نام `mr-drop` شامل manifest schema 2، inventory، خروجی‌های موفق و
+ارجاع دقیق Imageهای جدید/قبلی است. Stack در مرحلهٔ Build deploy نمی‌شود؛ فقط Repo،
+Stack و Profile اختیاری BFF reconcile می‌شوند.
 
-- `pipeline.yml`: قالب Stage مرکزی؛ نمونهٔ آماده در
-  `examples/shared-templates/monorepo/pipeline.yml` قرار دارد.
-- `mr-build.cjs`: عین فایل `dist/monorepo-build.cjs` این Repository؛ این نسخه
-  نام Komodo Stack را نیز در Manifest قرار می‌دهد.
-- `nginx/default.conf`: کانفیگ داخلی Runtime استاتیک؛ نمونهٔ آماده در
-  `examples/shared-templates/monorepo/nginx/default.conf` قرار دارد. این فایل
-  با یک `$uri` معمولی نوشته می‌شود، چون دیگر داخل Compose قرار ندارد.
+## ۵. Release و Rollback
 
-Pipeline هر پروژه فقط Repositoryهای `SharedTemplatesRepo` و `sourceRepo` را
-تعریف می‌کند و پارامترهای Project/Environment را به
-`monorepo/pipeline.yml@SharedTemplatesRepo` می‌فرستد. فایل
-`/.devops/deployments.yml` همچنان در Repository تولیدشدهٔ همان پروژه باقی
-می‌ماند تا قرارداد و استثناهای پروژه مستقل باشند.
+Release به Node، Docker، دسترسی filesystem سرور یا Komodo Terminal نیاز ندارد:
 
-Credential مرکزی نمایش Serverها فقط Read است. Credential گروه متغیر
-`KomodoAPI` برای این روال باید بتواند Repo و Stack را list/create/update کند،
-`DeployStack` را اجرا کند و روی Server انتخاب‌شده Terminal داشته باشد.
+1. `manifest.json` را از Artifact می‌خواند.
+2. Repository داکر را روی `main` clone می‌کند.
+3. `compose.yml` را روی Repository ثابت و متغیر نگه می‌دارد؛ برای نمونه
+   `image: .../front-monorepo-demo:${front_monorepo}`. سپس tag دقیق Static و در
+   صورت وجود BFF را در فایل `.env` همان دایرکتوری با کلیدهای
+   `front_monorepo` و `front_monorepo_bff` تغییر می‌دهد و commit/push می‌کند.
+   اولین Release جدید، Compose قدیمی دارای tag هاردکد را همراه با `.env` در یک
+   commit مهاجرت می‌دهد؛ Releaseهای بعدی فقط `.env` را تغییر می‌دهند.
+4. `DeployStack` را اجرا و `GetUpdate` را تا `Complete/success=true` poll می‌کند.
+5. اگر deploy شکست بخورد، نسخه دقیق قبلی `compose.yml` و `.env` را با commit
+   rollback برمی‌گرداند و Stack را دوباره deploy می‌کند؛ خود Release همچنان
+   قرمز می‌شود تا خطای واقعی پنهان نشود.
+
+بنابراین مسیرهای `/mnt/graid/projects` و `/var/data/projects` در اجرای مونوریپو
+نقشی ندارند. `projects_root` مرکزی می‌تواند برای workflowهای قدیمی باقی بماند،
+اما Compose و Release جدید از آن استفاده نمی‌کنند.
+
+## ۶. دسترسی‌های لازم
+
+- Docker Registry Service Connection: مجوز login/pull/push برای Build Pipeline.
+- `AZP_TOKEN`: خواندن Compose در Build و read/write Repository داکر در Release.
+- `KOMODO_API_KEY` و `KOMODO_API_SECRET`: خواندن/ایجاد/به‌روزرسانی Repo و Stack و
+  اجرای `DeployStack`/`GetUpdate`.
+- Terminal permission روی Komodo لازم نیست.
+
+## ۷. ترتیب تست اولیه
+
+1. افزونهٔ جدید را نصب و صفحهٔ Azure DevOps را hard refresh کنید.
+2. **Generate MonoRepo** را روی Branch موردنظر و Environment آزمایشی اجرا کنید.
+3. لینک‌های contract، Pipeline، Compose و Nginx را بررسی کنید؛ Compose نباید
+   `volumes:`, `working_dir:` یا مسیر host داشته باشد.
+4. Pipeline را دستی اجرا کنید. اجرای اول باید full build باشد و Imageهای
+   `1.0.<BuildId>` را push کند.
+5. Artifact manifest را بررسی کنید: `deploymentMode` باید `immutable-images` و
+   `staticImage` باید tag همان Build باشد.
+6. Release همان Build را اجرا کنید؛ سپس commit Compose، نتیجهٔ DeployStack و
+   container imageهای فعال را بررسی کنید.
+7. یک ماژول Static را تغییر دهید و Pipeline را دوباره اجرا کنید؛ لاگ باید previous
+   image را پیدا کند و فقط affectedها را Build کند.
+8. برای تست rollback، فقط در Environment آزمایشی یک deploy نامعتبر کنترل‌شده
+   انجام دهید و تأیید کنید tagهای قبلی به Compose برگشته‌اند.
+
+## ۸. فایل‌های مرکزی
+
+فایل‌های لازم در `ShonizCollection/SharedTemplates/SharedTemplates:/monorepo`:
+
+- `pipeline.yml`
+- `mr-build.cjs`
+- `package-images.sh`
+- `docker/static.Dockerfile`
+- `docker/bff.Dockerfile`
+- `nginx/default.conf`
+
+Pipeline کوچک پروژه فقط Repositoryهای `SharedTemplatesRepo` و `sourceRepo` و
+پارامترهای محیط/Registry را تعریف می‌کند؛ Dockerfile پروژه‌ای لازم نیست.

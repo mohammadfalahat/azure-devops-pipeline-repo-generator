@@ -1,33 +1,47 @@
 schema_version: 1
-last_verified_at: "2026-08-18"
-status: "candidate_adds_unverified_shared_stack_gitops_nx_monorepo_mode_on_top_of_read_only_auth_fix"
+last_verified_at: "2026-08-27"
+status: "candidate_0_1_65_service_aware_pipeline_and_release_naming_awaiting_packaging"
 
 development_candidate:
-  version: "0.1.52"
-  package_path: "mohammad-falahat.pipeline-generator-0.1.52.vsix"
-  package_sha256: "7afe5b0581681348064794f2255ba1a4421835917cb862a187fe1474eaab8f52"
-  local_validation: "passed: existing normal-flow regressions plus separate Generate MonoRepo action/mode, MR naming/folders, generated Nx contract/runner, independent affected-module and shell-failure policy assertions, shared ADO GitOps Compose and normal Komodo Stack reconciliation, async DeployStack/GetUpdate contract, dynamic BFF/static-module runtime, generic Compose/Nginx routing, Komodo 1.19.5 terminal payload and generated remote Bash syntax validation, npm test, syntax checks, and YAML parse"
+  version: "0.1.65"
+  package_path: null
+  package_sha256: null
+  local_validation: "passed: full npm test suite, Service-aware normal/MR Pipeline filename separation, normal/MR Release name separation, immediate Service-less Pipeline in-place migration, older Pipeline migration fallbacks, manifest/documentation contract checks, action/UI regressions, MR Release migration/idempotency/exact rollback, listener self-test, and shell provisioner self-test"
   installed: false
   live_verified: false
-  intended_pipeline_name: "ridesharing-ridesharing_backend-Feature-ZonesToDEMO.yml"
+  intended_pipeline_name: "ridesharing-ridesharing_backend-backend-Feature-ZonesToDEMO.yml"
   intended_release_name: "BACKEND DEMO"
-  intended_monorepo_pipeline_name: "ridesharing-ridesharing_frontend-MR-Feature-ZonesToDEMO.yml"
-  intended_monorepo_release_name: "MR DEMO"
+  intended_monorepo_pipeline_name: "ridesharing-ridesharing_frontend-MR-frontend-Feature-ZonesToDEMO.yml"
+  intended_monorepo_release_name: "MR FRONTEND DEMO"
   migration:
-    pipeline: "Find by desired BranchToEnvironment name/path, then 0.1.37 Environment-first and earlier branch-only identities; GET-modify-PUT the same Build Definition ID."
+    pipeline: "Find by desired Service-aware BranchToEnvironment name/path, then the immediately preceding Service-less transition, 0.1.37 Environment-first, and earlier branch-only identities; GET-modify-PUT the same Build Definition ID. MR considers only its Service-less MR predecessor."
     release: "Find by exact uppercased Service/Environment name or Pipeline artifact ID, then reconcile the full Release definition."
   fixes:
+    - "Include the sanitized editable Service name in normal and MR YAML filenames/Pipeline names so one repository, branch, and Environment can provision multiple Services without collision or overwrite."
+    - "Name MR Releases MR <SERVICE> <ENV> instead of MR <ENV>; keep normal Releases as <SERVICE> <ENV>."
+    - "Migrate the immediately preceding Service-less normal/MR Pipeline identity in place and retain Pipeline-artifact fallback for legacy Release reconciliation."
+    - "Resolve Corepack and pnpm through https://registry.buluttakin.com/repository/npm-group and explicitly bind pnpm's content-addressable store to the existing self-hosted-agent cache mount."
+    - "Reserve /api/ for the main application backend and route the Monorepo BFF through /bff/ without rewrite."
+    - "Migrate a legacy Monorepo BFF /api/ block only when its managed marker or upstream container proves BFF identity; preserve an ordinary /api/ backend route and reject an unrelated /bff/ owner."
+    - "Remove the managed --profile pair from Komodo Stack extra_args and activate the optional BFF with COMPOSE_PROFILES in the tracked .env so Komodo cannot append a global Compose flag after up -d."
+    - "Keep managed Monorepo image repositories stable in compose.yml, interpolate service-derived Static/BFF tag keys from the adjacent tracked .env, and create/merge only those managed keys without replacing unrelated entries."
+    - "Resolve previous immutable images from tracked .env tags during Build while retaining compatibility with legacy hard-coded Compose image references."
+    - "Migrate legacy managed Compose images and .env atomically in Release, update only .env on later runs, and restore the exact previous state of both files before rollback redeploy."
+    - "Migrate only exact legacy generated certificate paths such as bulutdemo.pem/key to the complete Environment domain inside the unique matching HTTPS server; preserve quoting, custom paths, unrelated server blocks, and idempotency."
+    - "Before any provisioning write, call Komodo ListDockerNetworks for the selected Server and require exact nginx-network or nginx-net."
+    - "Preserve an existing logical Compose network key and map its explicit external name to the actual Docker host network."
+    - "Print every non-empty Komodo message, command, stdout, and stderr field on MR DeployStack failure so an empty message cannot hide the real Compose error."
     - "Contribute a separate Generate MonoRepo branch action and propagate mode=monorepo through token-free Dialog/Hub context."
-    - "Name MR Pipelines <project>-<repository>-MR-<Branch>To<ENV>.yml and MR Releases MR <ENV>, under \\komodo\\MR, without migrating normal definitions."
+    - "Name MR Pipelines <project>-<repository>-MR-<service>-<Branch>To<ENV>.yml and MR Releases MR <SERVICE> <ENV>, under \\komodo\\MR, without migrating normal definitions."
     - "Generate only the create-once /.devops/deployments.yml project contract and make every MR Pipeline import monorepo/pipeline.yml plus monorepo/mr-build.cjs from SharedTemplates."
-    - "Package SharedTemplates:/monorepo/nginx/default.conf into mr-drop, deploy it as a read-only Compose mount, and validate/reload the static Nginx container without rebuilding an image."
+    - "Package SharedTemplates:/monorepo/nginx/default.conf inside each immutable static image; Compose has no runtime config or project-output bind mount."
     - "Merge missing Monorepo service entries into the ordinary <environment>_<project>/compose.yml on main in <Project>_Docker_DevOps; preserve existing services and never create a target-side Compose copy."
     - "Have SharedTemplates:/monorepo/pipeline.yml create or update the normal Komodo Repo and partially reconcile the same normal Docker Stack linked to the shared ADO Compose file, without deploying during Build or replacing unrelated Stack settings."
-    - "Have the MR Release execute DeployStack, poll GetUpdate until status Complete and success true, and restore runtime state plus redeploy on failure."
+    - "Have the MR Release commit schema-2 manifest image tags to the shared Compose, execute DeployStack, poll GetUpdate, and commit/redeploy previous tags on failure."
     - "Discover buildable Nx applications and affected applications dynamically; build each selected project independently, retain the prior version of an ordinary failed module, block on shell failure, and build all when shell/host is affected."
-    - "Provision one generic Nginx static runtime and Node BFF runtime without per-module Dockerfiles or service image rebuilds; expose successful static modules below /<nx-project-name>/ and pass the discovered BFF project directory to Compose."
-    - "Route /api/ to the MR BFF and / to MR static runtime with Docker DNS, no rewrite, and root last."
-    - "Use Komodo 1.19.5 POST /terminal/execute with {server, terminal, command}; download the immutable Build artifact on target and atomically switch the current symlink."
+    - "Build immutable static and optional BFF images from generic SharedTemplates Dockerfiles; require no Dockerfile in the project and embed the discovered BFF entry in its image."
+    - "Route /bff/ to the MR BFF, reserve /api/ for the main backend, and route / to MR static runtime with Docker DNS, no rewrite, and root last."
+    - "Remove Komodo Terminal, target-side artifact download, host filesystem, Node, and Docker requirements from Release; deploy only the Git-managed Compose image tags."
     - "Retain removed or renamed module outputs as reported orphans instead of deleting them automatically."
     - "Always resolve both central Git Items reads against the sibling ShonizCollection while preserving an optional Azure DevOps Server /tfs virtual-directory prefix."
     - "Use the same-origin signed-in browser session with redirect suppression and no Authorization header for both central Git reads; never send the current collection's scoped Bearer token to the sibling collection."
@@ -41,13 +55,13 @@ development_candidate:
     - "Parse Nginx comments, quotes, and brace depth; select exactly one matching port-443 server, preserve existing Location/manual bytes, and reject ambiguous or malformed files."
     - "Use sanitized lowercase project plus Environment domain for Nginx server_name, project/service/environment container names, UI/frontend route / on port 80, and other service routes /<service>/ on port 8080."
     - "Enable WebSocket forwarding, client_max_body_size 0, and domain-derived PEM/key paths in Nginx starters."
-    - "Always use Docker DNS resolver 127.0.0.11 and set $target; root keeps proxy_pass http://$target:80/, while non-root uses proxy_pass http://$target:8080 without a URI slash or rewrite so the original request URI is preserved."
+    - "Always use Docker DNS resolver 127.0.0.11 and set $target; root uses proxy_pass http://$target:80, while non-root uses proxy_pass http://$target:8080 without a URI slash or rewrite so the original request URI is preserved."
     - "Order the managed root Location after every non-root Location and migrate older /<service> paths, direct proxy targets, generated rewrite lines, and incorrect slash forms idempotently."
     - "Stay on the form after provisioning and display Nginx, Compose, and Pipeline links instead of redirecting automatically."
     - "After success, lock repeat submission, collapse the completed form, and focus/scroll the review-links panel; keep the form visible after errors."
-    - "Name classic Releases using only uppercased Service and Environment."
-    - "Require Environment in the generated YAML filename and identical Pipeline name: <project>-<repository>-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml."
-    - "Migrate 0.1.37 Environment-first and earlier branch-only Pipelines by legacy name/path so Pipeline ID and Release artifact identity are preserved."
+    - "Name normal classic Releases using uppercased Service and Environment; prefix MR Release names with MR while retaining Service and Environment."
+    - "Require Service and Environment in the generated YAML filename and identical Pipeline name: <project>-<repository>[-MR]-<service>-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml."
+    - "Migrate the immediately preceding Service-less transition, 0.1.37 Environment-first, and earlier branch-only Pipelines by legacy name/path so Pipeline ID and Release artifact identity are preserved."
     - "Load dist/release-inline-task.sh from the installed extension and embed its complete text as the classic Release Bash task's inline script."
     - "Resolve exact Variable Group KomodoAPI with actionFilter=Use and validate AZP_TOKEN, KOMODO_API_KEY, and KOMODO_API_SECRET names without exposing values."
     - "Link KomodoAPI by numeric ID in the Release definition's top-level variableGroups array and preserve additional existing definition-level groups."
@@ -81,6 +95,104 @@ development_candidate:
     - "Never PUT to /_apis/pipelines/{id}; update through /_apis/build/definitions/{id}."
     - "Compare Pipeline and Release folder casing case-insensitively."
     - "Migrate same-Pipeline Release definitions instead of creating name-based duplicates."
+
+previous_packaged_candidate_0_1_64:
+  version: "0.1.64"
+  package_path: "mohammad-falahat.pipeline-generator-0.1.64.vsix"
+  package_sha256: "ba2dc85278a323c0c75dbd6aa3fbce9d6d09657518b3f4dbb92c73df5a335a96"
+  installed: false
+  live_verified: false
+  superseded_by: "0.1.65 Service-aware Pipeline and MR Release naming"
+
+latest_immutable_monorepo_live_run:
+  observed_at: "2026-08-24"
+  method: "normal signed-in Azure DevOps Chrome session monitored through the user-authorized loopback DevTools endpoint; user-triggered generator, Build, Release, Nginx Repo Pull, and manual legacy certificate correction; read-only ADO/Komodo/public HTTPS readback; no PAT or authentication adaptation"
+  installed_version: "0.1.61"
+  source:
+    project: "Locanit"
+    repository: "Locanit_Front_MonoRepo"
+    branch: "step-1"
+    environment: "demo"
+    komodo_server: "Production-31.7.65.195"
+  definitions:
+    pipeline_id: 357
+    release_definition_id: 29
+  build:
+    id: 15053
+    number: "20260824.3"
+    result: "succeeded"
+    built_projects:
+      - "shell"
+      - "alarmManagement"
+      - "fleetMonitoring"
+    static_image: "registry.buluttakin.com/locanit/front-monorepo-demo:1.0.15053"
+    static_image_digest: "sha256:5fea1dee5cdcc655f702a223e2919901d6de3b5563b579c9127c17546d5253bc"
+    artifact_id: 4185
+    bff: "disabled because no BFF project was discovered"
+  release:
+    release_id: 1219
+    release_name: "Release-4"
+    result: "succeeded"
+    stack: "locanit_docker_devops-demo"
+    stack_state: "RUNNING"
+  nginx_follow_up:
+    repository: "Locanit_Nginx_DevOps-demo"
+    initial_pull_result: "on_pull reload failed because the legacy shared file referenced /etc/nginx/conf.d/bulutdemo.pem and bulutdemo.key"
+    manual_recovery: "user changed the legacy paths to bulutdemo.ir.pem and bulutdemo.ir.key, then Nginx reloaded successfully"
+    candidate_fix: "0.1.62 performs this exact legacy-path migration during support-repository reconciliation"
+  public_runtime_probe:
+    dns_edge_ip: "31.7.65.197"
+    tls_subject: "CN=bulutdemo.ir"
+    tls_san: "*.bulutdemo.ir, bulutdemo.ir"
+    root_http_status: 200
+    shell_bundle_http_status: 200
+    fleet_monitoring_remote_entry_http_status: 200
+    alarm_management_remote_entry_http_status: 200
+    api_http_status: 502
+    api_explanation: "No BFF project was discovered, so the optional BFF profile is disabled while the generated /api/ route has no active upstream."
+    remaining_source_issue: "The deployed Shell bundle embeds http://localhost:4201/remoteEntry.js and http://localhost:4202/remoteEntry.js even though same-origin /fleetMonitoring/remoteEntry.js and /alarmManagement/remoteEntry.js both return 200. The source project's Module Federation production entries must use same-origin paths."
+  conclusion: "Immutable Monorepo Build, image push, Compose tag Release, and Stack deployment succeeded on the exceptional Production-hosted Demo. Manual certificate migration restored Nginx; 0.1.62 prevents recurrence. Runtime publication is healthy, but the source Shell still needs production Module Federation entry URLs."
+
+first_immutable_monorepo_live_run:
+  observed_at: "2026-08-24"
+  method: "normal signed-in Azure DevOps Chrome session monitored through the user-authorized loopback DevTools endpoint; read-only ADO Git and Komodo network readback; no PAT or authentication adaptation"
+  installed_version: "0.1.60"
+  source:
+    project: "Locanit"
+    repository: "Locanit_Front_MonoRepo"
+    branch: "step-1"
+    environment: "demo"
+    komodo_server: "DEMO-192.168.62.91"
+  build:
+    id: 15043
+    number: "20260824.1"
+    result: "succeeded"
+    built_projects:
+      - "shell"
+      - "alarmManagement"
+      - "fleetMonitoring"
+    static_image: "registry.buluttakin.com/locanit/front-monorepo-demo:1.0.15043"
+    static_image_digest: "sha256:d53c0accc0f7f89c6c7a50018d3b3771664a41af25c0844da40c650574867cdf"
+    artifact: "mr-drop"
+    bff: "disabled because no BFF project was discovered"
+  release:
+    definition_name: "MR DEMO"
+    release_id: 1218
+    release_name: "Release-3"
+    result: "failed"
+    release_commit: "6ef2507f64bfccc380e97769f65df195a529c086"
+    rollback_commit: "4dfbef7be1185b8f5df8645d724f42b391b8bbd8"
+    git_release_push_succeeded: true
+    git_rollback_push_succeeded: true
+    deploy_stack_failed: true
+    rollback_deploy_failed: true
+  network_probe:
+    request: "Komodo POST /read ListDockerNetworks for DEMO-192.168.62.91"
+    nginx_net_present: true
+    nginx_network_present: false
+    credential_values_observed_or_recorded: false
+  root_cause: "Generated Compose declared external nginx-network, but the selected Docker host exposes nginx-net. Both the release deployment and rollback deployment therefore failed in Compose Pull/Up."
+  conclusion: "Immutable Build/image publishing and Release Git rollback worked. Candidate 0.1.61 must update the shared Compose external network mapping before retrying Release."
 
 latest_read_only_auth_probe:
   observed_at: "2026-08-18"
@@ -409,6 +521,14 @@ implementation_contracts:
       - "name"
     persisted_in_browser: false
     cors_allowed_origin_required: "https://azure.buluttakin.com"
+  komodo_nginx_network_resolution:
+    request: "POST {KOMODO_ADDRESS}/read with ListDockerNetworks and params.server set to the selected Server"
+    accepted_exact_names:
+      - "nginx-network"
+      - "nginx-net"
+    timing: "Step 1 before any repository creation or Git write"
+    compose_behavior: "Preserve an existing logical Nginx network key and set its explicit external name to the actual host network."
+    missing_network_behavior: "Block provisioning without Git mutation."
   support_repositories:
     docker_name: "<ProjectWithoutSpaces>_Docker_DevOps"
     docker_directory: "<environment>_<lowercase-project-without-spaces>"
@@ -466,6 +586,7 @@ implementation_contracts:
   release_update:
     api_version: "7.1-preview.4"
     desired_name: "<UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>"
+    desired_monorepo_name: "MR <UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>"
     identity_order:
       - "exact desired name"
       - "Pipeline artifact ID"
@@ -555,22 +676,26 @@ next_run:
   - "Record the authentication/test method explicitly."
   - "Create/verify ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main with the dedicated Server-Read-only Komodo address/key/secret."
   - "Verify Komodo CORS permits https://azure.buluttakin.com and the X-Api-Key/X-Api-Secret preflight headers."
-  - "Package/install 0.1.52; no new extension scope is required by the central browser-session or Monorepo changes."
+  - "Install 0.1.61; no new extension scope is required by dynamic Docker-network discovery or improved Release diagnostics."
+  - "Reopen Generate MonoRepo for Locanit_Front_MonoRepo@step-1 and rerun provisioning; verify Step 1 resolves nginx-net on DEMO-192.168.62.91 before writes."
+  - "Read back demo_locanit/compose.yml and verify the preserved logical nginx-network block has name: nginx-net and external: true; rerun provisioning once more and prove no additional Compose commit."
+  - "Verify the legacy MR DEMO Release definition is reconciled in place to MR FRONTEND DEMO with the current inline task, then create a new Release for an existing successful Build if needed."
+  - "Verify the new Release changes Compose to registry.buluttakin.com/locanit/front-monorepo-demo:1.0.15043 and DeployStack completes successfully."
   - "From a collection other than ShonizCollection, verify both central Git reads contain no Authorization header, use the same-origin browser session, and return HTTP 200; confirm Environment includes soc and Komodo contains only enabled non-template servers."
   - "Rerun feature/Zones and verify Pipeline ID 347 is migrated in place to Feature-ZonesToDEMO; allow Release definition 7 to advance once for the preserved Pipeline artifact, Inline wrapper, KomodoAPI linkage, and short Release name."
-  - "Read back the Docker/Nginx support repositories and verify no /environments file was generated and only missing compose.yml, a shared route, or managed-route normalization was committed; prove root is last, root keeps its proxy URI slash, and every non-root route has /<service>/ with no rewrite and a no-URI-slash proxy target."
+  - "Read back the Docker/Nginx support repositories and verify no /environments file was generated and only missing compose.yml, a shared route, or managed-route normalization was committed; prove root is last and every route has no rewrite and a no-URI-slash proxy target."
   - "Read Release 7 back: top-level variableGroups includes ID 7, environment variableGroups is empty, and the Inline task text matches the packaged wrapper."
-  - "Rerun 0.1.52 normal mode a second time and verify Release 7 revision is stable with no PUT and no support repository commit."
+  - "Rerun 0.1.65 normal mode a second time and verify the Service-aware Pipeline and Release revisions are stable with no PUT and no support repository commit."
   - "On the second identical run, verify exact-name Pipeline reuse reads Build Definition 347 and sends no Pipeline or Build Definition PUT."
   - "Verify the extension-token queue and Docker Registry endpoint reads return HTTP 200 before submitting."
   - "Verify mouse wheel, touchpad, Page Down, and scrollbar can reach every form field plus the submit button."
   - "If HostAuthorizationNotFound appears, use Open extension authorization as a Collection Administrator and authorize the requested scopes."
-  - "If no authorization action is exposed, clean-install the same published 0.1.52 version and verify installState.flags."
+  - "If no authorization action is exposed, clean-install the same published 0.1.65 version and verify installState.flags."
   - "Verify the generator opens in an Azure DevOps Dialog or the Azure Repos Pipeline Generator Hub, never a separate tab."
   - "Verify the hosted generator itself obtains VSS.getAccessToken without a PAT prompt or token transfer."
   - "Verify success stays on the page, locks/collapses the form, focuses valid Nginx, Compose, and Pipeline links, and performs no automatic navigation."
   - "Open Generate MonoRepo read-only first and verify MR presentation, visible auto-filled Service name, hidden Dockerfile/registry inputs, dynamic Environment/Server values, and no browser write before Submit."
-  - "With explicit mutation approval, verify one disposable MR Submit creates the three generated files, generic Compose/Nginx content, one MR Pipeline under \\komodo\\MR, one MR Release named MR <ENV>, and four review links; do not run either definition unless separately authorized."
+  - "With explicit mutation approval, verify two disposable MR submits for distinct Services on the same repository/branch create distinct Service-aware Pipelines and MR <SERVICE> <ENV> Releases under \\komodo\\MR; do not run either definition unless separately authorized."
   - "Before the first MR Build, replace SharedTemplates:/monorepo/pipeline.yml and monorepo/mr-build.cjs with the candidate mirrors and confirm monorepo/nginx/default.conf is present."
   - "With explicit execution approval, verify the MR Build upserts the normal Docker Komodo Repo and partially reconciles the same normal Stack linked to the shared ADO compose.yml on main, but does not deploy it or replace unrelated settings."
   - "With separate Release approval, verify DeployStack is polled through GetUpdate to Complete/success=true and no direct docker compose command or target-side Compose download is used."

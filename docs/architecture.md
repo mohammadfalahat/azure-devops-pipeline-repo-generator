@@ -1,6 +1,6 @@
 # Architecture and runtime flow
 
-This document describes version 0.1.52 from the implementation in
+This document describes version 0.1.65 from the implementation in
 `vss-extension.json`, `dist/menu-action.js`, `dist/ui.js`, and
 `dist/release-config.js`.
 
@@ -42,7 +42,7 @@ already exist.
 | `release-config.js` | Loaded before `ui.js` | Exposes immutable `window.PipelineGeneratorReleaseConfig` with Release settings, `KomodoAPI` requirements, and Bash source selection |
 | `release-inline-task.sh` | Fetched by `ui.js` from the installed extension assets | Provides the wrapper text embedded into the classic Release Bash task |
 | `monorepo-build.cjs` | Maintained mirror of `SharedTemplates:/monorepo/mr-build.cjs` | Discovers buildable Nx apps, computes affected apps, applies shell rebuild-all, resolves output paths, and creates `mr-drop` |
-| `monorepo-release-inline-task.sh` | Embedded by `ui.js` into MR classic Releases | Uses Komodo 1.19.5 Terminal calls to stage the Build artifact, executes the shared ADO Git-linked Docker Stack, and polls the asynchronous Update |
+| `monorepo-release-inline-task.sh` | Embedded by `ui.js` into MR classic Releases | Commits manifest image tags to the shared Compose source, deploys the Git-linked Komodo Stack, polls its Update, and commits rollback tags on failure |
 | `VSS.SDK*.js` | Action and generator pages | Supplies the legacy VSS extension APIs required by the supported on-premises host |
 | `provision-pipeline-release.sh` | Terminal operator or automation | Creates/reuses a Pipeline and Release definition using REST and Basic PAT authentication |
 
@@ -217,7 +217,7 @@ The form starts with these defaults:
 | --- | --- |
 | Pool | `PublishDockerAgent`; merged with project agent queues |
 | Service | Lowercase source repository suffix after removing a matching project-name prefix and separator; remains user-editable |
-| Environment | Name/domain records loaded from `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; `demo` is preferred when present, then inferred from source branch when possible |
+| Environment | Name/domain records (plus legacy `projects_root` metadata) loaded from `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; `demo` is preferred when present, then inferred from source branch when possible |
 | Dockerfile directory | `**`, then first recursively discovered Dockerfile directory |
 | Registry address | `registry.buluttakin.com` |
 | Registry service | `BulutReg`; merged with Docker Registry service endpoints |
@@ -291,7 +291,7 @@ The Compose service/container name is
 `<lowercase-sanitized-project>.<environment-domain>`. UI/frontend services own
 `/`; every other service owns `/<service>/`. Every managed Location configures
 Docker DNS with `resolver 127.0.0.11 ipv6=off` and stores the container hostname
-in `$target`. Root uses `proxy_pass http://$target:80/`. A non-root route adds
+in `$target`. Root uses `proxy_pass http://$target:80`. A non-root route adds
 `proxy_pass http://$target:8080` without a URI slash and without `rewrite`, so
 the original request URI—including its service prefix—is forwarded unchanged.
 This keeps container DNS dynamic. The root Location is
@@ -303,8 +303,11 @@ A later run reads the shared Nginx file, identifies its unique HTTPS
 Locations with a quote/comment/brace-aware tokenizer. Existing non-root
 `/<service>` paths are migrated to `/<service>/`, exact rewrite lines from the
 older generated format are removed, direct-host proxy targets become `$target`,
-and root is moved below all other generated route blocks. Root retains its
-trailing proxy URI slash; non-root proxy targets do not have one. A missing
+exact legacy generated certificate paths based on only the domain's first
+label are migrated to the complete Environment domain, and root is moved below
+all other generated route blocks. Certificate migration is scoped to the
+matching HTTPS server and does not alter custom paths. Neither root nor
+non-root proxy targets have a URI slash. A missing
 route is inserted inside managed-route
 markers; manual content outside and inside existing Location blocks is
 preserved. Missing/malformed markers, unmatched braces, or duplicate matching
@@ -313,43 +316,48 @@ HTTPS server blocks stop the edit instead of guessing. Repeated runs converge.
 ### YAML filename
 
 ```text
-<sanitized-project>-<sanitized-source-repository>-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml
+<sanitized-project>-<sanitized-source-repository>[-MR]-<sanitized-service>-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml
 ```
 
-Each segment is trimmed and lowercased. Slash and backslash runs become `-`;
-characters outside word characters, dot, and hyphen become `-`; repeated and
-edge hyphens are removed. JavaScript `\w` preserves ASCII letters, digits, and
-underscore.
+Project, repository, and Service segments are trimmed and lowercased. Slash and
+backslash runs become `-`; characters outside word characters, dot, and hyphen
+become `-`; repeated and edge hyphens are removed. The Branch retains its
+word-leading capitalization and the Environment is uppercased. JavaScript `\w`
+preserves ASCII letters, digits, and underscore.
 
 Example:
 
 ```text
 Project: RideSharing
 Repository: RideSharing_Backend
+Service: api
 Environment: demo
 Branch: feature/defineZones
 
-/ridesharing-ridesharing_backend-Feature-DefineZonesToDEMO.yml
+/ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMO.yml
 ```
 
 ### Pipeline and Release names
 
 ```text
-Pipeline: <generated-yaml-filename>
-Release:  <UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>
+Pipeline:   <project>-<repository>[-MR]-<service>-<Branch>To<ENVIRONMENT>.yml
+Release:    <UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>
+MR Release: MR <UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>
 ```
 
 The Pipeline name is exactly the filename returned by
 `buildPipelineFilename`, including `.yml` and excluding only the leading
 repository path slash. For example, the YAML path
-`/ridesharing-ridesharing_backend-Feature-DefineZonesToDEMO.yml` maps to
-Pipeline name `ridesharing-ridesharing_backend-Feature-DefineZonesToDEMO.yml`.
+`/ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMO.yml` maps to
+Pipeline name `ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMO.yml`.
 
 For example, Service `api` and Environment `dev` produce Release name
-`API DEV`. Environment is mandatory in the Pipeline filename and is expressed
-as the destination of the source Branch: `<Branch>To<ENVIRONMENT>`. For example,
-Branch `Production` and Environment `soc` produce `ProductionToSOC`. The same
-repository and branch can therefore have distinct destination Pipelines.
+`API DEV`. Service and Environment are mandatory in the Pipeline filename;
+Environment is expressed as the destination of the source Branch:
+`<Branch>To<ENVIRONMENT>`. For example, Branch `Production` and Environment
+`soc` produce `ProductionToSOC`. The same
+repository and branch can therefore have distinct Service and destination
+Pipelines without sharing a YAML path or Build Definition identity.
 Release lookup still falls back to Pipeline artifact ID, so a legacy
 filename-based Release is renamed and reconciled in place rather than
 duplicated.
@@ -442,8 +450,9 @@ branch. This is performed even when the repository already existed.
 
 ### Step 4: upsert or migrate Pipeline
 
-The UI searches Pipelines by the desired exact `BranchToEnvironment` name,
-then by the 0.1.37 Environment-first name, and finally by the earlier
+The UI searches Pipelines by the desired exact Service-aware
+`BranchToEnvironment` name, then by the immediate predecessor's Service-less
+transition name, the 0.1.37 Environment-first name, and finally by the earlier
 branch-only filename.
 
 - If an exact filename-named Pipeline exists, it reads the canonical complete
@@ -451,7 +460,8 @@ branch-only filename.
   not used for this decision because the target Server omits
   `repository.defaultBranch` from that sparse model.
 - If none of those names is present, it searches Build Definitions by the new
-  transition YAML path, the 0.1.37 Environment-first path, and the earlier
+  Service-aware transition YAML path, the immediately preceding Service-less
+  transition path, the 0.1.37 Environment-first path, and the earlier
   branch-only path, in that order. This migrates the existing Pipeline ID
   instead of creating a duplicate. If an old bug created more than one path
   match, the lowest/oldest definition ID is selected deterministically and
@@ -524,22 +534,35 @@ No continuous deployment trigger is configured.
 
 Monorepo mode uses the same five provisioning steps but selects separate
 renderers and identities. The generated Pipeline/Release live under
-`\komodo\MR`, the Pipeline filename contains `-MR-<Branch>To<ENV>`, and the
-Release is named `MR <ENV>`. Normal Pipeline definitions are never considered
-legacy candidates for MR reconciliation.
+`\komodo\MR`, the Pipeline filename contains `-MR-<service>-<Branch>To<ENV>`,
+and the Release is named `MR <SERVICE> <ENV>`. The immediately preceding
+Service-less MR Pipeline is eligible for in-place migration; normal Pipeline
+definitions are never considered legacy candidates for MR reconciliation.
 
 Step 1 creates/reuses the same project Docker and Nginx repositories and merges
 the Monorepo runtime into the existing project/Environment Compose instead of
-creating another Compose directory. The logical Monorepo service uses one generic
-`nginx:1.27-alpine` container for shell/static assets and an optional generic
-`node:20-alpine` companion for the discovered BFF output (default name `bff`). Both mount the service
-deployment directory, so changing its `current` symlink is visible without
-rebuilding or replacing the static runtime image. The outer Nginx configuration
-routes `/api/` to the BFF and `/` to the static runtime, uses Docker's dynamic
+creating another Compose directory. The logical service has one immutable Nginx
+image for shell/static assets and an optional immutable Node image for BFF output.
+Before any repository write, the browser calls Komodo `ListDockerNetworks` for
+the selected Server and requires an exact existing `nginx-network` or
+`nginx-net`. Compose keeps an existing logical network key when possible and
+sets its external `name` to the resolved host network. This lets existing
+services continue referring to `nginx-network` while a target host actually
+uses `nginx-net`, without renaming unrelated service blocks.
+There are no host bind mounts, runtime working-directory overrides, or project
+Dockerfiles. The outer Nginx configuration
+routes `/bff/` to the BFF and `/` to the static runtime, reserves `/api/` for
+the main application backend, uses Docker's dynamic
 resolver, performs no rewrite, and keeps `/` after non-root Locations.
 The Compose file stays on `main` in the project's Docker DevOps repository and
 is the deployment source of truth; no generated or downloaded target-side copy
 replaces it.
+Reconciliation migrates legacy bare runtime images and removes legacy managed
+mount/command fields, while preserving immutable active tags, custom fields,
+and every unrelated Compose service. New managed image fields are stable
+repository references whose tag comes from service-specific keys in the
+adjacent tracked `.env`; an active legacy hard-coded tag is preserved until the
+next Release can migrate Compose and `.env` atomically.
 
 Step 2 atomically pushes two files into the generated repository:
 
@@ -549,67 +572,64 @@ Step 2 atomically pushes two files into the generated repository:
   edits on later runs).
 
 The central template checks out the generated repository, source Monorepo, and
-SharedTemplates, then runs `SharedTemplates:/monorepo/mr-build.cjs` and packages
-`SharedTemplates:/monorepo/nginx/default.conf` below `mr-drop/runtime/nginx`.
+SharedTemplates, logs in through the selected Docker Registry service connection,
+then runs `mr-build.cjs`. `package-images.sh` uses the generic SharedTemplates
+Dockerfiles to create/push immutable static and optional BFF images.
 It also creates or updates the normal Komodo Repo pointing to
 `<Project>_Docker_DevOps@main` and partially reconciles the same normal Docker Stack whose
 `linked_repo`, `run_directory`, and `file_paths` resolve the exact Git-managed
 shared `compose.yml`. Existing Stack environment and extra arguments are retained;
-only namespaced Monorepo variables/profile arguments are merged. The Pipeline configures resources but never deploys the Stack.
-Compose bind-mounts the deployed stable copy instead of constructing Nginx
-configuration with an inline command. At Build
-time the runner installs with `pnpm install --frozen-lockfile`, asks Nx
+only the BFF profile is reconciled. The Pipeline configures resources but never deploys the Stack.
+At Build time the runner installs with `pnpm install --frozen-lockfile`, asks Nx
 for buildable applications and affected applications, and invokes the contract
 build command separately for each affected project with `{projects}` replaced
-by that project. A configured shell/host application in the affected set
+by that project. Corepack and pnpm resolve through the SharedTemplates
+`npmRegistry` parameter, which defaults to the internal Nexus
+`https://registry.buluttakin.com/repository/npm-group`; pnpm's store and
+Corepack home are mounted from the self-hosted agent cache. A configured
+shell/host application in the affected set
 promotes the run to rebuild all applications. An ordinary failed project is
-recorded and omitted from the overlay, so its prior deployed version remains;
+recorded and omitted from the overlay. The prior static image is extracted first,
+so its deployed version remains;
 successful projects continue and the Build is marked `SucceededWithIssues`.
-A failed shell or a run in which every affected project fails produces no
-deployable artifact. Nx metadata supplies each build output path. The single
-`mr-drop` Build artifact contains a complete `inventory.tsv`, a JSON manifest,
-the successful output directories, and the failed-project list.
+A failed shell blocks the Build. Without a previous image, ordinary failures
+that leave no baseline also block it. Nx metadata supplies output paths. The
+`mr-drop` artifact contains schema-2 image references, inventory, successful
+outputs, and failed-project metadata; the deployable payload itself is in the registry.
 
-The MR Release embeds `monorepo-release-inline-task.sh`. The Release agent finds
-the downloaded manifest, then calls Komodo 1.19.5 `POST /terminal/execute` with
-the version-appropriate `{server, terminal, command}` body. The target server
-downloads `mr-drop` from Azure DevOps, hard-links/copies the prior active tree,
-overlays changed modules, writes the new inventory, and atomically switches the
-`current` symlink. The Release then calls Komodo `/execute` with `DeployStack`
+The MR Release embeds `monorepo-release-inline-task.sh`. It reads the downloaded
+manifest, clones the Docker DevOps repository, keeps managed Compose image
+repositories stable, updates the exact service/BFF tag keys in the adjacent
+`.env`, and pushes a release commit. A legacy hard-coded Compose image is
+migrated to `${service_key}` form in that same commit. It then calls Komodo `/execute` with `DeployStack`
 for the shared Git-linked Docker Stack and polls `/read` with `GetUpdate` until the Update
 is `Complete`; `success` must be true.
-The Release syntax-checks the packaged Nginx configuration, installs it below
-`<deployment-root>/runtime/nginx`, and validates/reloads the static container.
 Static project directories are symlinked below the shell root by Nx project
 name, making `/<project-name>/` available through the catch-all static Runtime.
-The discovered BFF project name is passed to Compose and its profile is enabled
-only when that output exists in the selected release tree; a deployment or
-validation failure restores the prior symlink/Nginx file and redeploys the
-Stack against the restored state. Modules missing from the new inventory are logged and
-retained as orphans; ambiguous rename/removal never triggers automatic delete.
-The BFF container is restarted only when the artifact contains a BFF module.
+The BFF profile is enabled only when the manifest contains a BFF image. A failed
+deployment causes a rollback commit restoring the exact prior Compose/`.env` state and a best-effort
+redeploy; the Release remains failed so infrastructure errors are visible.
 
 The browser's central Server-list key remains Server-Read only. The separate
 credentials expanded from the current project's `KomodoAPI` Variable Group at
 Build/Release execution need Repo/Stack read-create-update permissions,
-`DeployStack` execution, and Terminal permission on the selected Server. The Azure
-PAT is transmitted to the target only inside the authenticated terminal task
-so that the target can download its Build artifact; secret headers are fed to
-curl through config/stdin and shell xtrace is not enabled.
+`DeployStack` execution, Registry push access in Build, and ADO Git read/write.
+Terminal permission is not required. Secret headers are fed through config/stdin
+or process environment and shell xtrace is not enabled.
 
 ## Reconciliation and retry behavior
 
 | Resource | Lookup identity | Existing-resource behavior |
 | --- | --- | --- |
-| Generated/support repository | Exact repository name | Reuse; add missing bootstrap files and merge only missing Compose services and Nginx Locations |
+| Generated/support repository | Exact repository name | Before writes, resolve the selected Server's exact `nginx-network`/`nginx-net`; reuse repositories, add missing bootstrap files, map the actual external network, and merge only missing Compose services and Nginx Locations |
 | YAML file | Generated path on `main` | Reuse without Push when byte-identical; otherwise add/edit with a new commit |
 | Default branch | Repository ID | Always patch to `refs/heads/main` |
-| Pipeline | Exact BranchToEnvironment name/path, then 0.1.37 Environment-first and older branch-only identities | Reuse or GET-modify-PUT through Build Definitions |
+| Pipeline | Exact Service-aware BranchToEnvironment name/path, then Service-less transition, 0.1.37 Environment-first, and older branch-only identities | Reuse or GET-modify-PUT through Build Definitions |
 | Release definition | Exact Release name, then Pipeline artifact ID | Reuse or reconcile through Release Definitions PUT |
 | MR deployment contract | `/.devops/deployments.yml` on `main` | Create when missing; preserve all later edits |
-| MR Compose Git source | `<Project>_Docker_DevOps:/<environment>_<project>/compose.yml@main` | Reuse the ordinary shared Compose; merge only absent Monorepo service entries and preserve existing/operator-edited services |
+| MR Compose Git source | `<Project>_Docker_DevOps:/<environment>_<project>/{compose.yml,.env}@main` | Reuse the shared Compose; merge absent services, migrate legacy runtime fields, keep stable image repositories in Compose, and store managed immutable tags in `.env` without changing unrelated/operator-edited services |
 | MR Komodo Repo/Stack | The same `<Project>_Docker_DevOps-<environment>` Repo and Stack identities used by ordinary services | Apply only partial Stack updates, preserving unrelated config; deploy only from Release |
-| MR runtime state | `<deployment-root>/current` and per-build release directory | Overlay affected modules and atomically switch; retain removed/renamed orphans |
+| MR runtime state | Immutable Registry tags referenced by managed Compose `.env` keys | Hydrate the prior image, overlay affected outputs, push a new build tag, and restore the exact prior Compose/`.env` state on failed deployment |
 
 Because there is no rollback, a later failure leaves earlier successful
 resources in place. This is intentional and makes most retries convergent. For
@@ -656,8 +676,8 @@ login page.
 - List calls do not follow continuation tokens or implement pagination. Large
   projects can hide a repository, Pipeline, Release, queue, or service endpoint
   beyond the first response page.
-- Pipeline names intentionally include the Branch-to-Environment transition YAML filename;
-  Release names intentionally contain only Service and Environment.
+- Pipeline names intentionally include Service and the Branch-to-Environment transition YAML filename;
+  normal Release names contain Service and Environment, while MR names also contain the MR marker.
 - Pipeline and Release folder comparison is case-insensitive.
 - Pipeline migration depends on Build Definitions list filtering by repository
   and the desired or legacy YAML filename; Release migration filters expanded artifacts by type

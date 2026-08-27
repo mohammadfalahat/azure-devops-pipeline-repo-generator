@@ -6,8 +6,10 @@
  * Azure DevOps Server after publishing the VSIX.
  */
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const vm = require('vm');
+const { spawnSync } = require('child_process');
 const yaml = require('js-yaml');
 
 const root = path.resolve(__dirname, '..');
@@ -33,6 +35,15 @@ const centralMonorepoNginxPath = 'examples/shared-templates/monorepo/nginx/defau
 if (!fs.existsSync(path.join(root, centralMonorepoNginxPath))) {
   fail(`central Monorepo Nginx example is missing: ${centralMonorepoNginxPath}`);
 }
+for (const immutableRuntimeExample of [
+  'examples/shared-templates/monorepo/package-images.sh',
+  'examples/shared-templates/monorepo/docker/static.Dockerfile',
+  'examples/shared-templates/monorepo/docker/bff.Dockerfile'
+]) {
+  if (!fs.existsSync(path.join(root, immutableRuntimeExample))) {
+    fail(`central immutable Monorepo runtime example is missing: ${immutableRuntimeExample}`);
+  }
+}
 const centralMonorepoTemplate = read(centralMonorepoTemplatePath);
 let centralMonorepoTemplateDocument;
 try {
@@ -43,11 +54,23 @@ try {
 for (const requiredTemplateBehavior of [
   'monorepo/mr-build.cjs',
   'monorepo/nginx/default.conf',
+  'monorepo/package-images.sh',
+  'Docker@2',
+  'registryAddress',
+  'containerRegistryService',
+  'MR_PREVIOUS_STATIC_IMAGE',
+  'npmRegistry',
+  'https://registry.buluttakin.com/repository/npm-group',
+  'COREPACK_NPM_REGISTRY',
+  'NPM_CONFIG_REGISTRY',
+  'pnpm config set --global store-dir /cache/pnpm-store',
+  'compose_env_file',
+  'read_env_tag',
   'mr-drop/runtime/nginx',
-  'ListFullRepos',
+  'GetRepo',
   'CreateRepo',
   'UpdateRepo',
-  'ListFullStacks',
+  'GetStack',
   'CreateStack',
   'UpdateStack',
   'linked_repo:$linked_repo',
@@ -63,11 +86,34 @@ for (const requiredTemplateBehavior of [
 if (centralMonorepoTemplate.includes('"DeployStack"')) {
   fail('central Monorepo Build template must configure GitOps resources without deploying the Stack.');
 }
+if (
+  !centralMonorepoTemplate.includes('existing_extra_args') ||
+  !centralMonorepoTemplate.includes('$all[$index] == "--profile"') ||
+  centralMonorepoTemplate.includes('if $enable then ["--profile", $profile]')
+) {
+  fail('central Monorepo Build template must remove the managed BFF profile from Komodo extra_args.');
+}
 const ensureKomodoStep = centralMonorepoTemplateDocument?.stages?.[0]?.jobs?.[0]?.steps?.find(
   (step) => step.displayName === 'Ensure Komodo GitOps repository and shared Docker Stack'
 );
 if (!ensureKomodoStep?.inputs?.script) {
   fail('central Monorepo template must contain the Komodo GitOps upsert Bash step.');
+}
+const bashSyntaxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pipeline-generator-bash-syntax-'));
+try {
+  let bashStepIndex = 0;
+  for (const step of centralMonorepoTemplateDocument?.stages?.[0]?.jobs?.[0]?.steps || []) {
+    if (step.task !== 'Bash@3' || step.inputs?.targetType !== 'inline' || !step.inputs?.script) continue;
+    bashStepIndex += 1;
+    const syntaxPath = path.join(bashSyntaxDir, `step-${bashStepIndex}.sh`);
+    fs.writeFileSync(syntaxPath, step.inputs.script);
+    const syntax = spawnSync('bash', ['-n', syntaxPath], { encoding: 'utf8' });
+    if (syntax.status !== 0) {
+      fail(`central Monorepo Bash step has invalid syntax (${step.displayName}): ${syntax.stderr}`);
+    }
+  }
+} finally {
+  fs.rmSync(bashSyntaxDir, { recursive: true, force: true });
 }
 
 for (const docPath of developerDocs) {
@@ -266,6 +312,7 @@ for (const requiredBuildBehavior of [
   'failedProjects',
   'task.complete result=SucceededWithIssues',
   'bffProject',
+  "kind === 'bff' ? '/bff/'",
   'komodoStack',
   'staticContainer',
   'manifest.json',
@@ -282,34 +329,35 @@ for (const requiredReleaseBehavior of [
   '$(AZP_TOKEN)',
   '$(KOMODO_API_KEY)',
   '$(KOMODO_API_SECRET)',
-  '/terminal/execute',
-  'artifactName=mr-drop',
+  'deploymentMode',
+  'immutable-images',
   'composeRepository',
   'komodoStack',
-  'bffProject',
+  'staticImage',
+  'bffImage',
+  'staticImageRepository',
+  'bffImageRepository',
   'DeployStack',
   'GetUpdate',
   '.success == true',
-  'Komodo Stack deployed from ADO Git',
-  'current symlink and runtime Nginx configuration rolled back',
-  'MR orphan retained for manual review',
-  'ln -s "../modules/$module_name"',
-  'runtime/nginx/default.conf',
-  'nginx-default.conf',
-  'nginx:1.27-alpine -t',
-  'nginx -s reload',
-  'mv -Tf "$link" "$root/current"',
-  'server: process.env.MR_TERMINAL_SERVER'
+  'git_authenticated',
+  'update_service_image',
+  'update_env_tag',
+  'merge_env_csv_item COMPOSE_PROFILES',
+  'env_path="${compose_path%/compose.yml}/.env"',
+  'release(monorepo): deploy build',
+  'rollback(monorepo): restore before build',
+  'restoring the previously active Compose and .env state'
 ]) {
   if (!monorepoReleaseScript.includes(requiredReleaseBehavior)) {
     fail(`Monorepo Release script is missing ${requiredReleaseBehavior}.`);
   }
 }
-if (monorepoReleaseScript.includes('target: { type: \'Server\'')) {
-  fail('Monorepo Release must use the Komodo 1.19.5 terminal payload, not the v2 target/init shape.');
-}
 if (/docker compose\s/.test(monorepoReleaseScript)) {
   fail('Monorepo Release must deploy the ADO Git-managed Compose through Komodo DeployStack.');
+}
+if (/\/terminal\/execute|deploymentRoot|MR_REMOTE|node_in_container|docker_args=/.test(monorepoReleaseScript)) {
+  fail('Monorepo Release must update immutable Compose tags without Terminal, host paths, Node.js, or Docker.');
 }
 if (/set\s+-x/.test(monorepoReleaseScript) || /curl[^\n]*-H\s+/.test(monorepoReleaseScript)) {
   fail('Monorepo Release must not expose secret headers through xtrace or process arguments.');
@@ -362,7 +410,7 @@ for (const requiredImplementation of [
   'findManagedRootRouteIndex',
   "const location = requestedLocation || (frontend ? '/' : `/${serviceKey}/`);",
   'resolver         127.0.0.11         ipv6=off;',
-  'proxy_pass                          http://$target:${internalPort}/;',
+  'proxy_pass                          http://$target:${internalPort};',
   'proxy_pass                          http://$target:${internalPort};',
   'generatedRewritePattern',
   'ensureSupportRepositories',
@@ -415,6 +463,13 @@ if (ui.includes("{ path: '/.devops/mr-build.cjs'")) {
 }
 if (ui.includes('proxy_pass http://${containerName}')) {
   fail('managed Nginx routes must never proxy directly to a compiled container hostname.');
+}
+if (
+  !ui.includes("location: '/bff/'") ||
+  !ui.includes("legacyManagedLocations: ['/api/']") ||
+  !ui.includes('managedContainerNames')
+) {
+  fail('Monorepo Nginx must reserve /api/ and migrate only an identified BFF route to /bff/.');
 }
 if (/localStorage|sessionStorage|document\.cookie/.test(ui)) {
   fail('ui.js must not persist credentials in browser storage or cookies.');
@@ -472,9 +527,12 @@ if (!ui.includes('readPipelineResponse')) {
 }
 if (
   !ui.includes('const buildPipelineName = (pipelineFilename) => pipelineFilename;') ||
-  !ui.includes('const pipelineName = buildPipelineName(pipelineFilename);')
+  !ui.includes('const pipelineName = buildPipelineName(pipelineFilename);') ||
+  !ui.includes('const buildLegacyServiceLessPipelineFilename = ({') ||
+  !ui.includes('service: payload.service,') ||
+  !ui.includes('${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}-${branchSegment}To${environmentSegment}.yml')
 ) {
-  fail('Pipeline display name must exactly match the generated YAML filename.');
+  fail('Pipeline filename/name must include Service and retain the Service-less transition migration identity.');
 }
 if (
   !ui.includes("project: 'SharedTemplates'") ||
@@ -498,8 +556,11 @@ if (
 ) {
   fail('Step 1 must provision the Docker/Nginx repositories and idempotent starter configuration files.');
 }
-if (!ui.includes("return `${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;")) {
-  fail('Classic Release names must contain only uppercased service and environment.');
+if (
+  !ui.includes("return `MR ${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;") ||
+  !ui.includes("return `${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;")
+) {
+  fail('Classic Release names must retain Service in both normal and MR modes.');
 }
 if (ui.includes('state.repositoryName = repo.name')) {
   fail('generated repository metadata must not overwrite the source repository identity used for retries.');
@@ -543,8 +604,8 @@ if (!restContracts.includes("`7.1-preview.1`") || !restContracts.includes('`repo
 if (!restContracts.includes('default is `7.1`')) {
   fail('REST documentation must distinguish the shell API_VERSION default from the browser contract.');
 }
-if (!restContracts.includes('GET-modify-PUT') || !restContracts.includes('exact generated YAML filename')) {
-  fail('REST documentation must describe Build Definition reconciliation and filename-based Pipeline naming.');
+if (!restContracts.includes('GET-modify-PUT') || !restContracts.includes('exact Service-aware generated YAML filename')) {
+  fail('REST documentation must describe Build Definition reconciliation and Service-aware filename-based Pipeline naming.');
 }
 if (
   !restContracts.includes('`_signout`') ||

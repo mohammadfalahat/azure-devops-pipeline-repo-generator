@@ -9,8 +9,6 @@ parameters:
     type: string
   - name: komodoServer
     type: string
-  - name: deploymentRoot
-    type: string
   - name: staticContainer
     type: string
   - name: bffContainer
@@ -34,6 +32,27 @@ parameters:
   - name: komodoGitAccount
     type: string
     default: '23'
+  - name: registryAddress
+    type: string
+    default: registry.buluttakin.com
+  - name: containerRegistryService
+    type: string
+    default: BulutReg
+  - name: staticRuntimeImage
+    type: string
+    default: registry.buluttakin.com/nginx:1.27-alpine
+  - name: bffRuntimeImage
+    type: string
+    default: registry.buluttakin.com/node:20-alpine
+  - name: nodeImage
+    type: string
+    default: 'registry.buluttakin.com/node:22-bookworm'
+  - name: pnpmVersion
+    type: string
+    default: '10.15.0'
+  - name: npmRegistry
+    type: string
+    default: 'https://registry.buluttakin.com/repository/npm-group'
 
 stages:
   - stage: MR_Build
@@ -62,14 +81,204 @@ stages:
             clean: true
             path: s/shared-templates
 
+          - task: Docker@2
+            displayName: Login to immutable runtime registry
+            inputs:
+              command: login
+              containerRegistry: ${{ parameters.containerRegistryService }}
+
           - task: Bash@3
-            displayName: Discover and build affected Nx applications
+            displayName: Resolve previous immutable runtime images
+            env:
+              AZP_TOKEN: $(AZP_TOKEN)
+              MR_REGISTRY_ADDRESS: ${{ parameters.registryAddress }}
+              MR_PROJECT_KEY: ${{ parameters.projectKey }}
+              MR_SERVICE_KEY: ${{ parameters.serviceKey }}
+              MR_ENVIRONMENT: ${{ parameters.environment }}
+              MR_STATIC_CONTAINER: ${{ parameters.staticContainer }}
+              MR_BFF_CONTAINER: ${{ parameters.bffContainer }}
+              MR_COMPOSE_REPOSITORY: ${{ parameters.composeRepository }}
+              MR_COMPOSE_PATH: ${{ parameters.composePath }}
             inputs:
               targetType: inline
               script: |
                 set -Eeuo pipefail
-                corepack enable >/dev/null 2>&1 || true
-                node "$(Pipeline.Workspace)/s/shared-templates/monorepo/mr-build.cjs"
+                : "${AZP_TOKEN:?AZP_TOKEN is required}"
+                command -v git >/dev/null 2>&1
+                command -v docker >/dev/null 2>&1
+
+                registry="${MR_REGISTRY_ADDRESS%/}"
+                registry="$(printf '%s' "$registry" | tr '[:upper:]' '[:lower:]')"
+                registry="${registry#http://}"
+                registry="${registry#https://}"
+                case "$registry" in (*/*|*[!a-z0-9.:-]*|'') echo "##[error] Unsafe Registry address"; exit 3;; esac
+                static_repository="${registry}/${MR_PROJECT_KEY}/${MR_SERVICE_KEY}-${MR_ENVIRONMENT}"
+                bff_repository="${registry}/${MR_PROJECT_KEY}/${MR_SERVICE_KEY}-bff-${MR_ENVIRONMENT}"
+                case "$static_repository" in (*[!a-z0-9./:_-]*|'') echo "##[error] Unsafe static image repository"; exit 3;; esac
+                case "$bff_repository" in (*[!a-z0-9./:_-]*|'') echo "##[error] Unsafe BFF image repository"; exit 3;; esac
+
+                auth="$(printf 'pat:%s' "$AZP_TOKEN" | (base64 -w0 2>/dev/null || base64 | tr -d '\r\n'))"
+                compose_work="$(mktemp -d "${AGENT_TEMPDIRECTORY:-/tmp}/mr-compose.XXXXXX")"
+                trap 'auth=""; rm -rf "$compose_work"' EXIT
+                repository_url="${SYSTEM_COLLECTIONURI%/}/${SYSTEM_TEAMPROJECTID}/_git/${MR_COMPOSE_REPOSITORY}"
+                GIT_CONFIG_COUNT=1 \
+                GIT_CONFIG_KEY_0=http.extraHeader \
+                GIT_CONFIG_VALUE_0="Authorization: Basic ${auth}" \
+                  git clone --quiet --depth 1 --branch main "$repository_url" "$compose_work/repository"
+                compose_file="$compose_work/repository/${MR_COMPOSE_PATH#/}"
+                test -s "$compose_file" || { echo "##[error] Compose file was not found: $MR_COMPOSE_REPOSITORY$MR_COMPOSE_PATH"; exit 3; }
+                compose_env_file="$(dirname "$compose_file")/.env"
+                static_tag_key="${MR_SERVICE_KEY//-/_}"
+                bff_tag_key="${static_tag_key}_bff"
+
+                read_env_tag() {
+                  local key="$1"
+                  [ -f "$compose_env_file" ] || return 0
+                  awk -v key="$key" '
+                    $0 ~ "^[[:space:]]*" key "[[:space:]]*[:=]" {
+                      value=$0
+                      sub("^[[:space:]]*" key "[[:space:]]*[:=][[:space:]]*", "", value)
+                      sub(/[[:space:]]+#.*$/, "", value)
+                      gsub(/^["'\'' ]+|["'\'' ]+$/, "", value)
+                      print value
+                      exit
+                    }
+                  ' "$compose_env_file"
+                }
+
+                read_service_image() {
+                  local service="$1"
+                  awk -v service="$service" '
+                    $0 == "  " service ":" { inside=1; next }
+                    inside && /^  [^[:space:]#][^:]*:[[:space:]]*$/ { exit }
+                    inside && /^[[:space:]]+image:[[:space:]]*/ {
+                      sub(/^[[:space:]]+image:[[:space:]]*/, "")
+                      sub(/[[:space:]]+#.*$/, "")
+                      gsub(/^["'\'' ]+|["'\'' ]+$/, "")
+                      print
+                      exit
+                    }
+                  ' "$compose_file"
+                }
+
+                resolve_managed_image() {
+                  local current="$1"
+                  local managed_repository="$2"
+                  local tag_key="$3"
+                  local env_tag
+                  local env_image
+                  env_tag="$(read_env_tag "$tag_key")"
+                  if [[ "$env_tag" =~ ^[A-Za-z0-9_.-]+$ ]] && [ "$env_tag" != CHANGE_ME ]; then
+                    env_image="${managed_repository}:${env_tag}"
+                    if docker pull "$env_image" >/dev/null; then
+                      printf '%s' "$env_image"
+                      return 0
+                    fi
+                  fi
+                  case "$current" in
+                    "${managed_repository}:"*|"${managed_repository}@"*)
+                      if docker pull "$current" >/dev/null; then printf '%s' "$current"; fi
+                      ;;
+                  esac
+                }
+
+                current_static="$(read_service_image "$MR_STATIC_CONTAINER")"
+                previous_static="$(resolve_managed_image "$current_static" "$static_repository" "$static_tag_key")"
+                current_bff=""
+                previous_bff=""
+                if [ -n "$MR_BFF_CONTAINER" ]; then
+                  current_bff="$(read_service_image "$MR_BFF_CONTAINER")"
+                  previous_bff="$(resolve_managed_image "$current_bff" "$bff_repository" "$bff_tag_key")"
+                fi
+
+                echo "##vso[task.setvariable variable=MR_STATIC_IMAGE_REPOSITORY]$static_repository"
+                echo "##vso[task.setvariable variable=MR_BFF_IMAGE_REPOSITORY]$bff_repository"
+                echo "##vso[task.setvariable variable=MR_PREVIOUS_STATIC_IMAGE]$previous_static"
+                echo "##vso[task.setvariable variable=MR_PREVIOUS_BFF_IMAGE]$previous_bff"
+                if [ -n "$previous_static" ]; then
+                  echo "##vso[task.setvariable variable=MR_HAS_PREVIOUS_STATIC_IMAGE]true"
+                  echo "##[section]Previous static runtime found: $previous_static"
+                else
+                  echo "##vso[task.setvariable variable=MR_HAS_PREVIOUS_STATIC_IMAGE]false"
+                  echo "##[section]No previous managed static runtime found; this build will create the baseline image"
+                fi
+
+          - task: Bash@3
+            displayName: Discover and build affected Nx applications in Node container
+            inputs:
+              targetType: inline
+              script: |
+                set -Eeuo pipefail
+                command -v docker >/dev/null 2>&1
+
+                MR_KOMODO_STACK="$(printf '%s' "$MR_KOMODO_STACK" | tr '[:upper:]' '[:lower:]')"
+                export MR_KOMODO_STACK
+
+                source_dir="$(Pipeline.Workspace)/s/source"
+                devops_dir="$(Pipeline.Workspace)/s/devops"
+                templates_dir="$(Pipeline.Workspace)/s/shared-templates"
+                artifact_root="$(Build.ArtifactStagingDirectory)"
+                cache_dir="${AGENT_TOOLSDIRECTORY:-$(Pipeline.Workspace)/.mr-tools}/mr-node"
+                npm_registry='${{ parameters.npmRegistry }}'
+                npm_registry="${npm_registry%/}"
+                case "$npm_registry" in
+                  https://*) ;;
+                  *) echo "##[error] npmRegistry must be an HTTPS URL" >&2; exit 2 ;;
+                esac
+                mkdir -p "$artifact_root" "$cache_dir/corepack" "$cache_dir/pnpm-store"
+
+                docker run --rm --init \
+                  --user "$(id -u):$(id -g)" \
+                  --workdir /workspace/source \
+                  --env HOME=/tmp/mr-home \
+                  --env COREPACK_HOME=/cache/corepack \
+                  --env COREPACK_NPM_REGISTRY="$npm_registry" \
+                  --env NPM_CONFIG_REGISTRY="$npm_registry" \
+                  --env BUILD_REASON \
+                  --env CI \
+                  --env TF_BUILD \
+                  --env MR_BASE_COMMIT \
+                  --env MR_BUILD_ALL \
+                  --env MR_HAS_PREVIOUS_STATIC_IMAGE \
+                  --env MR_BUILD_ID \
+                  --env MR_PROJECT_KEY \
+                  --env MR_SERVICE_KEY \
+                  --env MR_ENVIRONMENT \
+                  --env MR_KOMODO_SERVER \
+                  --env MR_KOMODO_STACK \
+                  --env MR_STATIC_CONTAINER \
+                  --env MR_BFF_CONTAINER \
+                  --env MR_COMPOSE_REPOSITORY \
+                  --env MR_COMPOSE_PATH \
+                  --env SYSTEM_COLLECTIONURI \
+                  --env SYSTEM_TEAMPROJECTID \
+                  --env MR_SOURCE_DIR=/workspace/source \
+                  --env MR_CONFIG_PATH=/workspace/devops/.devops/deployments.yml \
+                  --env MR_ARTIFACT_DIR=/workspace/artifacts/mr-drop \
+                  --volume "$source_dir:/workspace/source" \
+                  --volume "$devops_dir:/workspace/devops:ro" \
+                  --volume "$templates_dir:/workspace/shared-templates:ro" \
+                  --volume "$artifact_root:/workspace/artifacts" \
+                  --volume "$cache_dir:/cache" \
+                  '${{ parameters.nodeImage }}' \
+                  bash -Eeuo pipefail -c '
+                    mkdir -p "$HOME" /tmp/corepack-bin
+                    corepack enable --install-directory /tmp/corepack-bin
+                    corepack prepare "pnpm@${{ parameters.pnpmVersion }}" --activate
+                    export PATH="/tmp/corepack-bin:$PATH"
+                    pnpm config set --global store-dir /cache/pnpm-store
+                    node --version
+                    pnpm --version
+                    resolved_registry="$(pnpm config get registry)"
+                    [ "${resolved_registry%/}" = "${NPM_CONFIG_REGISTRY%/}" ] || {
+                      echo "##[error] pnpm resolved an unexpected registry: $resolved_registry" >&2
+                      exit 2
+                    }
+                    echo "##[section]pnpm registry: $resolved_registry"
+                    echo "##[section]pnpm store: $(pnpm store path)"
+                    command -v git >/dev/null 2>&1
+                    node /workspace/shared-templates/monorepo/mr-build.cjs
+                  '
             env:
               MR_SOURCE_DIR: $(Pipeline.Workspace)/s/source
               MR_CONFIG_PATH: $(Pipeline.Workspace)/s/devops/.devops/deployments.yml
@@ -80,7 +289,7 @@ stages:
               MR_ENVIRONMENT: ${{ parameters.environment }}
               MR_KOMODO_SERVER: ${{ parameters.komodoServer }}
               MR_KOMODO_STACK: ${{ parameters.komodoStack }}
-              MR_DEPLOYMENT_ROOT: ${{ parameters.deploymentRoot }}
+              MR_HAS_PREVIOUS_STATIC_IMAGE: $(MR_HAS_PREVIOUS_STATIC_IMAGE)
               MR_STATIC_CONTAINER: ${{ parameters.staticContainer }}
               MR_BFF_CONTAINER: ${{ parameters.bffContainer }}
               MR_COMPOSE_REPOSITORY: ${{ parameters.composeRepository }}
@@ -99,6 +308,24 @@ stages:
                 cp "$source" "$target/default.conf"
 
           - task: Bash@3
+            displayName: Build and push immutable Monorepo runtime images
+            env:
+              MR_ARTIFACT_DIR: $(Build.ArtifactStagingDirectory)/mr-drop
+              MR_TEMPLATES_DIR: $(Pipeline.Workspace)/s/shared-templates
+              MR_STATIC_IMAGE_REPOSITORY: $(MR_STATIC_IMAGE_REPOSITORY)
+              MR_BFF_IMAGE_REPOSITORY: $(MR_BFF_IMAGE_REPOSITORY)
+              MR_PREVIOUS_STATIC_IMAGE: $(MR_PREVIOUS_STATIC_IMAGE)
+              MR_PREVIOUS_BFF_IMAGE: $(MR_PREVIOUS_BFF_IMAGE)
+              MR_IMAGE_TAG: 1.0.$(Build.BuildId)
+              MR_STATIC_RUNTIME_IMAGE: ${{ parameters.staticRuntimeImage }}
+              MR_BFF_RUNTIME_IMAGE: ${{ parameters.bffRuntimeImage }}
+            inputs:
+              targetType: inline
+              script: |
+                set -Eeuo pipefail
+                bash "$(Pipeline.Workspace)/s/shared-templates/monorepo/package-images.sh"
+
+          - task: Bash@3
             displayName: Ensure Komodo GitOps repository and shared Docker Stack
             env:
               KOMODO_ADDRESS: ${{ parameters.komodoAddress }}
@@ -112,7 +339,6 @@ stages:
               MR_PROJECT_KEY: ${{ parameters.projectKey }}
               MR_SERVICE_KEY: ${{ parameters.serviceKey }}
               MR_ENVIRONMENT: ${{ parameters.environment }}
-              MR_DEPLOYMENT_ROOT: ${{ parameters.deploymentRoot }}
               MR_RUNTIME_VARIABLE_PREFIX: ${{ parameters.runtimeVariablePrefix }}
               MR_BFF_PROFILE: ${{ parameters.bffProfile }}
               MR_GIT_ACCOUNT: ${{ parameters.komodoGitAccount }}
@@ -127,6 +353,9 @@ stages:
                 command -v curl >/dev/null 2>&1
                 command -v jq >/dev/null 2>&1
                 test -s "$MR_MANIFEST"
+
+                MR_KOMODO_REPOSITORY="$(printf '%s' "$MR_KOMODO_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+                MR_KOMODO_STACK="$(printf '%s' "$MR_KOMODO_STACK" | tr '[:upper:]' '[:lower:]')"
 
                 case "$MR_KOMODO_SERVER" in (*[!A-Za-z0-9._:-]*|'') echo "Unsafe Komodo Server" >&2; exit 20;; esac
                 case "$MR_KOMODO_REPOSITORY" in (*[!A-Za-z0-9._-]*|'') echo "Unsafe Komodo Repo name" >&2; exit 20;; esac
@@ -145,6 +374,7 @@ stages:
                 komodo_call() {
                   endpoint="$1"
                   payload="$2"
+                  allow_not_found="${3:-false}"
                   request_number=$((request_number + 1))
                   request_file="$request_dir/request-$request_number.json"
                   response_file="$request_dir/response-$request_number.json"
@@ -157,14 +387,54 @@ stages:
                     --data-binary "@$request_file" "${KOMODO_ADDRESS%/}/$endpoint")"
                   if ! printf '%s' "$status" | grep -Eq '^2[0-9][0-9]$'; then
                     message="$(jq -r '.error // .message // "Komodo request failed"' "$response_file" 2>/dev/null || true)"
+                    if [ "$allow_not_found" = true ]; then
+                      if [ "$status" = 404 ] || {
+                        [ "$status" = 500 ] &&
+                        printf '%s' "$message" | grep -Eq '^did not find any (Repo|Stack) matching '
+                      }; then
+                        printf '%s' "$response_file"
+                        return 0
+                      fi
+                    fi
                     echo "Komodo $endpoint request failed with HTTP $status: $message" >&2
                     return 1
                   fi
                   printf '%s' "$response_file"
                 }
 
+                komodo_resource_json() {
+                  response_file="$1"
+                  resource_name="$2"
+                  jq -c --arg name "$resource_name" '
+                    def unwrap:
+                      if type == "object" then (.update // .response // .data // .result // .)
+                      else .
+                      end;
+                    unwrap as $root |
+                    if ($root | type) == "array" then
+                      first($root[] | select(.name == $name)) // $root[0] // {}
+                    elif ($root.data? | type) == "array" then
+                      first($root.data[] | select(.name == $name)) // $root.data[0] // {}
+                    elif ($root | type) == "object" then $root
+                    else {}
+                    end
+                  ' "$response_file" 2>/dev/null || printf '{}'
+                }
+
+                komodo_resource_id() {
+                  jq -r '
+                    def to_id:
+                      if type == "object" then .["$oid"] // empty
+                      elif type == "string" then .
+                      else empty
+                      end;
+                    ((._id | to_id) // (.id | to_id) // empty)
+                  '
+                }
+
                 server_response="$(komodo_call read "$(jq -cn --arg server "$MR_KOMODO_SERVER" '{type:"GetServer",params:{server:$server}}')")"
-                server_id="$(jq -r '._id["$oid"] // .id["$oid"] // .id // empty' "$server_response")"
+                server_resource="$(komodo_resource_json "$server_response" "$MR_KOMODO_SERVER")"
+                server_id="$(printf '%s' "$server_resource" | komodo_resource_id)"
                 test -n "$server_id" || { echo "Komodo Server ID was not returned" >&2; exit 21; }
 
                 collection_uri="${SYSTEM_COLLECTIONURI%/}"
@@ -182,8 +452,9 @@ stages:
                   --arg path "$clone_path" \
                   '{git_provider:$provider,git_https:true,git_account:$account,repo:$repo,branch:"main",server_id:$server,path:$path}')"
 
-                repos_response="$(komodo_call read '{"type":"ListFullRepos","params":{"query":{}}}')"
-                repo_id="$(jq -r --arg name "$MR_KOMODO_REPOSITORY" 'first(.[] | select(.name == $name) | (._id["$oid"] // .id["$oid"] // .id)) // empty' "$repos_response")"
+                repo_response="$(komodo_call read "$(jq -cn --arg repo "$MR_KOMODO_REPOSITORY" '{type:"GetRepo",params:{repo:$repo}}')" true)"
+                repo_resource="$(komodo_resource_json "$repo_response" "$MR_KOMODO_REPOSITORY")"
+                repo_id="$(printf '%s' "$repo_resource" | komodo_resource_id)"
                 if [ -n "$repo_id" ]; then
                   komodo_call write "$(jq -cn --arg id "$repo_id" --argjson config "$repo_config" '{type:"UpdateRepo",params:{id:$id,config:$config}}')" >/dev/null
                 else
@@ -192,35 +463,18 @@ stages:
 
                 run_directory="${MR_COMPOSE_PATH#/}"
                 run_directory="${run_directory%/compose.yml}"
-                bff_project="$(jq -r '.bffProject // ""' "$MR_MANIFEST")"
-                bff_entry="$(jq -r '.bffEntry // "main.js"' "$MR_MANIFEST")"
-
-                stacks_response="$(komodo_call read '{"type":"ListFullStacks","params":{"query":{}}}')"
-                stack_id="$(jq -r --arg name "$MR_KOMODO_STACK" 'first(.[] | select(.name == $name) | (._id["$oid"] // .id["$oid"] // .id)) // empty' "$stacks_response")"
-                existing_environment="$(jq -r --arg name "$MR_KOMODO_STACK" 'first(.[] | select(.name == $name) | .config.environment) // ""' "$stacks_response")"
-                existing_extra_args="$(jq -c --arg name "$MR_KOMODO_STACK" 'first(.[] | select(.name == $name) | .config.extra_args) // []' "$stacks_response")"
+                stack_response="$(komodo_call read "$(jq -cn --arg stack "$MR_KOMODO_STACK" '{type:"GetStack",params:{stack:$stack}}')" true)"
+                stack_resource="$(komodo_resource_json "$stack_response" "$MR_KOMODO_STACK")"
+                stack_id="$(printf '%s' "$stack_resource" | komodo_resource_id)"
+                existing_environment="$(printf '%s' "$stack_resource" | jq -r '.config.environment // ""')"
+                existing_extra_args="$(printf '%s' "$stack_resource" | jq -c '.config.extra_args // []')"
                 stack_environment="$(printf '%s\n' "$existing_environment" | awk -v prefix="$MR_RUNTIME_VARIABLE_PREFIX" '
                   $0 !~ ("^[[:space:]]*" prefix "_(DEPLOY_ROOT|BFF_PROJECT|BFF_ENTRY)[[:space:]]*=") { print }
                 ')"
                 stack_environment="${stack_environment%$'\n'}"
-                managed_environment="${MR_RUNTIME_VARIABLE_PREFIX}_DEPLOY_ROOT = ${MR_DEPLOYMENT_ROOT}"
-                enable_bff=false
-                if [ -n "$bff_project" ]; then
-                  managed_environment="${managed_environment}
-                ${MR_RUNTIME_VARIABLE_PREFIX}_BFF_PROJECT = ${bff_project}
-                ${MR_RUNTIME_VARIABLE_PREFIX}_BFF_ENTRY = ${bff_entry}"
-                  enable_bff=true
-                fi
-                if [ -n "$stack_environment" ]; then
-                  stack_environment="${stack_environment}
-                ${managed_environment}"
-                else
-                  stack_environment="$managed_environment"
-                fi
                 extra_args="$(jq -cn \
                   --argjson args "$existing_extra_args" \
-                  --arg profile "$MR_BFF_PROFILE" \
-                  --argjson enable "$enable_bff" '
+                  --arg profile "$MR_BFF_PROFILE" '
                     $args as $all |
                     [range(0; $all | length) as $index |
                       select((
@@ -228,7 +482,7 @@ stages:
                         ($index > 0 and $all[$index - 1] == "--profile" and $all[$index] == $profile)
                       ) | not) |
                       $all[$index]
-                    ] + (if $enable then ["--profile", $profile] else [] end)
+                    ]
                   ')"
                 stack_config="$(jq -cn \
                   --arg linked_repo "$MR_KOMODO_REPOSITORY" \
@@ -251,3 +505,10 @@ stages:
               PathtoPublish: $(Build.ArtifactStagingDirectory)/mr-drop
               ArtifactName: mr-drop
               publishLocation: Container
+
+          - task: Docker@2
+            displayName: Logout from immutable runtime registry
+            condition: always()
+            inputs:
+              command: logout
+              containerRegistry: ${{ parameters.containerRegistryService }}

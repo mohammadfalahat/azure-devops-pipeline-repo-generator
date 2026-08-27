@@ -185,15 +185,19 @@ if (bffProjects.length > 1) {
 const head = git('rev-parse HEAD');
 const explicitBase = String(process.env.MR_BASE_COMMIT || '').trim();
 const parent = explicitBase || git(`rev-parse ${head}^`, true);
+const hasPreviousStaticImage = /^(1|true|yes)$/i.test(
+  String(process.env.MR_HAS_PREVIOUS_STATIC_IMAGE || '')
+);
 const buildAll = /^(1|true|yes)$/i.test(String(process.env.MR_BUILD_ALL || '')) ||
   String(process.env.BUILD_REASON || '').toLowerCase() === 'manual' ||
+  !hasPreviousStaticImage ||
   !/^[0-9a-f]{40}$/i.test(parent);
 
 let selectedProjects;
 let shellChanged = false;
 if (buildAll) {
   selectedProjects = [...allProjects];
-  console.log('##[section]Full MR build selected (manual or first build).');
+  console.log('##[section]Full MR build selected (manual run, first immutable image, or missing Git base).');
 } else {
   selectedProjects = nxJson(
     `show projects --affected --base=${parent} --head=${head} --type app --with-target build --json`,
@@ -236,8 +240,11 @@ if (failedShell) {
 if (failedProjects.length && !continueOnModuleError) {
   fail(`MR module builds failed: ${failedProjects.join(', ')}.`);
 }
-if (selectedProjects.length && !successfulProjects.length) {
-  fail('Every affected MR module failed to build; there is nothing safe to deploy.');
+if (selectedProjects.length && !successfulProjects.length && !hasPreviousStaticImage) {
+  fail('Every affected MR module failed and no previous immutable runtime exists.');
+}
+if (selectedProjects.length && !successfulProjects.length && hasPreviousStaticImage) {
+  console.warn('##[warning]Every affected MR module failed; image assembly will retain the previous runtime unchanged.');
 }
 if (!selectedProjects.length) {
   console.log('##[section]No affected deployable Nx applications were found; publishing an inventory-only artifact.');
@@ -294,7 +301,7 @@ const packaged = [];
 for (const name of allProjects) {
   const metadata = projectMetadata.get(name);
   const kind = projectKinds.get(name);
-  const route = kind === 'shell' ? '/' : kind === 'bff' ? '/api/' : `/${name}/`;
+  const route = kind === 'shell' ? '/' : kind === 'bff' ? '/bff/' : `/${name}/`;
   const record = { name, kind, route, root: String(metadata.root || '') };
   inventory.push(record);
   if (!selected.has(name)) continue;
@@ -307,10 +314,10 @@ for (const name of allProjects) {
 const projectKey = requiredEnv('MR_PROJECT_KEY');
 const environment = requiredEnv('MR_ENVIRONMENT');
 const buildId = requiredEnv('MR_BUILD_ID');
-const deploymentRoot = requiredEnv('MR_DEPLOYMENT_ROOT');
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   kind: 'nx-monorepo',
+  deploymentMode: 'immutable-images',
   artifactName,
   buildId,
   project: projectKey,
@@ -322,7 +329,6 @@ const manifest = {
   azureProjectId: requiredEnv('SYSTEM_TEAMPROJECTID'),
   komodoServer: requiredEnv('MR_KOMODO_SERVER'),
   komodoStack: requiredEnv('MR_KOMODO_STACK'),
-  deploymentRoot,
   staticContainer: requiredEnv('MR_STATIC_CONTAINER'),
   bffContainer: String(process.env.MR_BFF_CONTAINER || ''),
   bffProject: bffProjects[0] || '',
@@ -342,5 +348,5 @@ fs.writeFileSync(path.join(artifactDir, 'inventory.tsv'), tsv(inventory));
 fs.writeFileSync(path.join(artifactDir, 'modules.tsv'), tsv(packaged));
 console.log(`##[section]MR artifact ready: ${packaged.length} packaged / ${inventory.length} discovered applications.`);
 if (failedProjects.length) {
-  console.log(`##vso[task.complete result=SucceededWithIssues;]Deployed successful modules; retained previous versions for: ${failedProjects.join(', ')}`);
+  console.log(`##vso[task.complete result=SucceededWithIssues;]Packaged successful modules; image assembly will retain previous versions for: ${failedProjects.join(', ')}`);
 }

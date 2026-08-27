@@ -340,7 +340,7 @@
         ? 'MR deployment'
         : String(configured.environmentName || DEFAULT_RELEASE_CONFIG.environmentName).trim(),
       bashTaskName: monorepo
-        ? 'Deploy affected MR modules through Komodo'
+        ? 'Deploy immutable MR images through Komodo'
         : String(configured.bashTaskName || DEFAULT_RELEASE_CONFIG.bashTaskName).trim(),
       variableGroupName: String(
         configured.variableGroupName || DEFAULT_RELEASE_CONFIG.variableGroupName
@@ -385,18 +385,18 @@
     document.title = monorepo ? 'Generate MonoRepo' : 'Generate pipeline';
     if (formHint) {
       formHint.textContent = monorepo
-        ? 'Generate one MR Pipeline and one classic Release for this Nx monorepo. The extension creates the deployment contract, generic runtime Compose/Nginx files, automatic affected-project build, and safe versioned deployment through Komodo.'
+        ? 'Generate one MR Pipeline and one classic Release for this Nx monorepo. SharedTemplates builds immutable static/BFF images, Compose stores their active tags, and Komodo deploys or rolls them back without project Dockerfiles or host mounts.'
         : 'Fill the fields below, then generate the pipeline. The generator will push the template, ensure the project Docker/Nginx DevOps repositories and starter files, register the YAML pipeline in \\komodo, and create its classic Release definition. It will then show review links without running or redirecting to the Pipeline.';
     }
     if (serviceField) serviceField.hidden = false;
-    [dockerfileField, registryAddressField, registryServiceField].forEach((element) => {
-      if (element) element.hidden = monorepo;
-    });
+    if (dockerfileField) dockerfileField.hidden = monorepo;
+    if (registryAddressField) registryAddressField.hidden = false;
+    if (registryServiceField) registryServiceField.hidden = false;
     if (serviceInput) serviceInput.required = true;
     if (dockerfileInput) dockerfileInput.required = !monorepo;
     const repositoryAddressInput = document.getElementById('repositoryAddress');
-    if (repositoryAddressInput) repositoryAddressInput.required = !monorepo;
-    if (registrySelect) registrySelect.required = !monorepo;
+    if (repositoryAddressInput) repositoryAddressInput.required = true;
+    if (registrySelect) registrySelect.required = true;
     if (submitButton) {
       submitButton.textContent = monorepo
         ? 'Create MR runtime, pipeline, and release'
@@ -530,6 +530,23 @@
     });
   };
 
+  const defaultProjectsRootForEnvironment = (environment) =>
+    ['pro', 'prod', 'production'].includes(String(environment || '').trim().toLowerCase())
+      ? '/mnt/graid/projects'
+      : '/var/data/projects';
+
+  const normalizeProjectsRoot = (projectsRoot, environment) => {
+    const normalized = String(projectsRoot || defaultProjectsRootForEnvironment(environment))
+      .trim()
+      .replace(/\/+$/, '');
+    if (!['/mnt/graid/projects', '/var/data/projects'].includes(normalized)) {
+      throw new Error(
+        `Environment ${environment || '(empty)'} projects_root must be /mnt/graid/projects or /var/data/projects.`
+      );
+    }
+    return normalized;
+  };
+
   const parseDeploymentTargetsYaml = (yamlText) => {
     const result = { servers: [], environments: [], environmentConfigs: [] };
     let section;
@@ -565,25 +582,28 @@
             if (inlineName) {
               currentEnvironment = {
                 name: parseDeploymentTargetScalar(inlineName[1], lineNumber),
-                domain: ''
+                domain: '',
+                projectsRoot: ''
               };
             } else {
               const scalar = parseDeploymentTargetScalar(listMatch[1], lineNumber);
               const separator = scalar.indexOf(':');
               currentEnvironment = {
                 name: separator > 0 ? scalar.slice(0, separator).trim() : scalar,
-                domain: separator > 0 ? scalar.slice(separator + 1).trim() : ''
+                domain: separator > 0 ? scalar.slice(separator + 1).trim() : '',
+                projectsRoot: ''
               };
             }
             result.environmentConfigs.push(currentEnvironment);
             return;
           }
 
-          const propertyMatch = line.match(/^\s+(name|domain)\s*:\s*(.+?)\s*$/i);
+          const propertyMatch = line.match(/^\s+(name|domain|projects_root)\s*:\s*(.+?)\s*$/i);
           if (!propertyMatch || !currentEnvironment) {
             throw new Error(`Expected an environment name/domain entry at line ${lineNumber}.`);
           }
-          const property = propertyMatch[1].toLowerCase();
+          const rawProperty = propertyMatch[1].toLowerCase();
+          const property = rawProperty === 'projects_root' ? 'projectsRoot' : rawProperty;
           if (currentEnvironment[property]) {
             throw new Error(`Duplicate environment ${property} at line ${lineNumber}.`);
           }
@@ -614,6 +634,7 @@
       seenEnvironments.add(key);
       environment.name = name;
       environment.domain = domain;
+      environment.projectsRoot = normalizeProjectsRoot(environment.projectsRoot, name);
     });
     result.environments = result.environmentConfigs.map((environment) => environment.name);
     return result;
@@ -755,6 +776,71 @@
       throw error;
     }
   };
+
+  const extractDockerNetworkNames = (payload) => {
+    const records = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload?.value)
+          ? payload.value
+          : Array.isArray(payload?.networks)
+            ? payload.networks
+            : null;
+    if (!records) {
+      throw new Error('Komodo returned an unsupported ListDockerNetworks response.');
+    }
+    const names = uniqueCaseInsensitive(
+      records
+        .map((record) => String(record?.name || '').trim())
+        .filter(Boolean)
+    );
+    const unsafeName = names.find((name) => !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name));
+    if (unsafeName) {
+      throw new Error('Komodo returned an unsafe Docker network name.');
+    }
+    return names;
+  };
+
+  const selectNginxNetworkName = (networkNames) => {
+    const names = Array.from(networkNames || [], (name) => String(name || '').trim());
+    const selected = ['nginx-network', 'nginx-net'].find((candidate) => names.includes(candidate));
+    if (!selected) {
+      throw new Error('The selected Komodo server has neither nginx-network nor nginx-net.');
+    }
+    return selected;
+  };
+
+  const fetchKomodoDockerNetworks = async ({ hostUri, server }) => {
+    if (!server || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(server)) {
+      throw new Error('A valid Komodo server is required before resolving its Docker network.');
+    }
+    try {
+      const credentials = await fetchKomodoCredentials({ hostUri });
+      const res = await fetch(`${credentials.address}/read`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Api-Key': credentials.apiKey,
+          'X-Api-Secret': credentials.apiSecret
+        },
+        body: JSON.stringify({ type: 'ListDockerNetworks', params: { server } }),
+        cache: 'no-store',
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer'
+      });
+      if (!res.ok) {
+        throw new Error(`Komodo ListDockerNetworks returned HTTP ${res.status}.`);
+      }
+      return extractDockerNetworkNames(await res.json());
+    } catch (error) {
+      error.domain = 'komodo';
+      throw error;
+    }
+  };
+
+  const resolveNginxNetworkForServer = async ({ hostUri, server }) =>
+    selectNginxNetworkName(await fetchKomodoDockerNetworks({ hostUri, server }));
 
   const loadDeploymentTargets = async ({ hostUri, branch }) => {
     state.deploymentTargetsReady = false;
@@ -997,7 +1083,13 @@
     return `${projectSegment}-${repoSegment}-${environmentSegment}-${branchSegment}.yml`;
   };
 
-  const buildPipelineFilename = ({ projectName, repositoryName, environment, branchName, mode = 'pipeline' }) => {
+  const buildLegacyServiceLessPipelineFilename = ({
+    projectName,
+    repositoryName,
+    environment,
+    branchName,
+    mode = 'pipeline'
+  }) => {
     const projectSegment = sanitizePipelineNameSegment(projectName, 'project');
     const repoSegment = sanitizePipelineNameSegment(repositoryName || projectName, 'repo');
     if (!String(environment || '').trim()) {
@@ -1013,6 +1105,33 @@
     return `${projectSegment}-${repoSegment}${modeSegment}-${branchSegment}To${environmentSegment}.yml`;
   };
 
+  const buildPipelineFilename = ({
+    projectName,
+    repositoryName,
+    service,
+    environment,
+    branchName,
+    mode = 'pipeline'
+  }) => {
+    if (!String(service || '').trim()) {
+      throw new Error('Service name is required to build the Pipeline filename.');
+    }
+    const projectSegment = sanitizePipelineNameSegment(projectName, 'project');
+    const repoSegment = sanitizePipelineNameSegment(repositoryName || projectName, 'repo');
+    const serviceSegment = sanitizePipelineNameSegment(service, 'service');
+    if (!String(environment || '').trim()) {
+      throw new Error('Environment is required to build the Pipeline filename.');
+    }
+    const environmentSegment = sanitizePipelineNameSegment(environment, 'environment').toUpperCase();
+    const branchSegment = sanitizePipelineNameSegment(
+      branchName?.replace(/^refs\/heads\//, ''),
+      'branch',
+      { lowercase: false }
+    ).replace(/(^|[-_.])([a-z])/g, (_, separator, character) => `${separator}${character.toUpperCase()}`);
+    const modeSegment = normalizeGeneratorMode(mode) === 'monorepo' ? '-MR' : '';
+    return `${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}-${branchSegment}To${environmentSegment}.yml`;
+  };
+
   const buildPipelineName = (pipelineFilename) => pipelineFilename;
 
   const buildReleaseName = ({ service, environment, mode = 'pipeline' }) => {
@@ -1024,7 +1143,7 @@
       return normalized;
     };
     if (normalizeGeneratorMode(mode) === 'monorepo') {
-      return `MR ${normalizePart(environment, 'Environment')}`;
+      return `MR ${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;
     }
     return `${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;
   };
@@ -1500,10 +1619,17 @@
     return ['ui', 'front', 'frontend', 'newui'].includes(normalized) || normalized.endsWith('-ui');
   };
 
-  const buildComposeSample = ({ projectKey, serviceKey, environment, repositoryAddress }) => {
+  const buildComposeSample = ({
+    projectKey,
+    serviceKey,
+    environment,
+    repositoryAddress,
+    nginxNetworkName = 'nginx-network'
+  }) => {
     const containerName = `${projectKey}_${serviceKey.replace(/-/g, '_')}_${environment}`;
     const internalPort = isFrontendService(serviceKey) ? 80 : 8080;
     const registry = String(repositoryAddress || defaultValues.repositoryAddress).trim().replace(/\/+$/, '');
+    const networkName = selectNginxNetworkName([nginxNetworkName]);
     return [
       'services:',
       `  ${containerName}:`,
@@ -1513,10 +1639,11 @@
       '    expose:',
       `      - "${internalPort}"`,
       '    networks:',
-      '      - nginx-network',
+      `      - ${networkName}`,
       '',
       'networks:',
-      '  nginx-network:',
+      `  ${networkName}:`,
+      `    name: ${networkName}`,
       '    external: true',
       ''
     ].join('\n');
@@ -1543,9 +1670,7 @@
       `        set              $target            ${containerName};`
     ];
     upstreamDirectives.push(
-      frontend
-        ? `        proxy_pass                          http://$target:${internalPort}/;`
-        : `        proxy_pass                          http://$target:${internalPort};`
+      `        proxy_pass                          http://$target:${internalPort};`
     );
     return {
       location,
@@ -1714,6 +1839,69 @@
     return matches[0];
   };
 
+  const migrateNginxCertificatePaths = ({ content, serverName, domain }) => {
+    const normalizedDomain = String(domain || '').trim().toLowerCase();
+    if (!normalizedDomain) return content;
+    const legacyCertificateName = normalizedDomain.split('.')[0];
+    if (!legacyCertificateName || legacyCertificateName === normalizedDomain) return content;
+
+    const server = findNginxHttpsServer(content, serverName);
+    const tokens = tokenizeNginx(content);
+    const blockDepth = server.open.depth + 1;
+    const replacements = [];
+    const legacyPaths = {
+      ssl_certificate: `/etc/nginx/conf.d/${legacyCertificateName}.pem`,
+      ssl_certificate_key: `/etc/nginx/conf.d/${legacyCertificateName}.key`
+    };
+    const currentPaths = {
+      ssl_certificate: `/etc/nginx/conf.d/${normalizedDomain}.pem`,
+      ssl_certificate_key: `/etc/nginx/conf.d/${normalizedDomain}.key`
+    };
+
+    for (let index = 0; index < tokens.length; index += 1) {
+      const directive = tokens[index];
+      if (
+        directive.start <= server.open.end ||
+        directive.start >= server.close.start ||
+        directive.depth !== blockDepth
+      ) {
+        continue;
+      }
+      const keyword = directive.value.toLowerCase();
+      if (!Object.prototype.hasOwnProperty.call(legacyPaths, keyword)) continue;
+
+      const values = [];
+      for (let cursor = index + 1; cursor < tokens.length; cursor += 1) {
+        const token = tokens[cursor];
+        if (token.start >= server.close.start || token.depth !== blockDepth) continue;
+        if (token.value === ';') break;
+        if (token.value === '{' || token.value === '}') {
+          values.length = 0;
+          break;
+        }
+        values.push(token);
+      }
+      if (values.length !== 1 || values[0].value !== legacyPaths[keyword]) continue;
+
+      const valueToken = values[0];
+      const original = content.slice(valueToken.start, valueToken.end);
+      const quote = original[0] === '"' || original[0] === "'" ? original[0] : '';
+      replacements.push({
+        start: valueToken.start,
+        end: valueToken.end,
+        value: quote ? `${quote}${currentPaths[keyword]}${quote}` : currentPaths[keyword]
+      });
+    }
+
+    return replacements
+      .sort((left, right) => right.start - left.start)
+      .reduce(
+        (migrated, replacement) =>
+          `${migrated.slice(0, replacement.start)}${replacement.value}${migrated.slice(replacement.end)}`,
+        content
+      );
+  };
+
   const normalizeNginxManagedRoutes = ({ content, startIndex, endIndex }) => {
     const managedRoutes = content.slice(startIndex, endIndex);
     const routeBlockPattern = () =>
@@ -1741,11 +1929,10 @@
         migratedBody = migratedBody.replace(
           /^([ \t]*)proxy_pass[ \t]+http:\/\/([A-Za-z0-9][A-Za-z0-9._-]*):([0-9]+)\/?;[ \t]*$/gm,
           (_, indentation, containerName, port) => {
-            const suffix = frontend ? '/' : '';
             return [
               `${indentation}resolver         127.0.0.11         ipv6=off;`,
               `${indentation}set              $target            ${containerName};`,
-              `${indentation}proxy_pass                          http://$target:${port}${suffix};`
+              `${indentation}proxy_pass                          http://$target:${port};`
             ].join('\n');
           }
         );
@@ -1753,8 +1940,7 @@
         migratedBody = migratedBody.replace(
           /^([ \t]*)proxy_pass[ \t]+http:\/\/\$target:([0-9]+)\/?;[ \t]*$/gm,
           (_, indentation, port) => {
-            const suffix = frontend ? '/' : '';
-            return `${indentation}proxy_pass                          http://$target:${port}${suffix};`;
+            return `${indentation}proxy_pass                          http://$target:${port};`;
           }
         );
 
@@ -1805,8 +1991,78 @@
     return -1;
   };
 
-  const mergeNginxServiceRoute = ({ content, serverName, projectKey, serviceKey, environment, routeOptions = {} }) => {
-    let mergedContent = content;
+  const replaceManagedNginxRouteAtLocation = ({
+    content,
+    startIndex,
+    endIndex,
+    location,
+    legacyLocations = [],
+    managedServiceKeys = [],
+    managedContainerNames = [],
+    routeContent
+  }) => {
+    const managedRoutes = content.slice(startIndex, endIndex);
+    const routePattern =
+      /^([ \t]*# BEGIN PIPELINE-GENERATOR ROUTE ([^\r\n]+)[ \t]*\r?\n)([\s\S]*?)(^[ \t]*# END PIPELINE-GENERATOR ROUTE \2[ \t]*)(?:\r?\n)?/gm;
+    const locations = [location, ...legacyLocations];
+    const locationPatterns = locations.map((candidate) => {
+      const escapedLocation = String(candidate).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return {
+        location: candidate,
+        pattern: new RegExp(`^[ \\t]*location[ \\t]+${escapedLocation}[ \\t]*\\{`, 'm')
+      };
+    });
+    const identityRequired = managedServiceKeys.length > 0 || managedContainerNames.length > 0;
+    const escapedContainers = managedContainerNames.map((containerName) =>
+      String(containerName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    );
+    const hasManagedContainer = (routeBlock) => escapedContainers.some((containerName) =>
+      new RegExp(
+        `(?:set[ \\t]+\\$target[ \\t]+${containerName}[ \\t]*;|proxy_pass[ \\t]+http:\\/\\/${containerName}:)`,
+        'm'
+      ).test(routeBlock)
+    );
+    let replacements = 0;
+    let desiredLocationConflict = false;
+    const replacedRoutes = managedRoutes.replace(routePattern, (routeBlock, _start, serviceKey) => {
+      const matchedLocation = locationPatterns.find(({ pattern }) => pattern.test(routeBlock));
+      if (!matchedLocation) return routeBlock;
+      const managedIdentity =
+        !identityRequired ||
+        managedServiceKeys.includes(serviceKey) ||
+        hasManagedContainer(routeBlock);
+      if (!managedIdentity) {
+        if (matchedLocation.location === location) desiredLocationConflict = true;
+        return routeBlock;
+      }
+      replacements += 1;
+      return `${routeContent}\n`;
+    });
+    if (desiredLocationConflict) {
+      throw new Error(
+        `Nginx managed location ${location} belongs to another service; move it manually before generating the Monorepo route.`
+      );
+    }
+    if (replacements > 1) {
+      throw new Error(`Nginx managed routes contain multiple identities for location ${location}.`);
+    }
+    if (replacements !== 1) return { content, replaced: false };
+    return {
+      content: `${content.slice(0, startIndex)}${replacedRoutes}${content.slice(endIndex)}`,
+      replaced: true
+    };
+  };
+
+  const mergeNginxServiceRoute = ({
+    content,
+    serverName,
+    domain,
+    projectKey,
+    serviceKey,
+    environment,
+    routeOptions = {}
+  }) => {
+    let mergedContent = migrateNginxCertificatePaths({ content, serverName, domain });
     let server = findNginxHttpsServer(mergedContent, serverName);
     const route = buildNginxRouteBlock({ projectKey, serviceKey, environment, ...routeOptions });
 
@@ -1831,8 +2087,24 @@
       }
     }
 
-    if (server.locations.includes(route.location)) {
-      return mergedContent;
+    const legacyManagedLocations = routeOptions.legacyManagedLocations || [];
+    const hasDesiredOrLegacyLocation = [route.location, ...legacyManagedLocations]
+      .some((location) => server.locations.includes(location));
+    if (hasDesiredOrLegacyLocation) {
+      if (routeOptions.replaceManagedLocation && startInsideServer && endInsideServer) {
+        const replacement = replaceManagedNginxRouteAtLocation({
+          content: mergedContent,
+          startIndex,
+          endIndex,
+          location: route.location,
+          legacyLocations: legacyManagedLocations,
+          managedServiceKeys: routeOptions.managedServiceKeys || [],
+          managedContainerNames: routeOptions.managedContainerNames || [],
+          routeContent: route.content
+        });
+        if (replacement.replaced) return replacement.content;
+      }
+      if (server.locations.includes(route.location)) return mergedContent;
     }
 
     if (startInsideServer && endInsideServer) {
@@ -1881,43 +2153,76 @@
     ].join('\n');
   };
 
-  const buildMonorepoDeploymentRoot = ({ compactProject, projectKey, serviceKey, environment }) =>
-    `/mnt/graid/projects/${compactProject}_Docker_DevOps/${environment}_${projectKey}/monorepo/${serviceKey}`;
-
   const buildMonorepoKomodoResourceNames = ({ compactProject, environment }) => ({
     repository: `${compactProject}_Docker_DevOps-${environment}`,
     stack: `${compactProject}_Docker_DevOps-${environment}`
   });
 
-  const buildMonorepoComposeServices = ({ compactProject, projectKey, serviceKey, environment }) => {
+  const buildMonorepoTagKeys = ({ serviceKey }) => {
+    const staticTagKey = normalizeResourceSegment(serviceKey, 'Service name').replace(/-/g, '_');
+    return {
+      staticTagKey,
+      bffTagKey: `${staticTagKey}_bff`
+    };
+  };
+
+  const buildMonorepoEnvSample = ({ serviceKey }) => {
+    const { staticTagKey, bffTagKey } = buildMonorepoTagKeys({ serviceKey });
+    return [
+      '# Managed image tags for the Monorepo services. Releases update only these values.',
+      `${staticTagKey}:CHANGE_ME`,
+      `${bffTagKey}:CHANGE_ME`,
+      ''
+    ].join('\n');
+  };
+
+  const mergeMonorepoEnvTags = ({ content, serviceKey }) => {
+    const newline = String(content || '').includes('\r\n') ? '\r\n' : '\n';
+    const hadTrailingNewline = String(content || '').endsWith('\n');
+    const lines = String(content || '').replace(/\r\n/g, '\n').split('\n');
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    const { staticTagKey, bffTagKey } = buildMonorepoTagKeys({ serviceKey });
+    for (const key of [staticTagKey, bffTagKey]) {
+      const pattern = new RegExp(`^\\s*${key}\\s*[:=]`);
+      if (!lines.some((line) => pattern.test(line))) {
+        lines.push(`${key}:CHANGE_ME`);
+      }
+    }
+    const merged = lines.join('\n');
+    return `${merged}${hadTrailingNewline ? '\n' : ''}`.replace(/\n/g, newline);
+  };
+
+  const buildMonorepoComposeServices = ({
+    projectKey,
+    serviceKey,
+    environment,
+    repositoryAddress,
+    nginxNetworkKey = 'nginx-network'
+  }) => {
     const normalizedService = serviceKey.replace(/-/g, '_');
     const staticContainer = `${projectKey}_${normalizedService}_${environment}`;
     const bffContainer = `${projectKey}_${normalizedService}_bff_${environment}`;
-    const deploymentRoot = buildMonorepoDeploymentRoot({
-      compactProject,
-      projectKey,
-      serviceKey,
-      environment
-    });
-    const variablePrefix = `MR_${projectKey}_${serviceKey}_${environment}`.replace(/[^a-z0-9]+/gi, '_').toUpperCase();
-    const bffProjectVariable = `${variablePrefix}_BFF_PROJECT`;
-    const bffEntryVariable = `${variablePrefix}_BFF_ENTRY`;
+    const registry = String(repositoryAddress || defaultValues.repositoryAddress)
+      .trim()
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/+$/, '')
+      .toLowerCase();
     const bffProfile = `mr-${serviceKey}-bff`;
+    const staticRepository = `${registry}/${projectKey}/${serviceKey}-${environment}`;
+    const bffRepository = `${registry}/${projectKey}/${serviceKey}-bff-${environment}`;
+    const { staticTagKey, bffTagKey } = buildMonorepoTagKeys({ serviceKey });
     return [
       {
         name: staticContainer,
         content: [
       `  ${staticContainer}:`,
       `    container_name: ${staticContainer}`,
-      '    image: nginx:1.27-alpine',
+      `    image: ${staticRepository}:\${${staticTagKey}}`,
       '    restart: unless-stopped',
-      '    volumes:',
-      `      - ${deploymentRoot}:/srv/monorepo:ro`,
-      `      - ${deploymentRoot}/runtime/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro`,
       '    expose:',
       '      - "80"',
       '    networks:',
-      '      - nginx-network'
+      `      - ${nginxNetworkKey}`
         ].join('\n')
       },
       {
@@ -1925,43 +2230,100 @@
         content: [
       `  ${bffContainer}:`,
       `    container_name: ${bffContainer}`,
-      '    image: node:20-alpine',
+      `    image: ${bffRepository}:\${${bffTagKey}}`,
       `    profiles: ["${bffProfile}"]`,
       '    restart: unless-stopped',
-      `    working_dir: /srv/monorepo/current/modules/\${${bffProjectVariable}:-bff}`,
-      `    command: ["/bin/sh", "-ec", "exec node \\"\${${bffEntryVariable}:-main.js}\\""]`,
-      '    volumes:',
-      `      - ${deploymentRoot}:/srv/monorepo:ro`,
       '    expose:',
       '      - "3000"',
       '    networks:',
-      '      - nginx-network'
+      `      - ${nginxNetworkKey}`
         ].join('\n')
       }
     ];
   };
 
-  const buildMonorepoComposeSample = ({ compactProject, projectKey, serviceKey, environment }) => {
-    const services = buildMonorepoComposeServices({ compactProject, projectKey, serviceKey, environment });
+  const buildMonorepoComposeSample = ({
+    projectKey,
+    serviceKey,
+    environment,
+    repositoryAddress,
+    nginxNetworkName = 'nginx-network'
+  }) => {
+    const networkName = selectNginxNetworkName([nginxNetworkName]);
+    const services = buildMonorepoComposeServices({
+      projectKey,
+      serviceKey,
+      environment,
+      repositoryAddress,
+      nginxNetworkKey: networkName
+    });
     return [
       'services:',
       ...services.flatMap(({ content }, index) => (index ? ['', content] : [content])),
       '',
       'networks:',
-      '  nginx-network:',
+      `  ${networkName}:`,
+      `    name: ${networkName}`,
       '    external: true',
       ''
     ].join('\n');
   };
 
-  const mergeMonorepoComposeServices = ({ content, compactProject, projectKey, serviceKey, environment }) => {
+  const mergeMonorepoComposeServices = ({
+    content,
+    projectKey,
+    serviceKey,
+    environment,
+    repositoryAddress,
+    nginxNetworkName = 'nginx-network'
+  }) => {
     if (!String(content || '').trim()) {
-      return buildMonorepoComposeSample({ compactProject, projectKey, serviceKey, environment });
+      return buildMonorepoComposeSample({
+        projectKey,
+        serviceKey,
+        environment,
+        repositoryAddress,
+        nginxNetworkName
+      });
     }
+    const networkName = selectNginxNetworkName([nginxNetworkName]);
     const newline = content.includes('\r\n') ? '\r\n' : '\n';
     const hadTrailingNewline = content.endsWith('\n');
     const lines = content.replace(/\r\n/g, '\n').split('\n');
-    const desiredServices = buildMonorepoComposeServices({ compactProject, projectKey, serviceKey, environment });
+    let networksIndex = lines.findIndex((line) => /^networks:\s*(?:#.*)?$/.test(line));
+    let networksEnd = networksIndex === -1
+      ? -1
+      : lines.findIndex((line, index) => index > networksIndex && /^[A-Za-z0-9_.-]+:\s*(?:.*)?$/.test(line));
+    if (networksIndex !== -1 && networksEnd === -1) networksEnd = lines.length;
+    const networkEntries = networksIndex === -1
+      ? []
+      : lines
+          .slice(networksIndex + 1, networksEnd)
+          .map((line, offset) => ({
+            name: /^  ([A-Za-z0-9_.-]+):\s*(?:#.*)?$/.exec(line)?.[1] || '',
+            index: networksIndex + 1 + offset
+          }))
+          .filter(({ name }) => name);
+    const entryActualName = (entry) => {
+      const nextEntry = networkEntries.find(({ index }) => index > entry.index)?.index ?? networksEnd;
+      for (let index = entry.index + 1; index < nextEntry; index += 1) {
+        const match = /^    name:\s*["']?([^\s"'#]+)["']?\s*(?:#.*)?$/.exec(lines[index]);
+        if (match) return match[1];
+      }
+      return '';
+    };
+    const logicalNetworkKey =
+      networkEntries.find((entry) => entryActualName(entry) === networkName)?.name ||
+      networkEntries.find((entry) => entry.name === networkName)?.name ||
+      networkEntries.find((entry) => ['nginx-network', 'nginx-net'].includes(entry.name))?.name ||
+      networkName;
+    const desiredServices = buildMonorepoComposeServices({
+      projectKey,
+      serviceKey,
+      environment,
+      repositoryAddress,
+      nginxNetworkKey: logicalNetworkKey
+    });
     let servicesIndex = lines.findIndex((line) => /^services:\s*(?:#.*)?$/.test(line));
     const inlineEmptyIndex = lines.findIndex((line) => /^services:\s*\{\s*\}\s*(?:#.*)?$/.test(line));
     if (servicesIndex === -1 && inlineEmptyIndex !== -1) {
@@ -1984,6 +2346,57 @@
         .map((line) => /^  ([A-Za-z0-9_.-]+):\s*(?:#.*)?$/.exec(line)?.[1])
         .filter(Boolean)
     );
+    for (const { name, content: serviceContent } of desiredServices) {
+      if (!existingNames.has(name)) continue;
+      const serviceStart = lines.findIndex(
+        (line, index) => index > servicesIndex && index < servicesEnd && line === `  ${name}:`
+      );
+      if (serviceStart === -1) continue;
+      let serviceEnd = servicesEnd;
+      for (let index = serviceStart + 1; index < servicesEnd; index += 1) {
+        if (/^  [A-Za-z0-9_.-]+:\s*(?:#.*)?$/.test(lines[index])) {
+          serviceEnd = index;
+          break;
+        }
+      }
+      const desiredImage = /^    image:\s*([^\s#]+)\s*$/m.exec(serviceContent)?.[1] || '';
+      const runtimeSuffix = name.endsWith(`_bff_${environment}`) ? 'node:20-alpine' : 'nginx:1.27-alpine';
+      const legacyImages = new Set([runtimeSuffix, `registry.buluttakin.com/${runtimeSuffix}`]);
+      for (let index = serviceStart + 1; index < serviceEnd; index += 1) {
+        const image = /^(\s{4}image:\s*)(["']?)([^\s"'#]+)\2(\s*(?:#.*)?)$/.exec(lines[index]);
+        if (!image || !legacyImages.has(image[3]) || !desiredImage) continue;
+        lines[index] = `${image[1]}${image[2]}${desiredImage}${image[2]}${image[4]}`;
+      }
+
+      const migratedBlock = [lines[serviceStart]];
+      for (let index = serviceStart + 1; index < serviceEnd;) {
+        const line = lines[index];
+        if (/^    working_dir:\s*\/srv\/monorepo\/current\/modules\//.test(line) ||
+            /^    command:.*MR_[A-Z0-9_]+_BFF_ENTRY/.test(line)) {
+          index += 1;
+          continue;
+        }
+        if (/^    volumes:\s*(?:#.*)?$/.test(line)) {
+          const retained = [];
+          index += 1;
+          while (index < serviceEnd && /^(?:      |\s*$)/.test(lines[index])) {
+            const volumeLine = lines[index];
+            const managedMount = /:\/srv\/monorepo(?::ro)?\s*(?:#.*)?$/.test(volumeLine) ||
+              /:\/etc\/nginx\/conf\.d\/default\.conf:ro\s*(?:#.*)?$/.test(volumeLine);
+            if (!managedMount) retained.push(volumeLine);
+            index += 1;
+          }
+          if (retained.some((candidate) => candidate.trim())) {
+            migratedBlock.push(line, ...retained);
+          }
+          continue;
+        }
+        migratedBlock.push(line);
+        index += 1;
+      }
+      lines.splice(serviceStart, serviceEnd - serviceStart, ...migratedBlock);
+      servicesEnd += migratedBlock.length - (serviceEnd - serviceStart);
+    }
     const missing = desiredServices.filter(({ name }) => !existingNames.has(name));
     if (missing.length) {
       const insertion = missing.flatMap(({ content: serviceContent }, index) => [
@@ -1992,9 +2405,49 @@
       ]);
       lines.splice(servicesEnd, 0, ...insertion);
     }
-    if (!lines.some((line) => /^networks:\s*(?:#.*)?$/.test(line))) {
+    networksIndex = lines.findIndex((line) => /^networks:\s*(?:#.*)?$/.test(line));
+    if (networksIndex === -1) {
       while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-      lines.push('', 'networks:', '  nginx-network:', '    external: true');
+      lines.push('', 'networks:', `  ${logicalNetworkKey}:`, `    name: ${networkName}`, '    external: true');
+    } else {
+      networksEnd = lines.findIndex(
+        (line, index) => index > networksIndex && /^[A-Za-z0-9_.-]+:\s*(?:.*)?$/.test(line)
+      );
+      if (networksEnd === -1) networksEnd = lines.length;
+      let networkStart = lines.findIndex(
+        (line, index) => index > networksIndex && index < networksEnd && line === `  ${logicalNetworkKey}:`
+      );
+      if (networkStart === -1) {
+        lines.splice(networksEnd, 0, `  ${logicalNetworkKey}:`, `    name: ${networkName}`, '    external: true');
+      } else {
+        let networkEnd = networksEnd;
+        for (let index = networkStart + 1; index < networksEnd; index += 1) {
+          if (/^  [A-Za-z0-9_.-]+:\s*(?:#.*)?$/.test(lines[index])) {
+            networkEnd = index;
+            break;
+          }
+        }
+        const nameIndex = lines.findIndex(
+          (line, index) => index > networkStart && index < networkEnd && /^    name:\s*/.test(line)
+        );
+        const externalIndex = lines.findIndex(
+          (line, index) => index > networkStart && index < networkEnd && /^    external:\s*/.test(line)
+        );
+        if (nameIndex === -1) {
+          lines.splice(networkStart + 1, 0, `    name: ${networkName}`);
+          networkEnd += 1;
+        } else {
+          lines[nameIndex] = `    name: ${networkName}`;
+        }
+        const adjustedExternalIndex = externalIndex === -1
+          ? -1
+          : externalIndex + (nameIndex === -1 && externalIndex > networkStart ? 1 : 0);
+        if (adjustedExternalIndex === -1) {
+          lines.splice(networkEnd, 0, '    external: true');
+        } else {
+          lines[adjustedExternalIndex] = '    external: true';
+        }
+      }
     }
     const merged = lines.join('\n').replace(/\n+$/, '');
     return `${merged}${hadTrailingNewline ? '\n' : ''}`.replace(/\n/g, newline);
@@ -2002,14 +2455,22 @@
 
   const buildMonorepoNginxRoutes = ({ projectKey, serviceKey, environment }) => {
     const normalizedService = serviceKey.replace(/-/g, '_');
+    const bffContainer = `${projectKey}_${normalizedService}_bff_${environment}`;
     return [
     {
       serviceKey: `${serviceKey}-bff`,
       routeOptions: {
-        containerName: `${projectKey}_${normalizedService}_bff_${environment}`,
-        location: '/api/',
+        containerName: bffContainer,
+        location: '/bff/',
         internalPort: 3000,
-        frontend: false
+        frontend: false,
+        replaceManagedLocation: true,
+        legacyManagedLocations: ['/api/'],
+        managedServiceKeys: [`${serviceKey}-bff`],
+        managedContainerNames: [
+          bffContainer,
+          `${projectKey}_mr_bff_${environment}`
+        ]
       }
     },
     {
@@ -2018,7 +2479,8 @@
         containerName: `${projectKey}_${normalizedService}_${environment}`,
         location: '/',
         internalPort: 80,
-        frontend: true
+        frontend: true,
+        replaceManagedLocation: true
       }
     }
     ];
@@ -2054,11 +2516,12 @@
     ].join('\n');
   };
 
-  const mergeMonorepoNginxRoutes = ({ content, serverName, projectKey, serviceKey, environment }) =>
+  const mergeMonorepoNginxRoutes = ({ content, serverName, domain, projectKey, serviceKey, environment }) =>
     buildMonorepoNginxRoutes({ projectKey, serviceKey, environment }).reduce(
       (merged, { serviceKey, routeOptions }) => mergeNginxServiceRoute({
         content: merged,
         serverName,
+        domain,
         projectKey,
         serviceKey,
         environment,
@@ -2067,7 +2530,14 @@
       content
     );
 
-  const buildMonorepoSupportRepositorySpecs = ({ projectName, environment, domain, service }) => {
+  const buildMonorepoSupportRepositorySpecs = ({
+    projectName,
+    environment,
+    domain,
+    service,
+    repositoryAddress,
+    nginxNetworkName = 'nginx-network'
+  }) => {
     const compactProject = String(projectName || '').replace(/\s+/g, '');
     const normalizedEnvironment = normalizeResourceSegment(environment, 'Environment');
     if (!compactProject || /[\\/\0\r\n]/.test(compactProject)) {
@@ -2088,18 +2558,27 @@
         directory: composeDirectory,
         filePath: `/${composeDirectory}/compose.yml`,
         content: buildMonorepoComposeSample({
-          compactProject,
           projectKey,
           serviceKey,
-          environment: normalizedEnvironment
+          environment: normalizedEnvironment,
+          repositoryAddress,
+          nginxNetworkName
         }),
         mergeExisting: (content) => mergeMonorepoComposeServices({
           content,
-          compactProject,
           projectKey,
           serviceKey,
-          environment: normalizedEnvironment
-        })
+          environment: normalizedEnvironment,
+          repositoryAddress,
+          nginxNetworkName
+        }),
+        additionalFiles: [
+          {
+            path: `/${composeDirectory}/.env`,
+            content: buildMonorepoEnvSample({ serviceKey }),
+            mergeExisting: (content) => mergeMonorepoEnvTags({ content, serviceKey })
+          }
+        ]
       },
       {
         kind: 'nginx',
@@ -2116,6 +2595,7 @@
         mergeExisting: (content) => mergeMonorepoNginxRoutes({
           content,
           serverName: `${projectHost}.${String(domain).toLowerCase()}`,
+          domain: String(domain).toLowerCase(),
           projectKey,
           serviceKey,
           environment: normalizedEnvironment
@@ -2129,7 +2609,9 @@
     environment,
     domain,
     service,
-    repositoryAddress
+    projectsRoot,
+    repositoryAddress,
+    nginxNetworkName = 'nginx-network'
   }) => {
     const compactProject = String(projectName || '').replace(/\s+/g, '');
     const normalizedEnvironment = normalizeResourceSegment(environment, 'Environment');
@@ -2154,7 +2636,8 @@
           projectKey: compactProjectLower,
           serviceKey,
           environment: normalizedEnvironment,
-          repositoryAddress
+          repositoryAddress,
+          nginxNetworkName
         })
       },
       {
@@ -2172,6 +2655,7 @@
         mergeExisting: (content) => mergeNginxServiceRoute({
           content,
           serverName: `${projectHost}.${String(domain).toLowerCase()}`,
+          domain: String(domain).toLowerCase(),
           projectKey: compactProjectLower,
           serviceKey,
           environment: normalizedEnvironment
@@ -2186,6 +2670,7 @@
     repo,
     directory,
     sampleFile,
+    additionalFiles = [],
     accessToken
   }) => {
     const branchName = SCAFFOLD_BRANCH;
@@ -2197,7 +2682,7 @@
       branch: branchName,
       accessToken
     });
-    const desiredFiles = [sampleFile];
+    const desiredFiles = [sampleFile, ...additionalFiles];
     let existingFiles = desiredFiles.map(() => null);
     if (oldObjectId !== ZERO_OBJECT_ID) {
       existingFiles = await Promise.all(
@@ -2265,18 +2750,28 @@
     environment,
     domain,
     service,
+    projectsRoot,
     repositoryAddress,
+    nginxNetworkName,
     accessToken,
     mode = 'pipeline'
   }) => {
     const specs = normalizeGeneratorMode(mode) === 'monorepo'
-      ? buildMonorepoSupportRepositorySpecs({ projectName, environment, domain, service })
+      ? buildMonorepoSupportRepositorySpecs({
+          projectName,
+          environment,
+          domain,
+          service,
+          repositoryAddress,
+          nginxNetworkName
+        })
       : buildSupportRepositorySpecs({
           projectName,
           environment,
           domain,
           service,
-          repositoryAddress
+          repositoryAddress,
+          nginxNetworkName
         });
     const results = [];
     for (const spec of specs) {
@@ -2296,6 +2791,7 @@
           content: spec.content,
           mergeExisting: spec.mergeExisting
         },
+        additionalFiles: spec.additionalFiles || [],
         accessToken
       });
       await ensureDefaultBranch({
@@ -3402,8 +3898,12 @@
       'Service name'
     );
     const environment = normalizeResourceSegment(payload.environment, 'Environment');
+    const registryAddress = String(payload.repositoryAddress || defaultValues.repositoryAddress)
+      .trim()
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/+$/, '')
+      .toLowerCase();
     const normalizedService = serviceKey.replace(/-/g, '_');
-    const deploymentRoot = buildMonorepoDeploymentRoot({ compactProject, projectKey, serviceKey, environment });
     const staticContainer = `${projectKey}_${normalizedService}_${environment}`;
     const bffContainer = `${projectKey}_${normalizedService}_bff_${environment}`;
     const runtimeVariablePrefix = `MR_${projectKey}_${serviceKey}_${environment}`
@@ -3444,7 +3944,6 @@
       `      serviceKey: ${quoteYaml(serviceKey)}`,
       `      environment: ${quoteYaml(environment)}`,
       `      komodoServer: ${quoteYaml(payload.komodoServer)}`,
-      `      deploymentRoot: ${quoteYaml(deploymentRoot)}`,
       `      staticContainer: ${quoteYaml(staticContainer)}`,
       `      bffContainer: ${quoteYaml(bffContainer)}`,
       `      runtimeVariablePrefix: ${quoteYaml(runtimeVariablePrefix)}`,
@@ -3453,6 +3952,11 @@
       `      composePath: ${quoteYaml(composePath)}`,
       `      komodoRepository: ${quoteYaml(komodoResources.repository)}`,
       `      komodoStack: ${quoteYaml(komodoResources.stack)}`,
+      `      registryAddress: ${quoteYaml(registryAddress)}`,
+      `      containerRegistryService: ${quoteYaml(payload.containerRegistryService || defaultValues.containerRegistryService)}`,
+      `      staticRuntimeImage: ${quoteYaml(`${registryAddress}/nginx:1.27-alpine`)}`,
+      `      bffRuntimeImage: ${quoteYaml(`${registryAddress}/node:20-alpine`)}`,
+      `      nodeImage: ${quoteYaml(`${registryAddress}/node:22-bookworm`)}`,
       ''
     ].join('\n');
   };
@@ -3537,6 +4041,7 @@
       setSubmitting(false);
       return;
     }
+    payload.projectsRoot = environmentConfig.projectsRoot;
     const generatorOptions = {
       sourceBranch: state.sourceBranch,
       rawProjectName: state.rawProjectName,
@@ -3577,6 +4082,14 @@
     const pipelineFilename = buildPipelineFilename({
       projectName: state.projectName,
       repositoryName: sourceRepositoryName,
+      service: payload.service,
+      environment: payload.environment,
+      branchName: state.sourceBranch,
+      mode: state.mode
+    });
+    const legacyServiceLessPipelineFilename = buildLegacyServiceLessPipelineFilename({
+      projectName: state.projectName,
+      repositoryName: sourceRepositoryName,
       environment: payload.environment,
       branchName: state.sourceBranch,
       mode: state.mode
@@ -3610,9 +4123,14 @@
     try {
       const provisioningProjectName = state.rawProjectName || state.projectName;
       let supportRepositories = [];
+      let nginxNetworkName = '';
       const repo = await runProvisioningStep(
-        'Step 1/5: creating or reusing the Azure, Docker, and Nginx DevOps repositories...',
+        'Step 1/5: resolving the target Nginx network and creating or reusing the DevOps repositories...',
         async () => {
+          nginxNetworkName = await resolveNginxNetworkForServer({
+            hostUri: state.hostUri,
+            server: payload.komodoServer
+          });
           const pipelineRepo = await ensureRepo({
             hostUri: state.hostUri,
             projectId: state.projectId,
@@ -3626,7 +4144,9 @@
             environment: payload.environment,
             domain: environmentConfig.domain,
             service: payload.service,
+            projectsRoot: environmentConfig.projectsRoot,
             repositoryAddress: payload.repositoryAddress,
+            nginxNetworkName,
             accessToken: state.accessToken,
             mode: state.mode
           });
@@ -3685,11 +4205,19 @@
             pipelineName,
             pipelinePath: `/${pipelineFilename}`,
             legacyPipelineNames: isMonorepoMode()
-              ? []
-              : [legacyEnvironmentFirstPipelineFilename, legacyPipelineFilename],
+              ? [legacyServiceLessPipelineFilename]
+              : [
+                  legacyServiceLessPipelineFilename,
+                  legacyEnvironmentFirstPipelineFilename,
+                  legacyPipelineFilename
+                ],
             legacyPipelinePaths: isMonorepoMode()
-              ? []
-              : [`/${legacyEnvironmentFirstPipelineFilename}`, `/${legacyPipelineFilename}`],
+              ? [`/${legacyServiceLessPipelineFilename}`]
+              : [
+                  `/${legacyServiceLessPipelineFilename}`,
+                  `/${legacyEnvironmentFirstPipelineFilename}`,
+                  `/${legacyPipelineFilename}`
+                ],
             branch: targetBranch,
             pipelineFolder,
             accessToken: state.accessToken
@@ -3736,6 +4264,8 @@
       const step = error?.provisioningStep || 'Provisioning';
       const permissionHint = error?.requiredExtensionScope
         ? ` The installed extension token is missing or has not been reauthorized for ${error.requiredExtensionScope}. A Collection Administrator must authorize the updated Pipeline Generator scopes.`
+        : error?.domain === 'komodo'
+          ? ' Verify the selected Komodo server, central read credential, CORS policy, and that nginx-net or nginx-network exists on the target Docker host.'
         : error?.domain === 'release'
           ? ' Ask a project administrator to grant Manage release definitions, View releases, and Use the selected agent queue.'
           : error?.domain === 'pipeline'
