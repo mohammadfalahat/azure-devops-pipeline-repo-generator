@@ -6,7 +6,7 @@ creates or reuses a project-level repository, writes a generated YAML file,
 registers a YAML Pipeline that points to that file, and creates a classic
 Release definition that consumes the Pipeline as a Build artifact.
 
-The manifest version documented here is **0.1.65**. The manifest targets Azure
+The manifest version documented here is **0.1.67**. The manifest targets Azure
 DevOps Services and Azure DevOps Server range `[16.0,20.0)`. The complete live
 workflow has been verified on the documented on-premises Server environment;
 the Azure DevOps Services Release API route still requires a separate
@@ -82,6 +82,9 @@ the normal generator unchanged:
   Update. On failure it restores the exact previous Compose/`.env` state and redeploys it. No Komodo
   Terminal access, target-side artifact staging, host bind mount, Node, or
   Docker is required on the Release agent.
+- bounded Komodo busy handling: `CreateStack`, `UpdateStack`, and `DeployStack`
+  retry up to five total attempts with a five-second interval only when Komodo
+  reports `Stack busy`; permanent errors still fail immediately.
 
 Before Step 1 writes any support file, the generator calls Komodo
 `ListDockerNetworks` for the selected Server. It accepts only an exact existing
@@ -142,15 +145,28 @@ Pipeline run and does not create a Release instance.
   `<environment>_<lowercase-project-without-spaces>/compose.yml`; Monorepo mode
   also ensures the adjacent `.env` used for managed immutable image tags. Its starter
   service/container is `<project>_<service>_<environment>` and exposes port 80
-  for UI/frontend services or 8080 for all other services. Its external Nginx
+  for UI/frontend services or 8080 for backend and other services. Its external Nginx
   network is resolved from the selected Komodo Server and may be either
   `nginx-network` or `nginx-net`; the Compose network's explicit `name` maps
   preserved logical service references to the actual host network.
 - The **Nginx DevOps repository** is named
   `<ProjectNameWithoutSpaces>_Nginx_DevOps` and receives
   `<environment>/<lowercase-project>-<environment>.conf`. Its host is
-  `<lowercase-sanitized-project>.<environment-domain>`; UI/frontend services
-  use `/`, while other services use `/<service>/`. Each later service run reads
+  `<lowercase-sanitized-project>.<environment-domain>`. UI/frontend indicators
+  (`ui`, `front`, `frontend`, `web`, `client`, and similar aliases) use `/`,
+  while backend/API indicators (`api`, `back`, `backend`, `server`, and similar
+  aliases) use `/api/`; other services use `/<service>/`. A recognized newer
+  variant such as `UI_V2`, `BACK_v2`, `NewUI`, or `api_refactor` is isolated at
+  `/v2/`, `/api/v2/`, `/new/`, or `/api/refactor/` respectively. A repository
+  whose name exactly matches its project is always treated as the preferred
+  frontend owner of `/`. Before assigning `/` or `/api/`, the generator reads
+  all project repositories and scores every frontend/backend candidate by
+  semantic specificity. A pure role name beats one with extra qualifiers, and
+  fewer/shorter qualifiers beat broader names; no repository-name pair is
+  predefined. For example, `front` owns `/` ahead of `front_panel`, whose route
+  becomes `/front-panel/`. Separated and joined forms such as `front_panel` and
+  `frontpanel` are both recognized. This decision is independent of Pipeline execution order.
+  Each later service run reads
   the shared file and inserts only a missing direct-child Location into the
   managed-routes section. An existing Location and all manual content are
   preserved; ambiguous duplicate HTTPS server blocks stop automatic editing.

@@ -1,14 +1,17 @@
 schema_version: 1
 last_verified_at: "2026-08-27"
-status: "candidate_0_1_65_service_aware_pipeline_and_release_naming_awaiting_packaging"
+status: "candidate_0_1_67_service_routing_and_komodo_stack_busy_retry_awaiting_sharedtemplates_push_and_packaging"
 
 development_candidate:
-  version: "0.1.65"
+  version: "0.1.67"
   package_path: null
   package_sha256: null
-  local_validation: "passed: full npm test suite, Service-aware normal/MR Pipeline filename separation, normal/MR Release name separation, immediate Service-less Pipeline in-place migration, older Pipeline migration fallbacks, manifest/documentation contract checks, action/UI regressions, MR Release migration/idempotency/exact rollback, listener self-test, and shell provisioner self-test"
+  local_validation: "passed: full npm test suite, whitespace-to-underscore Service autofill/manual normalization, semantic frontend/backend/version Nginx routing, exact repository/project frontend inference, deterministic / and /api/ ownership across competing repository names, legacy-route migration, behavioral Build and Release Stack-busy retries, immediate failure for non-busy Komodo errors, Service-aware normal/MR Pipeline and Release identities/migrations, manifest/documentation contracts, action/UI regressions, MR Release idempotency/exact rollback, listener self-test, and shell provisioner self-test"
   installed: false
   live_verified: false
+  sharedtemplates_local_path: "/home/falahat/SharedTemplates/monorepo/pipeline.yml"
+  sharedtemplates_local_sync: true
+  sharedtemplates_pushed: false
   intended_pipeline_name: "ridesharing-ridesharing_backend-backend-Feature-ZonesToDEMO.yml"
   intended_release_name: "BACKEND DEMO"
   intended_monorepo_pipeline_name: "ridesharing-ridesharing_frontend-MR-frontend-Feature-ZonesToDEMO.yml"
@@ -17,6 +20,12 @@ development_candidate:
     pipeline: "Find by desired Service-aware BranchToEnvironment name/path, then the immediately preceding Service-less transition, 0.1.37 Environment-first, and earlier branch-only identities; GET-modify-PUT the same Build Definition ID. MR considers only its Service-less MR predecessor."
     release: "Find by exact uppercased Service/Environment name or Pipeline artifact ID, then reconcile the full Release definition."
   fixes:
+    - "Replace whitespace in repository-derived and manually edited Service form values with underscores while preserving other punctuation; propagate the normalized value into generated YAML and identities."
+    - "Classify semantic frontend aliases under / on port 80, backend/API aliases under /api/ on port 8080, version/new/refactor variants under isolated frontend or /api subpaths, and keep unrelated services under their own names."
+    - "Migrate managed legacy service-name Nginx Locations such as /ui-v2/ and /back-v2/ to /v2/ and /api/v2/ idempotently while preserving explicit Monorepo /bff/ routing."
+    - "Treat a repository whose name exactly matches its project as the preferred frontend owner of /."
+    - "List visible project repositories before support writes and apply a generic semantic-specificity score for / and /api/: exact project match, pure role name, fewer/shorter non-role qualifiers, explicit token boundary, and deterministic tie-breaks; recognize joined forms and demote lower-priority managed owners so execution order cannot change ownership."
+    - "Retry only Komodo CreateStack, UpdateStack, and DeployStack responses containing Stack busy for five total attempts with a five-second interval; keep bounded environment overrides and fail unrelated errors immediately."
     - "Include the sanitized editable Service name in normal and MR YAML filenames/Pipeline names so one repository, branch, and Environment can provision multiple Services without collision or overwrite."
     - "Name MR Releases MR <SERVICE> <ENV> instead of MR <ENV>; keep normal Releases as <SERVICE> <ENV>."
     - "Migrate the immediately preceding Service-less normal/MR Pipeline identity in place and retain Pipeline-artifact fallback for legacy Release reconciliation."
@@ -96,13 +105,40 @@ development_candidate:
     - "Compare Pipeline and Release folder casing case-insensitively."
     - "Migrate same-Pipeline Release definitions instead of creating name-based duplicates."
 
+previous_local_candidate_0_1_66:
+  version: "0.1.66"
+  packaged: false
+  installed: false
+  live_verified: false
+  purpose: "Bounded retry handling for transient Komodo Stack busy responses."
+  superseded_by: "0.1.67 Service normalization and deterministic Nginx route ownership"
+
+previous_local_candidate_0_1_65:
+  version: "0.1.65"
+  packaged: false
+  installed: false
+  live_verified: false
+  purpose: "Service-aware Pipeline filenames/display names and MR Release names with in-place migration of the immediately preceding Service-less identities."
+  superseded_by: "0.1.66 Komodo Stack busy retry"
+
+observed_stack_busy_failure:
+  observed_at: "2026-08-27"
+  method: "user-provided normal Azure DevOps Build log screenshot; no authentication adaptation and no secret value visible or recorded"
+  build_id: 15247
+  build_number: "20260827.3"
+  task: "Ensure Komodo GitOps repository and shared Docker Stack"
+  result: "failed"
+  response: "HTTP 500: Stack busy"
+  elapsed: "1 second"
+  conclusion: "UpdateStack needs a bounded transient retry instead of failing the Build on the first Stack busy response."
+
 previous_packaged_candidate_0_1_64:
   version: "0.1.64"
   package_path: "mohammad-falahat.pipeline-generator-0.1.64.vsix"
   package_sha256: "ba2dc85278a323c0c75dbd6aa3fbce9d6d09657518b3f4dbb92c73df5a335a96"
   installed: false
   live_verified: false
-  superseded_by: "0.1.65 Service-aware Pipeline and MR Release naming"
+  superseded_by: "0.1.66 Komodo Stack busy retry"
 
 latest_immutable_monorepo_live_run:
   observed_at: "2026-08-24"
@@ -538,13 +574,15 @@ implementation_contracts:
     nginx_starter: "<nginx_directory>/<sanitized-lowercase-project>-<environment>.conf"
     nginx_server_name: "<sanitized-lowercase-project>.<environment-domain>"
     container_name: "<sanitized-lowercase-project>_<service>_<environment>"
-    frontend_contract: "ui/front/frontend/newui and *-ui use / and port 80"
+    frontend_contract: "ui/front/frontend/fe/web/website/client/portal/spa indicators use / and port 80; recognized new/refactor/version variants use /<variant>/"
+    backend_contract: "api/back/backend/be/server/bff/rest/graphql/gateway indicators use /api/ and port 8080; recognized new/refactor/version variants use /api/<variant>/"
     other_service_contract: "use /<service>/ with no rewrite and proxy to port 8080 without a URI slash, preserving the request URI"
     nginx_defaults: "WebSocket forwarding, client_max_body_size 0, and /etc/nginx/conf.d/<complete-environment-domain>.pem/.key"
     bootstrap_file: null
     bootstrap_content: null
     overwrite_existing_files: false
     nginx_merge: "Read exact file; normalize managed paths/proxies, remove exact generated rewrites, enforce root-last ordering, insert only a missing marked route, and Git-edit with current branch object ID."
+    base_route_ownership: "Before writes, rank visible repository names independently for / and /api/ using generic semantic specificity: exact repository/project match first for /, then pure role name, fewer non-role qualifiers, explicit token boundary, shorter qualifier text, fewer tokens, and lexical order; joined role forms are recognized and lower-priority candidates use /<service>/."
   completion:
     automatic_redirect: false
     automatic_pipeline_run: false
@@ -685,12 +723,17 @@ next_run:
   - "Rerun feature/Zones and verify Pipeline ID 347 is migrated in place to Feature-ZonesToDEMO; allow Release definition 7 to advance once for the preserved Pipeline artifact, Inline wrapper, KomodoAPI linkage, and short Release name."
   - "Read back the Docker/Nginx support repositories and verify no /environments file was generated and only missing compose.yml, a shared route, or managed-route normalization was committed; prove root is last and every route has no rewrite and a no-URI-slash proxy target."
   - "Read Release 7 back: top-level variableGroups includes ID 7, environment variableGroups is empty, and the Inline task text matches the packaged wrapper."
-  - "Rerun 0.1.65 normal mode a second time and verify the Service-aware Pipeline and Release revisions are stable with no PUT and no support repository commit."
+  - "Commit and push the locally synchronized SharedTemplates monorepo/pipeline.yml to main, then rerun Build 15247 or a new equivalent Build and verify transient Stack busy responses are logged as warnings before success or bounded final failure."
+  - "Rerun 0.1.67 normal mode a second time and verify the Service-aware Pipeline and Release revisions are stable with no PUT and no support repository commit."
+  - "Verify a repository name containing spaces autofills Service with underscores only, while existing hyphens and dots are preserved."
+  - "Generate representative UI_V2 and BACK_v2 definitions and read back canonical /v2/ and /api/v2/ managed Nginx Locations; rerun to prove no second edit."
+  - "In a disposable project, verify the generic ownership score across several pure/composite and separated/joined frontend/backend names (for example front/front_panel, ui/ui_admin_console, frontpanel/frontpaneladmin, api/api_admin, and backend/backend_worker); confirm the more specific names own / and /api/ regardless of generation order, lower-priority routes use their own names, and reruns are byte-stable."
+  - "Verify a source repository whose name exactly matches the project is selected as the frontend / owner ahead of other frontend-like repositories."
   - "On the second identical run, verify exact-name Pipeline reuse reads Build Definition 347 and sends no Pipeline or Build Definition PUT."
   - "Verify the extension-token queue and Docker Registry endpoint reads return HTTP 200 before submitting."
   - "Verify mouse wheel, touchpad, Page Down, and scrollbar can reach every form field plus the submit button."
   - "If HostAuthorizationNotFound appears, use Open extension authorization as a Collection Administrator and authorize the requested scopes."
-  - "If no authorization action is exposed, clean-install the same published 0.1.65 version and verify installState.flags."
+  - "If no authorization action is exposed, clean-install the same published 0.1.67 version and verify installState.flags."
   - "Verify the generator opens in an Azure DevOps Dialog or the Azure Repos Pipeline Generator Hub, never a separate tab."
   - "Verify the hosted generator itself obtains VSS.getAccessToken without a PAT prompt or token transfer."
   - "Verify success stays on the page, locks/collapses the form, focuses valid Nginx, Compose, and Pipeline links, and performs no automatic navigation."

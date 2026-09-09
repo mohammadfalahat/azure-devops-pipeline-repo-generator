@@ -7,10 +7,21 @@ require() { [ -n "${!1:-}" ] || { echo "##[error] $1 is required"; exit 2; }; }
 : "${KOMODO_API_KEY:=$(KOMODO_API_KEY)}"
 : "${KOMODO_API_SECRET:=$(KOMODO_API_SECRET)}"
 : "${KOMODO_ADDRESS:=https://komodo.buluttakin.com}"
+: "${KOMODO_STACK_BUSY_MAX_ATTEMPTS:=5}"
+: "${KOMODO_STACK_BUSY_RETRY_SECONDS:=5}"
 require AZP_TOKEN
 require KOMODO_API_KEY
 require KOMODO_API_SECRET
 require SYSTEM_DEFAULTWORKINGDIRECTORY
+
+[[ "$KOMODO_STACK_BUSY_MAX_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] &&
+  [ "$KOMODO_STACK_BUSY_MAX_ATTEMPTS" -le 20 ] || {
+    echo "##[error] KOMODO_STACK_BUSY_MAX_ATTEMPTS must be an integer from 1 to 20"; exit 2;
+  }
+[[ "$KOMODO_STACK_BUSY_RETRY_SECONDS" =~ ^[0-9]+$ ]] &&
+  [ "$KOMODO_STACK_BUSY_RETRY_SECONDS" -le 60 ] || {
+    echo "##[error] KOMODO_STACK_BUSY_RETRY_SECONDS must be an integer from 0 to 60"; exit 2;
+  }
 
 for command_name in git curl jq awk base64; do
   command -v "$command_name" >/dev/null 2>&1 || {
@@ -300,24 +311,43 @@ fi
 
 request_number=0
 komodo_call() {
-  endpoint="$1"
-  payload="$2"
+  local endpoint="$1"
+  local payload="$2"
+  local request_type
+  local busy_attempt=1
   request_number=$((request_number + 1))
-  request_file="$workdir/komodo-request-$request_number.json"
-  response_file="$workdir/komodo-response-$request_number.json"
+  local request_file="$workdir/komodo-request-$request_number.json"
+  local response_file="$workdir/komodo-response-$request_number.json"
   printf '%s' "$payload" > "$request_file"
-  status="$({
-    printf 'header = "X-Api-Key: %s"\n' "$KOMODO_API_KEY"
-    printf 'header = "X-Api-Secret: %s"\n' "$KOMODO_API_SECRET"
-    printf 'header = "Content-Type: application/json"\n'
-  } | curl --config - -sS -o "$response_file" -w '%{http_code}' \
-    --data-binary "@$request_file" "${KOMODO_ADDRESS%/}/$endpoint")"
-  if ! [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
+  request_type="$(jq -r '.type // ""' "$request_file")"
+  while :; do
+    local status
+    local message
+    status="$({
+      printf 'header = "X-Api-Key: %s"\n' "$KOMODO_API_KEY"
+      printf 'header = "X-Api-Secret: %s"\n' "$KOMODO_API_SECRET"
+      printf 'header = "Content-Type: application/json"\n'
+    } | curl --config - -sS -o "$response_file" -w '%{http_code}' \
+      --data-binary "@$request_file" "${KOMODO_ADDRESS%/}/$endpoint")"
+    if [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
+      printf '%s' "$response_file"
+      return 0
+    fi
     message="$(jq -r '.error // .message // "Komodo request failed"' "$response_file" 2>/dev/null || true)"
-    echo "##[error] Komodo $endpoint returned HTTP $status: $message" >&2
+    case "$request_type" in
+      CreateStack|UpdateStack|DeployStack)
+        if printf '%s' "$message" | grep -Eiq 'stack[[:space:]]+busy' &&
+          [ "$busy_attempt" -lt "$KOMODO_STACK_BUSY_MAX_ATTEMPTS" ]; then
+          echo "##[warning] Komodo $request_type is busy (attempt $busy_attempt/$KOMODO_STACK_BUSY_MAX_ATTEMPTS); retrying in ${KOMODO_STACK_BUSY_RETRY_SECONDS}s" >&2
+          sleep "$KOMODO_STACK_BUSY_RETRY_SECONDS"
+          busy_attempt=$((busy_attempt + 1))
+          continue
+        fi
+        ;;
+    esac
+    echo "##[error] Komodo $endpoint returned HTTP $status after $busy_attempt attempt(s): $message" >&2
     return 1
-  fi
-  printf '%s' "$response_file"
+  done
 }
 
 deploy_stack() {

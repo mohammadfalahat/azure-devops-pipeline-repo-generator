@@ -73,6 +73,11 @@ for (const requiredTemplateBehavior of [
   'GetStack',
   'CreateStack',
   'UpdateStack',
+  'KOMODO_STACK_BUSY_MAX_ATTEMPTS:=5',
+  'KOMODO_STACK_BUSY_RETRY_SECONDS:=5',
+  "CreateStack|UpdateStack|DeployStack",
+  "grep -Eiq 'stack[[:space:]]+busy'",
+  'retrying in ${KOMODO_STACK_BUSY_RETRY_SECONDS}s',
   'linked_repo:$linked_repo',
   'server_id:$server,path:$path',
   'files_on_host:false',
@@ -347,7 +352,11 @@ for (const requiredReleaseBehavior of [
   'env_path="${compose_path%/compose.yml}/.env"',
   'release(monorepo): deploy build',
   'rollback(monorepo): restore before build',
-  'restoring the previously active Compose and .env state'
+  'restoring the previously active Compose and .env state',
+  'KOMODO_STACK_BUSY_MAX_ATTEMPTS:=5',
+  'KOMODO_STACK_BUSY_RETRY_SECONDS:=5',
+  "CreateStack|UpdateStack|DeployStack",
+  "grep -Eiq 'stack[[:space:]]+busy'"
 ]) {
   if (!monorepoReleaseScript.includes(requiredReleaseBehavior)) {
     fail(`Monorepo Release script is missing ${requiredReleaseBehavior}.`);
@@ -408,7 +417,14 @@ for (const requiredImplementation of [
   'buildNginxSample',
   'normalizeNginxManagedRoutes',
   'findManagedRootRouteIndex',
-  "const location = requestedLocation || (frontend ? '/' : `/${serviceKey}/`);",
+  'normalizeServiceNameForForm',
+  'classifyServiceRouting',
+  'buildProjectServiceRoutingPlan',
+  'listProjectRepositories',
+  'routingOverrides',
+  'const location = requestedLocation || routing.location;',
+  "if (kind === 'frontend') location = variant ? `/${variant}/` : '/';",
+  "if (kind === 'backend') location = variant ? `/api/${variant}/` : '/api/';",
   'resolver         127.0.0.11         ipv6=off;',
   'proxy_pass                          http://$target:${internalPort};',
   'proxy_pass                          http://$target:${internalPort};',

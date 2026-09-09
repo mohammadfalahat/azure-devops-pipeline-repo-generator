@@ -85,6 +85,11 @@ printf '%s\n' \
   'if [ -n "${MOCK_CURL_COUNT_FILE:-}" ] && [ -f "$MOCK_CURL_COUNT_FILE" ]; then count="$(cat "$MOCK_CURL_COUNT_FILE")"; fi' \
   'count=$((count + 1))' \
   'if [ -n "${MOCK_CURL_COUNT_FILE:-}" ]; then printf "%s" "$count" > "$MOCK_CURL_COUNT_FILE"; fi' \
+  'if [ "$count" -le "${MOCK_KOMODO_BUSY_CALLS:-0}" ]; then' \
+  '  printf "%s" '\''{"error":"Stack busy"}'\'' > "$output"' \
+  '  printf 500' \
+  '  exit 0' \
+  'fi' \
   'success=true' \
   'if [ "${MOCK_KOMODO_FAIL_FIRST:-0}" = 1 ] && [ "$count" -eq 1 ]; then success=false; fi' \
   'printf "{\"update\":{\"id\":\"mock-update\",\"status\":\"Complete\",\"success\":%s,\"logs\":[]}}" "$success" > "$output"' \
@@ -123,6 +128,14 @@ commit_count="$(git --git-dir="$remote" rev-list --count main)"
 printf 0 > "$test_root/curl-count"
 run_release
 [ "$(git --git-dir="$remote" rev-list --count main)" = "$commit_count" ] || fail 'idempotent release created a Git commit'
+
+printf 0 > "$test_root/curl-count"
+run_release \
+  KOMODO_STACK_BUSY_MAX_ATTEMPTS=5 \
+  KOMODO_STACK_BUSY_RETRY_SECONDS=0 \
+  MOCK_KOMODO_BUSY_CALLS=2
+[ "$(cat "$test_root/curl-count")" = 3 ] || fail 'Stack busy did not retry twice before succeeding'
+[ "$(git --git-dir="$remote" rev-list --count main)" = "$commit_count" ] || fail 'Stack busy retry created an unexpected Git commit'
 
 cp "$test_root/compose.after" "$test_root/compose.before-rollback"
 cp "$test_root/env.after" "$test_root/env.before-rollback"

@@ -1,6 +1,6 @@
 # Architecture and runtime flow
 
-This document describes version 0.1.65 from the implementation in
+This document describes version 0.1.67 from the implementation in
 `vss-extension.json`, `dist/menu-action.js`, `dist/ui.js`, and
 `dist/release-config.js`.
 
@@ -216,7 +216,7 @@ The form starts with these defaults:
 | Field | Default or derivation |
 | --- | --- |
 | Pool | `PublishDockerAgent`; merged with project agent queues |
-| Service | Lowercase source repository suffix after removing a matching project-name prefix and separator; remains user-editable |
+| Service | Lowercase source repository suffix after removing a matching project-name prefix and separator; whitespace is replaced only with `_` (other punctuation is preserved) and the value remains user-editable |
 | Environment | Name/domain records (plus legacy `projects_root` metadata) loaded from `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; `demo` is preferred when present, then inferred from source branch when possible |
 | Dockerfile directory | `**`, then first recursively discovered Dockerfile directory |
 | Registry address | `registry.buluttakin.com` |
@@ -257,6 +257,22 @@ Both host-dialog and Azure Repos Hub initialization scan the selected source
 repository and source branch for Dockerfiles. Discovery affects only the
 suggested form value; the user can always enter a path manually.
 
+Immediately before Step 1 performs any repository write, the generator lists
+the current project's repositories and builds a deterministic ownership plan
+for the two shared base Locations. A repository whose name equals the project
+name case-insensitively is forced to frontend and has highest priority for `/`.
+Otherwise the generic semantic-specificity score prefers a pure recognized role
+name over a composite name, then fewer non-role qualifiers, an explicit token
+boundary over a joined prefix/suffix, shorter qualifier text, fewer tokens, and
+finally lexical order. Recognized role aliases are equivalent at the pure-name
+level; there is no table of preferred repository-name pairs. The same ranking
+applies independently to `/api/`. Thus `front` owns `/` ahead of `front_panel`,
+`frontend` owns it ahead of `frontend_dashboard`, and `api` owns `/api/` ahead
+of `api_admin`, regardless of which Pipeline is generated first. Joined forms
+such as `frontpanel` and `apiadmin` are also classified. A lower-priority
+candidate keeps its frontend/backend port but falls back to its own normalized
+path, such as `/front-panel/` or `/api-admin/`.
+
 ## Naming and identity
 
 ### Generated repository
@@ -287,9 +303,19 @@ Nginx:  /<environment>/<lowercase-project>-<environment>.conf
 
 The Compose service/container name is
 `<lowercase-project>_<service>_<environment>`. UI/frontend services expose port
-80; other services expose port 8080. The Nginx host is
-`<lowercase-sanitized-project>.<environment-domain>`. UI/frontend services own
-`/`; every other service owns `/<service>/`. Every managed Location configures
+80; backend and other services expose port 8080. The Nginx host is
+`<lowercase-sanitized-project>.<environment-domain>`. Routing uses semantic
+tokens rather than a short exact-name list. `ui`, `front`, `frontend`, `web`,
+`fe`, `website`, `client`, `portal`, and `spa` indicate frontend; `api`, `back`,
+`backend`, `be`, `server`, `bff`, `rest`, `graphql`, and `gateway` indicate backend.
+Unversioned frontend owns `/`, unversioned backend owns `/api/`, and every
+other service owns `/<service>/`. Recognized newer markers include `new`,
+`refactor`, `rewrite`, `revamp`, `next`, `nextgen`, `modern`, `latest`, and
+numeric forms such as `v2`, `version2`, `ver2`, or `r2`. A frontend variant
+uses `/<variant>/`; a backend variant uses `/api/<variant>/`. For example,
+`UI_V2` maps to `/v2/`, `BACK_v2` maps to `/api/v2/`, `NewUI` maps to `/new/`,
+and `api_refactor` maps to `/api/refactor/`. Numeric markers are canonicalized
+to lowercase `vN`; if several are present, the highest is used. Every managed Location configures
 Docker DNS with `resolver 127.0.0.11 ipv6=off` and stores the container hostname
 in `$target`. Root uses `proxy_pass http://$target:80`. A non-root route adds
 `proxy_pass http://$target:8080` without a URI slash and without `rewrite`, so
@@ -301,8 +327,8 @@ environment domain (for example, `bulutco.cloud.pem` and `bulutco.cloud.key`).
 A later run reads the shared Nginx file, identifies its unique HTTPS
 `server` by exact `server_name` plus port 443, and enumerates direct-child
 Locations with a quote/comment/brace-aware tokenizer. Existing non-root
-`/<service>` paths are migrated to `/<service>/`, exact rewrite lines from the
-older generated format are removed, direct-host proxy targets become `$target`,
+legacy service-name paths are migrated to their semantic canonical path, exact
+rewrite lines from the older generated format are removed, direct-host proxy targets become `$target`,
 exact legacy generated certificate paths based on only the domain's first
 label are migrated to the complete Environment domain, and root is moved below
 all other generated route blocks. Certificate migration is scoped to the
@@ -312,6 +338,8 @@ route is inserted inside managed-route
 markers; manual content outside and inside existing Location blocks is
 preserved. Missing/malformed markers, unmatched braces, or duplicate matching
 HTTPS server blocks stop the edit instead of guessing. Repeated runs converge.
+Repository-priority overrides are applied while normalizing managed blocks, so
+a lower-priority repository cannot retain or later reclaim `/` or `/api/`.
 
 ### YAML filename
 
@@ -616,6 +644,13 @@ Build/Release execution need Repo/Stack read-create-update permissions,
 `DeployStack` execution, Registry push access in Build, and ADO Git read/write.
 Terminal permission is not required. Secret headers are fed through config/stdin
 or process environment and shell xtrace is not enabled.
+
+Komodo can temporarily reject a Stack mutation with `Stack busy` while another
+operation holds the resource. Build-side `CreateStack`/`UpdateStack` and
+Release-side `DeployStack` therefore retry only that response for five total
+attempts with a five-second interval. `KOMODO_STACK_BUSY_MAX_ATTEMPTS` and
+`KOMODO_STACK_BUSY_RETRY_SECONDS` can tune the bounded policy; other errors are
+not retried.
 
 ## Reconciliation and retry behavior
 

@@ -295,6 +295,10 @@
 
   if (serviceInput) {
     serviceInput.addEventListener('input', () => {
+      const normalized = normalizeServiceNameForForm(serviceInput.value, { trim: false });
+      if (serviceInput.value !== normalized) {
+        serviceInput.value = normalized;
+      }
       serviceInput.dataset.autofilled = 'false';
     });
   }
@@ -1362,7 +1366,11 @@
     }
   };
 
-  const normalizeName = (value) => value?.toString().trim().toLowerCase();
+  const normalizeServiceNameForForm = (value, { trim = true } = {}) => {
+    const serviceName = String(value || '');
+    const boundedName = trim ? serviceName.trim() : serviceName;
+    return boundedName.toLowerCase().replace(/\s+/g, '_');
+  };
 
   const extractRepositoryName = (value) => {
     if (!value) return '';
@@ -1386,7 +1394,7 @@
         }
       }
     }
-    return normalizeName(serviceName || targetName);
+    return normalizeServiceNameForForm(serviceName || targetName);
   };
 
   const setServiceNameFromRepository = (name, projectName) => {
@@ -1394,8 +1402,8 @@
     const normalizedTarget = deriveServiceNameFromRepository(name, projectName);
     if (!normalizedTarget) return;
 
-    const currentValue = normalizeName(serviceInput.value);
-    const projectDefault = normalizeName(projectName);
+    const currentValue = normalizeServiceNameForForm(serviceInput.value);
+    const projectDefault = normalizeServiceNameForForm(projectName);
     const wasAutoFilled = serviceInput.dataset.autofilled === 'true';
     const shouldUpdate =
       !currentValue ||
@@ -1569,6 +1577,17 @@
     return created;
   };
 
+  const listProjectRepositories = async ({ hostUri, projectId, accessToken }) => {
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories?api-version=6.0`;
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw buildHttpError('Failed to list repositories for Nginx route ownership', res, detail);
+    }
+    const payload = await res.json();
+    return payload.value || [];
+  };
+
   const ensureRepo = async ({ hostUri, projectId, projectName, accessToken }) => {
     const targetName = `${projectName}_Azure_DevOps`;
     targetRepoInput.value = targetName;
@@ -1614,9 +1633,242 @@
     return normalized;
   };
 
-  const isFrontendService = (service) => {
-    const normalized = normalizeResourceSegment(service, 'Service name');
-    return ['ui', 'front', 'frontend', 'newui'].includes(normalized) || normalized.endsWith('-ui');
+  const frontendRoleAliases = Object.freeze([
+    'ui',
+    'front',
+    'frontend',
+    'fe',
+    'website',
+    'web',
+    'client',
+    'portal',
+    'spa'
+  ]);
+  const backendRoleAliases = Object.freeze([
+    'api',
+    'back',
+    'backend',
+    'be',
+    'server',
+    'bff',
+    'rest',
+    'graphql',
+    'gateway'
+  ]);
+
+  const findServiceRoleSignal = (tokens, aliases) => {
+    const aliasSet = new Set(aliases);
+    const tokenMatches = tokens
+      .map((token, index) => ({ alias: token, index }))
+      .filter(({ alias }) => aliasSet.has(alias));
+    if (tokenMatches.length) {
+      return {
+        ...tokenMatches[0],
+        matchType: tokens.length === 1 ? 'exact' : 'token'
+      };
+    }
+
+    const compactName = tokens.join('');
+    const affixMatches = aliases
+      .filter(
+        (alias) =>
+          alias.length >= 3 &&
+          compactName !== alias &&
+          (compactName.startsWith(alias) || compactName.endsWith(alias))
+      )
+      .sort((left, right) => right.length - left.length || left.localeCompare(right));
+    if (!affixMatches.length) return null;
+    return {
+      alias: affixMatches[0],
+      index: compactName.startsWith(affixMatches[0]) ? 0 : 1,
+      matchType: 'affix'
+    };
+  };
+
+  const classifyServiceRouting = (service) => {
+    const serviceKey = normalizeResourceSegment(service, 'Service name');
+    const rolePattern = '(?:frontend|front|ui|fe|website|web|client|portal|spa|backend|back|api|be|server|bff|rest|graphql|gateway)';
+    const variantPattern = '(?:v(?:ersion)?[0-9]+|ver[0-9]+|r[0-9]+|[0-9]+|new|refactor|rewrite|revamp|nextgen|next|modern|latest)';
+    const semanticName = String(service || '')
+      .trim()
+      .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+      .toLowerCase()
+      .replace(/front[\s._-]*end/g, 'frontend')
+      .replace(/back[\s._-]*end/g, 'backend')
+      .replace(/user[\s._-]*interface/g, 'ui')
+      .replace(/next[\s._-]*gen(?:eration)?/g, 'nextgen')
+      .replace(/refactor(?:ed|ing)?/g, 'refactor')
+      .replace(/re[\s._-]*write/g, 'rewrite')
+      .replace(/(?:web|rest)[\s._-]*api/g, 'api')
+      .replace(new RegExp(`(${rolePattern})(${variantPattern})`, 'g'), '$1-$2')
+      .replace(new RegExp(`(${variantPattern})(${rolePattern})`, 'g'), '$1-$2')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const tokens = semanticName ? semanticName.split('-').filter(Boolean) : [];
+    const frontendSignal = findServiceRoleSignal(tokens, frontendRoleAliases);
+    const backendSignal = findServiceRoleSignal(tokens, backendRoleAliases);
+    let kind = 'service';
+    if (frontendSignal || backendSignal) {
+      if (!backendSignal) {
+        kind = 'frontend';
+      } else if (!frontendSignal) {
+        kind = 'backend';
+      } else {
+        const matchRank = { exact: 0, token: 1, affix: 2 };
+        const frontendRank = [matchRank[frontendSignal.matchType], frontendSignal.index];
+        const backendRank = [matchRank[backendSignal.matchType], backendSignal.index];
+        kind =
+          frontendRank[0] < backendRank[0] ||
+          (frontendRank[0] === backendRank[0] && frontendRank[1] <= backendRank[1])
+            ? 'frontend'
+            : 'backend';
+      }
+    }
+
+    const numberedVariants = [];
+    let namedVariant = '';
+    const namedVariants = new Map([
+      ['new', 'new'],
+      ['refactor', 'refactor'],
+      ['rewrite', 'rewrite'],
+      ['revamp', 'revamp'],
+      ['next', 'next'],
+      ['nextgen', 'nextgen'],
+      ['modern', 'modern'],
+      ['latest', 'latest']
+    ]);
+    tokens.forEach((token, index) => {
+      let versionMatch = /^(?:v(?:ersion)?|ver|r)([0-9]+)$/.exec(token);
+      if (!versionMatch && /^(?:v|version|ver)$/.test(token) && /^[0-9]+$/.test(tokens[index + 1] || '')) {
+        versionMatch = ['', tokens[index + 1]];
+      }
+      if (!versionMatch && /^[0-9]+$/.test(token)) {
+        versionMatch = ['', token];
+      }
+      if (versionMatch) {
+        const version = Number(versionMatch[1]);
+        if (Number.isSafeInteger(version) && version >= 2) numberedVariants.push(version);
+      } else if (!namedVariant && namedVariants.has(token)) {
+        namedVariant = namedVariants.get(token);
+      }
+    });
+    const variant = numberedVariants.length ? `v${Math.max(...numberedVariants)}` : namedVariant;
+    let location = `/${serviceKey}/`;
+    if (kind === 'frontend') location = variant ? `/${variant}/` : '/';
+    if (kind === 'backend') location = variant ? `/api/${variant}/` : '/api/';
+    return {
+      kind,
+      variant,
+      location,
+      internalPort: kind === 'frontend' ? 80 : 8080
+    };
+  };
+
+  const buildProjectServiceRoutingPlan = ({ repositories, projectName, repositoryName, service }) => {
+    const normalizeIdentity = (value) => String(value || '').trim().toLowerCase();
+    const normalizedProjectName = normalizeIdentity(projectName);
+    const buildCandidate = (repoName, candidateService) => {
+      const repositoryMatchesProject =
+        Boolean(normalizedProjectName) && normalizeIdentity(repoName) === normalizedProjectName;
+      const serviceKey = normalizeResourceSegment(candidateService || repoName, 'Service name');
+      const classified = classifyServiceRouting(serviceKey);
+      const routing = repositoryMatchesProject
+        ? { kind: 'frontend', variant: '', location: '/', internalPort: 80 }
+        : classified;
+      return {
+        repositoryName: String(repoName || ''),
+        repositoryIdentity: normalizeIdentity(repoName),
+        repositoryMatchesProject,
+        serviceKey,
+        routing
+      };
+    };
+
+    const candidatesByRepository = new Map();
+    for (const repository of repositories || []) {
+      const repoName = String(repository?.name || '').trim();
+      if (!repoName) continue;
+      candidatesByRepository.set(
+        normalizeIdentity(repoName),
+        buildCandidate(repoName, deriveServiceNameFromRepository(repoName, projectName))
+      );
+    }
+    const currentRepositoryName = String(repositoryName || projectName || '').trim();
+    const currentCandidate = buildCandidate(
+      currentRepositoryName,
+      service || deriveServiceNameFromRepository(currentRepositoryName, projectName)
+    );
+    candidatesByRepository.set(currentCandidate.repositoryIdentity, currentCandidate);
+    const candidates = Array.from(candidatesByRepository.values());
+
+    const baseRouteAliases = new Map([
+      ['/', frontendRoleAliases],
+      ['/api/', backendRoleAliases]
+    ]);
+    const compareCandidates = (baseLocation, left, right) => {
+      const aliases = baseRouteAliases.get(baseLocation);
+      const aliasSet = new Set(aliases);
+      const score = (candidate) => {
+        const tokens = candidate.serviceKey.split('-').filter(Boolean);
+        const roleSignal = findServiceRoleSignal(tokens, aliases);
+        const exactRoleName = tokens.length === 1 && aliasSet.has(tokens[0]);
+        const roleTokenCount = tokens.filter((token) => aliasSet.has(token)).length;
+        const qualifierCount = roleTokenCount
+          ? Math.max(0, tokens.length - roleTokenCount)
+          : roleSignal
+            ? 1
+            : tokens.length;
+        const qualifierLength = roleSignal
+          ? Math.max(0, candidate.serviceKey.replace(/-/g, '').length - roleSignal.alias.length)
+          : candidate.serviceKey.length;
+        const matchTypeRank = roleSignal
+          ? { exact: 0, token: 1, affix: 2 }[roleSignal.matchType]
+          : 3;
+        return [
+          candidate.repositoryMatchesProject ? 0 : 1,
+          exactRoleName ? 0 : 1,
+          qualifierCount,
+          matchTypeRank,
+          qualifierLength,
+          tokens.length
+        ];
+      };
+      const leftScore = score(left);
+      const rightScore = score(right);
+      for (let index = 0; index < leftScore.length; index += 1) {
+        if (leftScore[index] !== rightScore[index]) return leftScore[index] - rightScore[index];
+      }
+      return left.repositoryName.localeCompare(right.repositoryName, 'en', { sensitivity: 'base' });
+    };
+    const owners = new Map();
+    for (const baseLocation of baseRouteAliases.keys()) {
+      const eligible = candidates.filter((candidate) => candidate.routing.location === baseLocation);
+      if (eligible.length) {
+        eligible.sort((left, right) => compareCandidates(baseLocation, left, right));
+        owners.set(baseLocation, eligible[0]);
+      }
+    }
+
+    const routingOverrides = new Map();
+    for (const candidate of candidates) {
+      const owner = owners.get(candidate.routing.location);
+      const ownsBaseRoute = !owner || owner.repositoryIdentity === candidate.repositoryIdentity;
+      const routing = ownsBaseRoute
+        ? candidate.routing
+        : { ...candidate.routing, location: `/${candidate.serviceKey}/` };
+      routingOverrides.set(candidate.serviceKey, routing);
+      if (candidate.repositoryIdentity === currentCandidate.repositoryIdentity) {
+        currentCandidate.routing = routing;
+        currentCandidate.ownsBaseRoute = ownsBaseRoute;
+        currentCandidate.baseRouteOwner = owner?.repositoryName || '';
+      }
+    }
+    return {
+      current: currentCandidate,
+      routingOverrides,
+      rootOwner: owners.get('/')?.repositoryName || '',
+      apiOwner: owners.get('/api/')?.repositoryName || ''
+    };
   };
 
   const buildComposeSample = ({
@@ -1624,10 +1876,11 @@
     serviceKey,
     environment,
     repositoryAddress,
-    nginxNetworkName = 'nginx-network'
+    nginxNetworkName = 'nginx-network',
+    routing: requestedRouting
   }) => {
     const containerName = `${projectKey}_${serviceKey.replace(/-/g, '_')}_${environment}`;
-    const internalPort = isFrontendService(serviceKey) ? 80 : 8080;
+    const internalPort = (requestedRouting || classifyServiceRouting(serviceKey)).internalPort;
     const registry = String(repositoryAddress || defaultValues.repositoryAddress).trim().replace(/\/+$/, '');
     const networkName = selectNginxNetworkName([nginxNetworkName]);
     return [
@@ -1659,12 +1912,14 @@
     containerName: requestedContainerName,
     location: requestedLocation,
     internalPort: requestedInternalPort,
-    frontend: requestedFrontend
+    frontend: requestedFrontend,
+    routing: requestedRouting
   }) => {
     const containerName = requestedContainerName || `${projectKey}_${serviceKey.replace(/-/g, '_')}_${environment}`;
-    const frontend = typeof requestedFrontend === 'boolean' ? requestedFrontend : isFrontendService(serviceKey);
-    const location = requestedLocation || (frontend ? '/' : `/${serviceKey}/`);
-    const internalPort = requestedInternalPort || (frontend ? 80 : 8080);
+    const routing = requestedRouting || classifyServiceRouting(serviceKey);
+    const frontend = typeof requestedFrontend === 'boolean' ? requestedFrontend : routing.kind === 'frontend';
+    const location = requestedLocation || routing.location;
+    const internalPort = requestedInternalPort || (frontend ? 80 : routing.internalPort);
     const upstreamDirectives = [
       '        resolver         127.0.0.11         ipv6=off;',
       `        set              $target            ${containerName};`
@@ -1902,7 +2157,7 @@
       );
   };
 
-  const normalizeNginxManagedRoutes = ({ content, startIndex, endIndex }) => {
+  const normalizeNginxManagedRoutes = ({ content, startIndex, endIndex, routingOverrides }) => {
     const managedRoutes = content.slice(startIndex, endIndex);
     const routeBlockPattern = () =>
       /^([ \t]*# BEGIN PIPELINE-GENERATOR ROUTE ([^\r\n]+)[ \t]*\r?\n)([\s\S]*?)(^[ \t]*# END PIPELINE-GENERATOR ROUTE \2[ \t]*)(?:\r?\n)?/gm;
@@ -1910,21 +2165,26 @@
     let migratedRoutes = managedRoutes.replace(
       routeBlockPattern(),
       (routeBlock, startMarker, serviceKey, routeBody, endMarker) => {
-        const frontend = isFrontendService(serviceKey);
-        const canonicalLocation = frontend ? '/' : `/${serviceKey}/`;
-        let migratedBody = routeBody;
-
-        if (!frontend) {
-          const legacyLocation = `/${serviceKey}`;
-          const legacyLocationPattern = new RegExp(
-            `^([ \\t]*location[ \\t]+)${escapeRegex(legacyLocation)}([ \\t]*\\{[ \\t]*$)`,
-            'm'
-          );
-          migratedBody = migratedBody.replace(
-            legacyLocationPattern,
-            (_, prefix, suffix) => `${prefix}${canonicalLocation}${suffix}`
-          );
-        }
+        const routingOverride = routingOverrides?.get(serviceKey);
+        const routing = routingOverride || classifyServiceRouting(serviceKey);
+        const canonicalLocation = routing.location;
+        const frontend = routing.kind === 'frontend';
+        const legacyFrontend =
+          ['ui', 'front', 'frontend', 'newui'].includes(serviceKey) || serviceKey.endsWith('-ui');
+        const legacyGeneratedLocations = new Set([
+          `/${serviceKey}`,
+          `/${serviceKey}/`,
+          ...(legacyFrontend ? ['/'] : []),
+          ...(routingOverride ? ['/', '/api/'] : [])
+        ]);
+        let inferredRoute = false;
+        let migratedBody = routeBody.replace(
+          /^([ \t]*location[ \t]+)([^\s{]+)([ \t]*\{[ \t]*$)/m,
+          (line, prefix, existingLocation, suffix) => {
+            inferredRoute = existingLocation === canonicalLocation || legacyGeneratedLocations.has(existingLocation);
+            return inferredRoute ? `${prefix}${canonicalLocation}${suffix}` : line;
+          }
+        );
 
         migratedBody = migratedBody.replace(
           /^([ \t]*)proxy_pass[ \t]+http:\/\/([A-Za-z0-9][A-Za-z0-9._-]*):([0-9]+)\/?;[ \t]*$/gm,
@@ -1944,13 +2204,24 @@
           }
         );
 
-        if (!frontend) {
-          const rewriteExpression = `^/${serviceKey}/(.*)$`;
-          const generatedRewritePattern = new RegExp(
-            `^[ \\t]*rewrite[ \\t]+${escapeRegex(rewriteExpression)}[ \\t]+/\\$1[ \\t]+break;[ \\t]*(?:\\r?\\n)?`,
-            'm'
+        if (inferredRoute) {
+          migratedBody = migratedBody.replace(
+            /^([ \t]*proxy_pass[ \t]+http:\/\/\$target:)[0-9]+(;[ \t]*$)/gm,
+            `$1${routing.internalPort}$2`
           );
-          migratedBody = migratedBody.replace(generatedRewritePattern, '');
+        }
+
+        if (!frontend || canonicalLocation !== '/') {
+          const rewriteLocations = Array.from(new Set([`/${serviceKey}/`, canonicalLocation]))
+            .filter((location) => location !== '/');
+          for (const location of rewriteLocations) {
+            const rewriteExpression = `^${location}(.*)$`;
+            const generatedRewritePattern = new RegExp(
+              `^[ \\t]*rewrite[ \\t]+${escapeRegex(rewriteExpression)}[ \\t]+/\\$1[ \\t]+break;[ \\t]*(?:\\r?\\n)?`,
+              'm'
+            );
+            migratedBody = migratedBody.replace(generatedRewritePattern, '');
+          }
         }
 
         return `${startMarker}${migratedBody}${endMarker}\n`;
@@ -2078,7 +2349,8 @@
       mergedContent = normalizeNginxManagedRoutes({
         content: mergedContent,
         startIndex,
-        endIndex
+        endIndex,
+        routingOverrides: routeOptions.routingOverrides
       });
       if (mergedContent !== content) {
         server = findNginxHttpsServer(mergedContent, serverName);
@@ -2126,8 +2398,8 @@
     return `${beforeClose}${separator}${managedBlock}${mergedContent.slice(server.close.start)}`;
   };
 
-  const buildNginxSample = ({ projectHost, projectKey, serviceKey, environment, domain }) => {
-    const route = buildNginxRouteBlock({ projectKey, serviceKey, environment });
+  const buildNginxSample = ({ projectHost, projectKey, serviceKey, environment, domain, routing }) => {
+    const route = buildNginxRouteBlock({ projectKey, serviceKey, environment, routing });
     const certificateName = domain;
     const serverName = `${projectHost}.${domain}`;
     return [
@@ -2453,7 +2725,13 @@
     return `${merged}${hadTrailingNewline ? '\n' : ''}`.replace(/\n/g, newline);
   };
 
-  const buildMonorepoNginxRoutes = ({ projectKey, serviceKey, environment }) => {
+  const buildMonorepoNginxRoutes = ({
+    projectKey,
+    serviceKey,
+    environment,
+    routing,
+    routingOverrides
+  }) => {
     const normalizedService = serviceKey.replace(/-/g, '_');
     const bffContainer = `${projectKey}_${normalizedService}_bff_${environment}`;
     return [
@@ -2470,26 +2748,37 @@
         managedContainerNames: [
           bffContainer,
           `${projectKey}_mr_bff_${environment}`
-        ]
+        ],
+        routingOverrides
       }
     },
     {
       serviceKey,
       routeOptions: {
         containerName: `${projectKey}_${normalizedService}_${environment}`,
-        location: '/',
+        location: routing?.location || '/',
         internalPort: 80,
         frontend: true,
-        replaceManagedLocation: true
+        replaceManagedLocation: true,
+        routing,
+        routingOverrides
       }
     }
     ];
   };
 
-  const buildMonorepoNginxSample = ({ projectHost, projectKey, serviceKey, environment, domain }) => {
+  const buildMonorepoNginxSample = ({
+    projectHost,
+    projectKey,
+    serviceKey,
+    environment,
+    domain,
+    routing,
+    routingOverrides
+  }) => {
     const certificateName = domain;
     const serverName = `${projectHost}.${domain}`;
-    const routes = buildMonorepoNginxRoutes({ projectKey, serviceKey, environment })
+    const routes = buildMonorepoNginxRoutes({ projectKey, serviceKey, environment, routing, routingOverrides })
       .map(({ serviceKey, routeOptions }) =>
         buildNginxRouteBlock({ projectKey, serviceKey, environment, ...routeOptions }).content
       );
@@ -2516,8 +2805,17 @@
     ].join('\n');
   };
 
-  const mergeMonorepoNginxRoutes = ({ content, serverName, domain, projectKey, serviceKey, environment }) =>
-    buildMonorepoNginxRoutes({ projectKey, serviceKey, environment }).reduce(
+  const mergeMonorepoNginxRoutes = ({
+    content,
+    serverName,
+    domain,
+    projectKey,
+    serviceKey,
+    environment,
+    routing,
+    routingOverrides
+  }) =>
+    buildMonorepoNginxRoutes({ projectKey, serviceKey, environment, routing, routingOverrides }).reduce(
       (merged, { serviceKey, routeOptions }) => mergeNginxServiceRoute({
         content: merged,
         serverName,
@@ -2536,7 +2834,9 @@
     domain,
     service,
     repositoryAddress,
-    nginxNetworkName = 'nginx-network'
+    nginxNetworkName = 'nginx-network',
+    serviceRouting,
+    routingOverrides
   }) => {
     const compactProject = String(projectName || '').replace(/\s+/g, '');
     const normalizedEnvironment = normalizeResourceSegment(environment, 'Environment');
@@ -2590,7 +2890,9 @@
           projectKey,
           serviceKey,
           environment: normalizedEnvironment,
-          domain: String(domain).toLowerCase()
+          domain: String(domain).toLowerCase(),
+          routing: serviceRouting,
+          routingOverrides
         }),
         mergeExisting: (content) => mergeMonorepoNginxRoutes({
           content,
@@ -2598,7 +2900,9 @@
           domain: String(domain).toLowerCase(),
           projectKey,
           serviceKey,
-          environment: normalizedEnvironment
+          environment: normalizedEnvironment,
+          routing: serviceRouting,
+          routingOverrides
         })
       }
     ];
@@ -2611,7 +2915,9 @@
     service,
     projectsRoot,
     repositoryAddress,
-    nginxNetworkName = 'nginx-network'
+    nginxNetworkName = 'nginx-network',
+    serviceRouting,
+    routingOverrides
   }) => {
     const compactProject = String(projectName || '').replace(/\s+/g, '');
     const normalizedEnvironment = normalizeResourceSegment(environment, 'Environment');
@@ -2637,7 +2943,8 @@
           serviceKey,
           environment: normalizedEnvironment,
           repositoryAddress,
-          nginxNetworkName
+          nginxNetworkName,
+          routing: serviceRouting
         })
       },
       {
@@ -2650,7 +2957,8 @@
           projectKey: compactProjectLower,
           serviceKey,
           environment: normalizedEnvironment,
-          domain: String(domain).toLowerCase()
+          domain: String(domain).toLowerCase(),
+          routing: serviceRouting
         }),
         mergeExisting: (content) => mergeNginxServiceRoute({
           content,
@@ -2658,7 +2966,11 @@
           domain: String(domain).toLowerCase(),
           projectKey: compactProjectLower,
           serviceKey,
-          environment: normalizedEnvironment
+          environment: normalizedEnvironment,
+          routeOptions: {
+            routing: serviceRouting,
+            routingOverrides
+          }
         })
       }
     ];
@@ -2754,7 +3066,9 @@
     repositoryAddress,
     nginxNetworkName,
     accessToken,
-    mode = 'pipeline'
+    mode = 'pipeline',
+    serviceRouting,
+    routingOverrides
   }) => {
     const specs = normalizeGeneratorMode(mode) === 'monorepo'
       ? buildMonorepoSupportRepositorySpecs({
@@ -2763,7 +3077,9 @@
           domain,
           service,
           repositoryAddress,
-          nginxNetworkName
+          nginxNetworkName,
+          serviceRouting,
+          routingOverrides
         })
       : buildSupportRepositorySpecs({
           projectName,
@@ -2771,7 +3087,9 @@
           domain,
           service,
           repositoryAddress,
-          nginxNetworkName
+          nginxNetworkName,
+          serviceRouting,
+          routingOverrides
         });
     const results = [];
     for (const spec of specs) {
@@ -4033,6 +4351,8 @@
       return;
     }
     const payload = Object.fromEntries(new FormData(form).entries());
+    payload.service = normalizeServiceNameForForm(payload.service);
+    if (serviceInput) serviceInput.value = payload.service;
     const environmentConfig = state.deploymentTargets?.environmentConfigs?.find(
       ({ name }) => name.toLowerCase() === String(payload.environment || '').toLowerCase()
     );
@@ -4124,12 +4444,24 @@
       const provisioningProjectName = state.rawProjectName || state.projectName;
       let supportRepositories = [];
       let nginxNetworkName = '';
+      let serviceRoutingPlan;
       const repo = await runProvisioningStep(
         'Step 1/5: resolving the target Nginx network and creating or reusing the DevOps repositories...',
         async () => {
           nginxNetworkName = await resolveNginxNetworkForServer({
             hostUri: state.hostUri,
             server: payload.komodoServer
+          });
+          const projectRepositories = await listProjectRepositories({
+            hostUri: state.hostUri,
+            projectId: state.projectId,
+            accessToken: state.accessToken
+          });
+          serviceRoutingPlan = buildProjectServiceRoutingPlan({
+            repositories: projectRepositories,
+            projectName: provisioningProjectName,
+            repositoryName: sourceRepositoryName,
+            service: payload.service
           });
           const pipelineRepo = await ensureRepo({
             hostUri: state.hostUri,
@@ -4148,7 +4480,9 @@
             repositoryAddress: payload.repositoryAddress,
             nginxNetworkName,
             accessToken: state.accessToken,
-            mode: state.mode
+            mode: state.mode,
+            serviceRouting: serviceRoutingPlan.current.routing,
+            routingOverrides: serviceRoutingPlan.routingOverrides
           });
           return pipelineRepo;
         }

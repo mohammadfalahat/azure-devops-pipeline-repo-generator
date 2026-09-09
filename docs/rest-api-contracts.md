@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.65
+This document is the integration contract between Pipeline Generator 0.1.67
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 
@@ -121,7 +121,7 @@ All calls send the Bearer and redirect-suppression headers.
 
 | Operation | Method and path | API version | Expected behavior |
 | --- | --- | --- | --- |
-| List repositories | `GET {project}/_apis/git/repositories` | `6.0` | Find generated repository by exact name |
+| List repositories | `GET {project}/_apis/git/repositories` | `6.0` | Find generated repositories and, before support-file writes, determine deterministic `/` and `/api/` ownership from all visible repository names |
 | Create repository | `POST {project}/_apis/git/repositories` | `6.0` | Body contains name and current project ID |
 | Read branch ref | `GET {project}/_apis/git/repositories/{repo}/refs?filter=heads/main` | `6.0` | Return current object ID or use zero ID when missing |
 | Check YAML path | `GET {project}/_apis/git/repositories/{repo}/items?path=...&versionDescriptor...` | `6.0` | HTTP 404 means the file does not exist |
@@ -186,20 +186,38 @@ certificate /etc/nginx/conf.d/bulutdev.ir.pem
 key:         /etc/nginx/conf.d/bulutdev.ir.key
 ```
 
-`ui`, `front`, `frontend`, `newui`, and service names ending in `-ui` use `/`,
-port 80, and a no-URI-slash proxy target. Other services use
-`/<normalized-service>/` and proxy to port 8080 without a URI slash or rewrite,
-preserving the original request URI. Compose is Git-added only when absent. Nginx uses one
+Frontend indicators (`ui`, `front`, `frontend`, `fe`, `web`, `website`, `client`,
+`portal`, and `spa`) use `/`, port 80, and a no-URI-slash proxy target. Backend
+indicators (`api`, `back`, `backend`, `be`, `server`, `bff`, `rest`, `graphql`, and
+`gateway`) use `/api/` and port 8080. Other services use
+`/<normalized-service>/` and port 8080. A recognized newer marker (`new`,
+`refactor`, `rewrite`, `revamp`, `next`, `nextgen`, `modern`, `latest`, or a
+numeric `v2`/`version2`/`ver2`/`r2` form) moves a frontend to
+`/<variant>/` and a backend to `/api/<variant>/`; for example `UI_V2` becomes
+`/v2/` and `BACK_v2` becomes `/api/v2/`. Every non-root route proxies without
+a URI slash or rewrite, preserving the original request URI. Compose is Git-added only when absent. Nginx uses one
 `/<environment>/<project>-<environment>.conf` per project/Environment. On each
-run the browser reads that file, tokenizes quotes/comments/braces, selects the
+run the browser first ranks visible repositories for base-route ownership. An
+exact repository/project name match is the preferred frontend owner of `/`;
+then a generic semantic-specificity score prefers a pure recognized role name,
+fewer non-role qualifiers, explicit token boundaries, and shorter qualifier
+text. It does not define special repository-name pairs or prefer one pure role
+alias over another. Consequently `front` beats `front_panel`, `ui` beats
+`ui_admin_console`, and `api` beats `api_admin`; joined forms such as
+`frontpanel` and `apiadmin` are also understood. Losing candidates use their
+normalized service path (`/front-panel/` or `/api-admin/`) while retaining the
+correct frontend/backend port. The browser then reads the Nginx
+file, tokenizes quotes/comments/braces, selects the
 unique port-443 `server` with the exact generated `server_name`, and enumerates
 its direct-child Location paths. Managed routes are normalized before lookup:
-old non-root paths gain their canonical trailing slash, proxy forms are
+old service-name paths gain their semantic canonical location and trailing slash, proxy forms are
 normalized, and exact generated rewrite lines are removed; the root block is
 moved below all non-root blocks. A missing path is inserted
 between managed-route markers with `changeType: edit`; unrelated manual bytes
 are preserved. Unmatched braces, incomplete markers, a missing matching HTTPS
-server, or multiple matching HTTPS servers abort automatic editing.
+server, or multiple matching HTTPS servers abort automatic editing. Ownership
+overrides also demote an older lower-priority managed `/` or `/api/` block, so
+the final result does not depend on generation order.
 
 ## Direct Komodo server discovery contract
 
@@ -496,6 +514,14 @@ Terminal permission is not required. Header values are
 provided to curl via stdin/config, never `-H` process arguments, and the MR
 wrapper never enables shell xtrace.
 
+Komodo Stack mutations have one narrow transient-failure policy. When
+`CreateStack`, `UpdateStack`, or `DeployStack` returns a non-2xx response whose
+message contains `Stack busy`, the Build/Release Bash caller makes at most five
+total attempts, waiting five seconds between attempts. The bounded defaults can
+be changed through `KOMODO_STACK_BUSY_MAX_ATTEMPTS` (1–20) and
+`KOMODO_STACK_BUSY_RETRY_SECONDS` (0–60). Other response messages, including
+authorization and validation failures, are returned immediately without retry.
+
 ## API versions: browser versus shell
 
 The browser uses fixed versions close to each call:
@@ -529,7 +555,8 @@ errors containing:
 
 The UI treats status 401, 403, TF400813, and matching 401 messages as
 authorization failures. It adds a domain-specific permission hint but does not
-retry REST writes automatically.
+retry browser-originated REST writes automatically. The separate bounded
+Komodo `Stack busy` policy applies only inside the MR Build/Release Bash tasks.
 
 HTTP 404 has special meaning only in two Git reads:
 

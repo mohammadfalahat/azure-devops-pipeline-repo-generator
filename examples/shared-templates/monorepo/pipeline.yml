@@ -350,9 +350,22 @@ stages:
                 : "${KOMODO_ADDRESS:?KOMODO_ADDRESS is required}"
                 : "${KOMODO_API_KEY:?KOMODO_API_KEY is required}"
                 : "${KOMODO_API_SECRET:?KOMODO_API_SECRET is required}"
+                : "${KOMODO_STACK_BUSY_MAX_ATTEMPTS:=5}"
+                : "${KOMODO_STACK_BUSY_RETRY_SECONDS:=5}"
                 command -v curl >/dev/null 2>&1
                 command -v jq >/dev/null 2>&1
                 test -s "$MR_MANIFEST"
+
+                [[ "$KOMODO_STACK_BUSY_MAX_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] &&
+                  [ "$KOMODO_STACK_BUSY_MAX_ATTEMPTS" -le 20 ] || {
+                    echo "KOMODO_STACK_BUSY_MAX_ATTEMPTS must be an integer from 1 to 20" >&2
+                    exit 20
+                  }
+                [[ "$KOMODO_STACK_BUSY_RETRY_SECONDS" =~ ^[0-9]+$ ]] &&
+                  [ "$KOMODO_STACK_BUSY_RETRY_SECONDS" -le 60 ] || {
+                    echo "KOMODO_STACK_BUSY_RETRY_SECONDS must be an integer from 0 to 60" >&2
+                    exit 20
+                  }
 
                 MR_KOMODO_REPOSITORY="$(printf '%s' "$MR_KOMODO_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
                 MR_KOMODO_STACK="$(printf '%s' "$MR_KOMODO_STACK" | tr '[:upper:]' '[:lower:]')"
@@ -372,20 +385,29 @@ stages:
                 trap 'rm -rf "$request_dir"' EXIT
                 request_number=0
                 komodo_call() {
-                  endpoint="$1"
-                  payload="$2"
-                  allow_not_found="${3:-false}"
+                  local endpoint="$1"
+                  local payload="$2"
+                  local allow_not_found="${3:-false}"
+                  local request_type
+                  local busy_attempt=1
                   request_number=$((request_number + 1))
-                  request_file="$request_dir/request-$request_number.json"
-                  response_file="$request_dir/response-$request_number.json"
+                  local request_file="$request_dir/request-$request_number.json"
+                  local response_file="$request_dir/response-$request_number.json"
                   printf '%s' "$payload" > "$request_file"
-                  status="$({
-                    printf 'header = "X-Api-Key: %s"\n' "$KOMODO_API_KEY"
-                    printf 'header = "X-Api-Secret: %s"\n' "$KOMODO_API_SECRET"
-                    printf 'header = "Content-Type: application/json"\n'
-                  } | curl --config - -sS -o "$response_file" -w '%{http_code}' \
-                    --data-binary "@$request_file" "${KOMODO_ADDRESS%/}/$endpoint")"
-                  if ! printf '%s' "$status" | grep -Eq '^2[0-9][0-9]$'; then
+                  request_type="$(jq -r '.type // ""' "$request_file")"
+                  while :; do
+                    local status
+                    local message
+                    status="$({
+                      printf 'header = "X-Api-Key: %s"\n' "$KOMODO_API_KEY"
+                      printf 'header = "X-Api-Secret: %s"\n' "$KOMODO_API_SECRET"
+                      printf 'header = "Content-Type: application/json"\n'
+                    } | curl --config - -sS -o "$response_file" -w '%{http_code}' \
+                      --data-binary "@$request_file" "${KOMODO_ADDRESS%/}/$endpoint")"
+                    if printf '%s' "$status" | grep -Eq '^2[0-9][0-9]$'; then
+                      printf '%s' "$response_file"
+                      return 0
+                    fi
                     message="$(jq -r '.error // .message // "Komodo request failed"' "$response_file" 2>/dev/null || true)"
                     if [ "$allow_not_found" = true ]; then
                       if [ "$status" = 404 ] || {
@@ -396,10 +418,20 @@ stages:
                         return 0
                       fi
                     fi
-                    echo "Komodo $endpoint request failed with HTTP $status: $message" >&2
+                    case "$request_type" in
+                      CreateStack|UpdateStack|DeployStack)
+                        if printf '%s' "$message" | grep -Eiq 'stack[[:space:]]+busy' &&
+                          [ "$busy_attempt" -lt "$KOMODO_STACK_BUSY_MAX_ATTEMPTS" ]; then
+                          echo "##[warning] Komodo $request_type is busy (attempt $busy_attempt/$KOMODO_STACK_BUSY_MAX_ATTEMPTS); retrying in ${KOMODO_STACK_BUSY_RETRY_SECONDS}s" >&2
+                          sleep "$KOMODO_STACK_BUSY_RETRY_SECONDS"
+                          busy_attempt=$((busy_attempt + 1))
+                          continue
+                        fi
+                        ;;
+                    esac
+                    echo "Komodo $endpoint request failed with HTTP $status after $busy_attempt attempt(s): $message" >&2
                     return 1
-                  fi
-                  printf '%s' "$response_file"
+                  done
                 }
 
                 komodo_resource_json() {

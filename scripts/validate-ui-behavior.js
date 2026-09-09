@@ -53,7 +53,11 @@ const instrumented = source.replace(
 	    resolveNginxNetworkForServer,
 	    loadDeploymentTargets,
 	    setKomodoServerFromEnvironment,
+	    normalizeServiceNameForForm,
+	    deriveServiceNameFromRepository,
 	    setServiceNameFromRepository,
+	    classifyServiceRouting,
+	    buildProjectServiceRoutingPlan,
 	    buildSupportRepositorySpecs,
 	    buildComposeSample,
 	    buildNginxRouteBlock,
@@ -378,6 +382,14 @@ assert.throws(
 );
 hooks.setServiceNameFromRepository('Locanit_API', 'Locanit');
 assert.strictEqual(elements.get('service').value, 'api');
+assert.strictEqual(hooks.normalizeServiceNameForForm('  UI New-v2.preview  '), 'ui_new-v2.preview');
+assert.strictEqual(
+  hooks.deriveServiceNameFromRepository('Locanit_UI New-v2.preview', 'Locanit'),
+  'ui_new-v2.preview'
+);
+assert.strictEqual(hooks.deriveServiceNameFromRepository('Locanit New UI V2', 'Locanit'), 'new_ui_v2');
+hooks.setServiceNameFromRepository('Locanit_UI New V2', 'Locanit');
+assert.strictEqual(elements.get('service').value, 'ui_new_v2');
 const deploymentTargets = hooks.parseDeploymentTargetsYaml(`
 servers:
   - "DEMO-192.168.62.91"
@@ -741,15 +753,15 @@ assert.throws(
 const nginxUiSample = hooks.buildNginxSample({
   projectHost: 'locanit',
   projectKey: 'locanit',
-  serviceKey: 'newui',
+  serviceKey: 'ui',
   environment: 'dev',
   domain: 'bulutdev.ir'
 });
 assert(nginxUiSample.includes('location / {'));
-assert(nginxUiSample.includes('set              $target            locanit_newui_dev;'));
+assert(nginxUiSample.includes('set              $target            locanit_ui_dev;'));
 assert(nginxUiSample.includes('proxy_pass                          http://$target:80;'));
 assert(!nginxUiSample.includes('proxy_pass                          http://$target:80/;'));
-assert(!nginxUiSample.includes('proxy_pass http://locanit_newui_dev:80;'));
+assert(!nginxUiSample.includes('proxy_pass http://locanit_ui_dev:80;'));
 const frontRootRoute = hooks.buildNginxRouteBlock({
   projectKey: 'ofe',
   serviceKey: 'front',
@@ -759,6 +771,254 @@ assert.strictEqual(frontRootRoute.location, '/');
 assert(frontRootRoute.content.includes('set              $target            ofe_front_dev;'));
 assert(frontRootRoute.content.includes('proxy_pass                          http://$target:80;'));
 assert(!frontRootRoute.content.includes('proxy_pass                          http://$target:80/;'));
+const routingCases = [
+  ['UI', 'frontend', '/', 80],
+  ['FrontEnd', 'frontend', '/', 80],
+  ['FE', 'frontend', '/', 80],
+  ['web-client', 'frontend', '/', 80],
+  ['frontpanel', 'frontend', '/', 80],
+  ['portaladmin', 'frontend', '/', 80],
+  ['api', 'backend', '/api/', 8080],
+  ['BACK', 'backend', '/api/', 8080],
+  ['BE', 'backend', '/api/', 8080],
+  ['backend-service', 'backend', '/api/', 8080],
+  ['apiadmin', 'backend', '/api/', 8080],
+  ['gatewayworker', 'backend', '/api/', 8080],
+  ['graphql-service', 'backend', '/api/', 8080],
+  ['UI_V2', 'frontend', '/v2/', 80],
+  ['BACK_v2', 'backend', '/api/v2/', 8080],
+  ['NewUI', 'frontend', '/new/', 80],
+  ['api_refactored', 'backend', '/api/refactor/', 8080],
+  ['worker', 'service', '/worker/', 8080]
+];
+for (const [service, kind, location, internalPort] of routingCases) {
+  const routing = hooks.classifyServiceRouting(service);
+  assert.strictEqual(routing.kind, kind, `${service} kind`);
+  assert.strictEqual(routing.location, location, `${service} location`);
+  assert.strictEqual(routing.internalPort, internalPort, `${service} port`);
+}
+const frontendPriorityPlan = hooks.buildProjectServiceRoutingPlan({
+  repositories: [{ name: 'front' }, { name: 'front_panel' }],
+  projectName: 'Commerce',
+  repositoryName: 'front_panel',
+  service: 'front_panel'
+});
+assert.strictEqual(frontendPriorityPlan.rootOwner, 'front');
+assert.strictEqual(frontendPriorityPlan.current.ownsBaseRoute, false);
+assert.strictEqual(frontendPriorityPlan.current.baseRouteOwner, 'front');
+assert.strictEqual(frontendPriorityPlan.current.routing.location, '/front-panel/');
+assert.strictEqual(frontendPriorityPlan.current.routing.internalPort, 80);
+assert.strictEqual(frontendPriorityPlan.routingOverrides.get('front').location, '/');
+for (const [preferred, composite, expectedFallback, kind] of [
+  ['frontend', 'frontend_dashboard', '/frontend-dashboard/', 'frontend'],
+  ['ui', 'ui_admin_console', '/ui-admin-console/', 'frontend'],
+  ['portal', 'portal_customer_area', '/portal-customer-area/', 'frontend'],
+  ['api', 'api_admin_console', '/api-admin-console/', 'backend'],
+  ['backend', 'backend_worker', '/backend-worker/', 'backend'],
+  ['gateway', 'gateway_internal', '/gateway-internal/', 'backend']
+]) {
+  const genericPriorityPlan = hooks.buildProjectServiceRoutingPlan({
+    repositories: [{ name: composite }, { name: preferred }],
+    projectName: 'Commerce',
+    repositoryName: composite,
+    service: composite
+  });
+  const baseLocation = kind === 'frontend' ? '/' : '/api/';
+  assert.strictEqual(genericPriorityPlan.current.routing.kind, kind, `${composite} kind`);
+  assert.strictEqual(genericPriorityPlan.current.routing.location, expectedFallback, `${composite} fallback`);
+  assert.strictEqual(genericPriorityPlan.routingOverrides.get(preferred).location, baseLocation, `${preferred} owner`);
+}
+const qualifierDepthPlan = hooks.buildProjectServiceRoutingPlan({
+  repositories: [{ name: 'front_panel_admin' }, { name: 'front_panel' }],
+  projectName: 'Commerce',
+  repositoryName: 'front_panel_admin',
+  service: 'front_panel_admin'
+});
+assert.strictEqual(qualifierDepthPlan.rootOwner, 'front_panel');
+assert.strictEqual(qualifierDepthPlan.current.routing.location, '/front-panel-admin/');
+const compactQualifierPlan = hooks.buildProjectServiceRoutingPlan({
+  repositories: [{ name: 'frontpaneladmin' }, { name: 'frontpanel' }],
+  projectName: 'Commerce',
+  repositoryName: 'frontpaneladmin',
+  service: 'frontpaneladmin'
+});
+assert.strictEqual(compactQualifierPlan.rootOwner, 'frontpanel');
+assert.strictEqual(compactQualifierPlan.current.routing.location, '/frontpaneladmin/');
+const backendPriorityPlan = hooks.buildProjectServiceRoutingPlan({
+  repositories: [{ name: 'api' }, { name: 'api_admin' }],
+  projectName: 'Commerce',
+  repositoryName: 'api_admin',
+  service: 'api_admin'
+});
+assert.strictEqual(backendPriorityPlan.apiOwner, 'api');
+assert.strictEqual(backendPriorityPlan.current.routing.location, '/api-admin/');
+assert.strictEqual(backendPriorityPlan.current.routing.internalPort, 8080);
+assert.strictEqual(backendPriorityPlan.routingOverrides.get('api').location, '/api/');
+const exactProjectPriorityPlan = hooks.buildProjectServiceRoutingPlan({
+  repositories: [{ name: 'Commerce' }, { name: 'front' }],
+  projectName: 'Commerce',
+  repositoryName: 'Commerce',
+  service: 'commerce'
+});
+assert.strictEqual(exactProjectPriorityPlan.rootOwner, 'Commerce');
+assert.strictEqual(exactProjectPriorityPlan.current.routing.kind, 'frontend');
+assert.strictEqual(exactProjectPriorityPlan.current.routing.location, '/');
+assert.strictEqual(exactProjectPriorityPlan.current.routing.internalPort, 80);
+assert.strictEqual(exactProjectPriorityPlan.routingOverrides.get('front').location, '/front/');
+const versionedPriorityPlan = hooks.buildProjectServiceRoutingPlan({
+  repositories: [{ name: 'front' }, { name: 'UI_V2' }],
+  projectName: 'Commerce',
+  repositoryName: 'UI_V2',
+  service: 'ui_v2'
+});
+assert.strictEqual(versionedPriorityPlan.current.routing.location, '/v2/');
+const versionedFrontendRoute = hooks.buildNginxRouteBlock({
+  projectKey: 'locanit',
+  serviceKey: 'ui-v2',
+  environment: 'dev'
+});
+assert.strictEqual(versionedFrontendRoute.location, '/v2/');
+assert(versionedFrontendRoute.content.includes('proxy_pass                          http://$target:80;'));
+const versionedBackendRoute = hooks.buildNginxRouteBlock({
+  projectKey: 'locanit',
+  serviceKey: 'back-v2',
+  environment: 'dev'
+});
+assert.strictEqual(versionedBackendRoute.location, '/api/v2/');
+assert(versionedBackendRoute.content.includes('proxy_pass                          http://$target:8080;'));
+const versionedFrontendSample = hooks.buildNginxSample({
+  projectHost: 'locanit',
+  projectKey: 'locanit',
+  serviceKey: 'ui-v2',
+  environment: 'dev',
+  domain: 'bulutdev.ir'
+});
+const migratedVersionedFrontendSample = hooks.mergeNginxServiceRoute({
+  content: versionedFrontendSample
+    .replace('location /v2/ {', 'location /ui-v2 {')
+    .replace(
+      'proxy_pass                          http://$target:80;',
+      'rewrite          ^/ui-v2/(.*)$ /$1 break;\n        proxy_pass                          http://$target:8080;'
+    ),
+  serverName: 'locanit.bulutdev.ir',
+  domain: 'bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'ui-v2',
+  environment: 'dev'
+});
+assert(migratedVersionedFrontendSample.includes('location /v2/ {'));
+assert(!migratedVersionedFrontendSample.includes('location /ui-v2'));
+assert(!migratedVersionedFrontendSample.includes('rewrite '));
+assert(migratedVersionedFrontendSample.includes('proxy_pass                          http://$target:80;'));
+assert(!migratedVersionedFrontendSample.includes('proxy_pass                          http://$target:8080;'));
+assert.strictEqual(
+  hooks.mergeNginxServiceRoute({
+    content: migratedVersionedFrontendSample,
+    serverName: 'locanit.bulutdev.ir',
+    domain: 'bulutdev.ir',
+    projectKey: 'locanit',
+    serviceKey: 'ui-v2',
+    environment: 'dev'
+  }),
+  migratedVersionedFrontendSample
+);
+const versionedBackendSample = hooks.buildNginxSample({
+  projectHost: 'locanit',
+  projectKey: 'locanit',
+  serviceKey: 'back-v2',
+  environment: 'dev',
+  domain: 'bulutdev.ir'
+});
+const migratedVersionedBackendSample = hooks.mergeNginxServiceRoute({
+  content: versionedBackendSample.replace('location /api/v2/ {', 'location /back-v2/ {'),
+  serverName: 'locanit.bulutdev.ir',
+  domain: 'bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'back-v2',
+  environment: 'dev'
+});
+assert(migratedVersionedBackendSample.includes('location /api/v2/ {'));
+assert(!migratedVersionedBackendSample.includes('location /back-v2/ {'));
+const incorrectlyOwnedRoot = hooks.buildNginxSample({
+  projectHost: 'commerce',
+  projectKey: 'commerce',
+  serviceKey: 'front-panel',
+  environment: 'dev',
+  domain: 'bulutdev.ir'
+});
+const preferredFrontPlan = hooks.buildProjectServiceRoutingPlan({
+  repositories: [{ name: 'front' }, { name: 'front_panel' }],
+  projectName: 'Commerce',
+  repositoryName: 'front',
+  service: 'front'
+});
+const correctedRootOwnership = hooks.mergeNginxServiceRoute({
+  content: incorrectlyOwnedRoot,
+  serverName: 'commerce.bulutdev.ir',
+  domain: 'bulutdev.ir',
+  projectKey: 'commerce',
+  serviceKey: 'front',
+  environment: 'dev',
+  routeOptions: {
+    routing: preferredFrontPlan.current.routing,
+    routingOverrides: preferredFrontPlan.routingOverrides
+  }
+});
+assert(correctedRootOwnership.includes('location /front-panel/ {'));
+assert(correctedRootOwnership.includes('set              $target            commerce_front_panel_dev;'));
+assert(correctedRootOwnership.includes('location / {'));
+assert(correctedRootOwnership.includes('set              $target            commerce_front_dev;'));
+assert(correctedRootOwnership.indexOf('location /front-panel/ {') < correctedRootOwnership.indexOf('location / {'));
+const lowerPriorityFrontPlan = hooks.buildProjectServiceRoutingPlan({
+  repositories: [{ name: 'front' }, { name: 'front_panel' }],
+  projectName: 'Commerce',
+  repositoryName: 'front_panel',
+  service: 'front_panel'
+});
+assert.strictEqual(
+  hooks.mergeNginxServiceRoute({
+    content: correctedRootOwnership,
+    serverName: 'commerce.bulutdev.ir',
+    domain: 'bulutdev.ir',
+    projectKey: 'commerce',
+    serviceKey: 'front-panel',
+    environment: 'dev',
+    routeOptions: {
+      routing: lowerPriorityFrontPlan.current.routing,
+      routingOverrides: lowerPriorityFrontPlan.routingOverrides
+    }
+  }),
+  correctedRootOwnership
+);
+const incorrectlyOwnedApi = hooks.buildNginxSample({
+  projectHost: 'commerce',
+  projectKey: 'commerce',
+  serviceKey: 'api-admin',
+  environment: 'dev',
+  domain: 'bulutdev.ir'
+});
+const preferredApiPlan = hooks.buildProjectServiceRoutingPlan({
+  repositories: [{ name: 'api' }, { name: 'api_admin' }],
+  projectName: 'Commerce',
+  repositoryName: 'api',
+  service: 'api'
+});
+const correctedApiOwnership = hooks.mergeNginxServiceRoute({
+  content: incorrectlyOwnedApi,
+  serverName: 'commerce.bulutdev.ir',
+  domain: 'bulutdev.ir',
+  projectKey: 'commerce',
+  serviceKey: 'api',
+  environment: 'dev',
+  routeOptions: {
+    routing: preferredApiPlan.current.routing,
+    routingOverrides: preferredApiPlan.routingOverrides
+  }
+});
+assert(correctedApiOwnership.includes('location /api-admin/ {'));
+assert(correctedApiOwnership.includes('set              $target            commerce_api_admin_dev;'));
+assert(correctedApiOwnership.includes('location /api/ {'));
+assert(correctedApiOwnership.includes('set              $target            commerce_api_dev;'));
 const migratedRootSlashSample = hooks.mergeNginxServiceRoute({
   content: nginxUiSample.replace(
     'proxy_pass                          http://$target:80;',
@@ -766,7 +1026,7 @@ const migratedRootSlashSample = hooks.mergeNginxServiceRoute({
   ),
   serverName: 'locanit.bulutdev.ir',
   projectKey: 'locanit',
-  serviceKey: 'newui',
+  serviceKey: 'ui',
   environment: 'dev'
 });
 assert(migratedRootSlashSample.includes('proxy_pass                          http://$target:80;'));
@@ -829,7 +1089,7 @@ const mergedNginxSample = hooks.mergeNginxServiceRoute({
   content: `${nginxApiSample.replace('    client_max_body_size 0;', '    # manual setting is preserved\n    client_max_body_size 0;')}`,
   serverName: 'locanit.bulutdev.ir',
   projectKey: 'locanit',
-  serviceKey: 'newui',
+  serviceKey: 'ui',
   environment: 'dev'
 });
 assert(mergedNginxSample.includes('# manual setting is preserved'));
@@ -843,7 +1103,7 @@ assert.strictEqual(
     content: mergedNginxSample,
     serverName: 'locanit.bulutdev.ir',
     projectKey: 'locanit',
-    serviceKey: 'newui',
+    serviceKey: 'ui',
     environment: 'dev'
   }),
   mergedNginxSample
@@ -895,8 +1155,8 @@ const legacyDirectProxySample = mergedNginxSample
     '        rewrite          ^/api/(.*)$ /$1 break;\n        proxy_pass http://locanit_api_dev:8080;'
   )
   .replace(
-    /        resolver         127\.0\.0\.11         ipv6=off;\n        set              \$target            locanit_newui_dev;\n        proxy_pass                          http:\/\/\$target:80\/?;/,
-    '        proxy_pass http://locanit_newui_dev:80;'
+    /        resolver         127\.0\.0\.11         ipv6=off;\n        set              \$target            locanit_ui_dev;\n        proxy_pass                          http:\/\/\$target:80\/?;/,
+    '        proxy_pass http://locanit_ui_dev:80;'
   );
 const migratedDynamicProxySample = hooks.mergeNginxServiceRoute({
   content: legacyDirectProxySample,
@@ -906,7 +1166,7 @@ const migratedDynamicProxySample = hooks.mergeNginxServiceRoute({
   environment: 'dev'
 });
 assert(!migratedDynamicProxySample.includes('proxy_pass http://locanit_api_dev:8080;'));
-assert(!migratedDynamicProxySample.includes('proxy_pass http://locanit_newui_dev:80;'));
+assert(!migratedDynamicProxySample.includes('proxy_pass http://locanit_ui_dev:80;'));
 assert.strictEqual((migratedDynamicProxySample.match(/resolver\s+127\.0\.0\.11\s+ipv6=off;/g) || []).length, 2);
 assert(migratedDynamicProxySample.includes('location /api/ {'));
 assert(!migratedDynamicProxySample.includes('rewrite '));
@@ -1371,7 +1631,7 @@ KOMODO_API_SECRET="synthetic-read-secret"
         content,
         serverName: 'locanit.bulutdev.ir',
         projectKey: 'locanit',
-        serviceKey: 'newui',
+        serviceKey: 'ui',
         environment: 'dev'
       })
     },
@@ -1800,7 +2060,7 @@ KOMODO_API_SECRET="synthetic-read-secret"
   assert(noOpReleaseCalls.every(({ method }) => method === 'GET'));
 
 console.log(
-  'UI behavior regression tests passed: Environment/domain parsing, direct enabled-server discovery, Service-aware BranchToEnvironment Pipeline naming with legacy migration, root-last Nginx routing with managed rewrite removal, idempotent Compose/shared-route merging, locked completion links, Service-aware Release naming, and Pipeline/Release/KomodoAPI reconciliation.'
+  'UI behavior regression tests passed: Environment/domain parsing, direct enabled-server discovery, underscore-normalized Service autofill, semantic frontend/backend/version routing with repository-priority ownership, Service-aware BranchToEnvironment Pipeline naming with legacy migration, root-last Nginx routing with managed rewrite removal, idempotent Compose/shared-route merging, locked completion links, Service-aware Release naming, and Pipeline/Release/KomodoAPI reconciliation.'
 );
 };
 

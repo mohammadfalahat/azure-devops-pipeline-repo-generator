@@ -6,7 +6,9 @@ Complete five-step workflow verified version: **0.1.30**
 
 Latest installed live execution observed: **0.1.62 Build and Release success on 2026-08-24**
 
-Current local candidate awaiting packaging and installation: **0.1.65**
+Latest user-reported live failure: **Build 15247, HTTP 500 `Stack busy`, 2026-08-27**
+
+Current local candidate awaiting packaging and installation: **0.1.67**
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -19,7 +21,58 @@ No credentials belong in either file. Credentials exposed in conversation,
 including PATs and Komodo API credentials, must never be copied into commands,
 documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local candidate — version 0.1.65
+## Current local candidate — version 0.1.67
+
+Version 0.1.67 carries the Service-aware Pipeline/Release identities and the
+0.1.66 bounded retry handling for Komodo's transient `Stack busy` response,
+then adds the locally validated Service-field/Nginx routing correction. A
+user-provided normal Azure DevOps Build log screenshot showed Build
+15247 fail in `Ensure Komodo GitOps repository and shared Docker Stack` after
+one second because `UpdateStack` returned HTTP 500 `Stack busy`. No secret value
+was visible or recorded.
+
+The maintained SharedTemplates Pipeline now retries `CreateStack` and
+`UpdateStack`, and the packaged MR Release task retries `DeployStack`, only when
+the returned message contains `Stack busy`. Defaults are five total attempts
+with five seconds between attempts, bounded to 1–20 attempts and 0–60 seconds.
+Permission, validation, and all unrelated errors still fail immediately.
+Behavioral local tests prove two busy responses followed by success, immediate
+failure for a non-busy response, Release retry success, and preservation of the
+existing exact rollback behavior.
+
+Repository-derived and manually entered Service values now replace whitespace
+with `_` while preserving other punctuation. Nginx/Compose classification uses
+semantic frontend indicators (`ui`, `front`, `frontend`, `web`, `client`, and
+related aliases) and backend indicators (`api`, `back`, `backend`, `server`,
+and related aliases). Unversioned frontends use `/`, unversioned backends use
+`/api/`, and other services retain `/<service>/`. Markers such as `new`,
+`refactor`, and numeric `v2`/`v3` forms create isolated variant paths; for
+example, `UI_V2` uses `/v2/` on port 80 and `BACK_v2` uses `/api/v2/` on port
+8080. Managed legacy service-name Locations and exact generated rewrites are
+migrated idempotently. The complete local `npm test` suite covers autofill,
+classification, rendering, legacy migration, and repeated-run stability.
+
+Base-route ownership is also repository-aware before any support-repository
+write. An exact repository/project name match is the highest-priority frontend
+owner of `/`; otherwise a generic semantic-specificity score prefers pure role
+names and then fewer/shorter qualifiers without defining special repository-name
+pairs or ordering equivalent pure aliases. It recognizes both separated and
+joined forms. Consequently `front` owns `/` ahead of `front_panel`, and `api`
+owns `/api/` ahead of `api_admin`, independent of generation order. Losing
+candidates use their own normalized paths. Reconciliation demotes a previously
+managed lower-priority base route and later lower-priority reruns are byte-stable.
+
+Installed/live status: **pending**. The retry candidate is synchronized locally
+to `/home/falahat/SharedTemplates/monorepo/pipeline.yml` and awaits the user's
+commit/push; the extension has not been packaged, installed, or run against
+Komodo.
+
+## Previous local candidate — version 0.1.66
+
+Version 0.1.66 added the bounded `Stack busy` retry described above. It was not
+packaged, installed, or live-verified and is superseded locally by 0.1.67.
+
+## Previous local candidate — version 0.1.65
 
 Version 0.1.65 makes the editable Service name part of every generated YAML
 path and Pipeline display name. Normal names now use

@@ -60,6 +60,12 @@ npm run build
 There is no `src`-to-`dist` compilation. Edit runtime files in `dist/` directly
 and review them as shipped code.
 
+MR Build/Release Stack operations retry Komodo's exact transient `Stack busy`
+response five times in total with a five-second interval. For controlled test
+or unusually slow environments, set `KOMODO_STACK_BUSY_MAX_ATTEMPTS` to 1–20
+and `KOMODO_STACK_BUSY_RETRY_SECONDS` to 0–60. Do not broaden this retry to
+permission, invalid-payload, or unknown-server errors.
+
 The manifest declares a Cloud target, but the full workflow is live-verified
 only on Azure DevOps Server. Before claiming Azure DevOps Services support,
 test and, if required, implement the separate `vsrm.dev.azure.com` Release API
@@ -369,9 +375,16 @@ REST responses to assert that:
   suppress authentication redirects, and contain no `Authorization` header;
 - the subsequent direct Komodo request uses the parsed synthetic credentials
   in tests, filters disabled/template records, and keeps only server names;
+- repository-derived and manually edited Service names replace whitespace with
+  `_` while preserving other punctuation;
+- repository/project exact-name frontend inference and generic semantic-distance
+  ownership ensure pure role names outrank names with extra qualifiers across
+  multiple frontend/backend aliases (including joined forms), and lower-priority
+  reruns cannot reclaim `/` or `/api/`;
 - Docker/Nginx DevOps repository names, Compose/shared-Nginx paths, project
   hostname, service route, ports, WebSocket headers, and certificate paths
-  follow the documented convention; managed routes always use Docker DNS
+  follow the documented semantic frontend/backend/variant convention, including
+  `/v2/` for `UI_V2` and `/api/v2/` for `BACK_v2`; managed routes always use Docker DNS
   `resolver 127.0.0.11 ipv6=off` and `set $target <container>`; root uses a
   no-URI-slash proxy target, while non-root uses `/<service>/`, no rewrite,
   and a no-URI-slash proxy target so the request URI is preserved; root is
@@ -705,10 +718,10 @@ resources that were cleaned up.
 | --- | --- | --- |
 | Action missing from branch menu | Extension not enabled, stale browser assets, or menu target mismatch | Confirm installed version/state, hard-refresh, inspect manifest contribution targets |
 | Session-token HTTP 401/403 or an expired-session error | The current browser sign-in is stale or the user lost project access | Use **Sign out and authenticate again**, complete the full login flow, then reopen the branch action |
-| Generator opens in a separate tab | Version 0.1.25 or older is still served, or stale action assets remain cached | Verify installed/asset version 0.1.65 and hard-refresh; current code has no detached-window path |
+| Generator opens in a separate tab | Version 0.1.25 or older is still served, or stale action assets remain cached | Verify installed/asset version 0.1.67 and hard-refresh; current code has no detached-window path |
 | Generator opens as an Azure Repos Hub instead of a modal | This Azure DevOps Server does not expose the custom Dialog service | Expected compatibility behavior; the Hub is still a host iframe |
-| Hub width repeatedly shrinks while blank space grows on the right | Legacy `VSS.resize()` used the form's changing `scrollWidth`, creating a host/iframe width feedback loop | Install 0.1.65; it never calls host resize and keeps contribution width fixed |
-| Hub form is clipped or mouse-wheel scrolling does nothing | Legacy iframe root/body scrolling is suppressed by the host | Version 0.1.65 uses a fixed full-viewport `.wrapper` as an explicit scroll container; verify the served asset version and hard-refresh |
+| Hub width repeatedly shrinks while blank space grows on the right | Legacy `VSS.resize()` used the form's changing `scrollWidth`, creating a host/iframe width feedback loop | Install 0.1.67; it never calls host resize and keeps contribution width fixed |
+| Hub form is clipped or mouse-wheel scrolling does nothing | Legacy iframe root/body scrolling is suppressed by the host | Version 0.1.67 uses a fixed full-viewport `.wrapper` as an explicit scroll container; verify the served asset version and hard-refresh |
 | `HostAuthorizationNotFound` inside Dialog/Hub | Collection installation has no authorization record for the extension scopes, or that record is stale | Select **Open extension authorization**; a Collection Administrator must authorize Pipeline Generator in Collection Settings → Extensions. If no action exists, reinstall the same published version |
 | Generator says another access-token error | Page opened directly, hosted iframe SDK handshake failed, or host denied token | Launch from a branch action; retry full sign-in only after extension authorization is confirmed |
 | Browser displays Basic login prompts | Platform SDK/API request received an auth challenge | Confirm bundled SDK is used, Bearer token is present, and fed-auth redirects are suppressed |
@@ -723,9 +736,10 @@ resources that were cleaned up.
 | Step 1 reports no supported Nginx network | The selected Docker host has neither exact `nginx-network` nor `nginx-net`, or the read credential cannot call `ListDockerNetworks` | Verify the selected Komodo Server, run the read-only network listing, and create/connect the intended external Nginx network before rerunning; the generator intentionally performs no Git write in this state |
 | Step 1 fails after creating the Azure DevOps repository | Docker/Nginx support repository creation, bootstrap push, or shared Nginx merge was denied/ambiguous | Grant Create repository/Contribute permission; for Nginx also verify balanced braces, complete managed markers, and exactly one matching port-443 server block before rerunning |
 | Nginx reload still references `bulutdemo.pem` instead of `bulutdemo.ir.pem` | The shared Nginx file was created by a legacy generator that used only the first domain label | Install 0.1.62 and rerun the generator for the same service/Environment; reconciliation migrates only the exact legacy generated PEM/key paths in the matching HTTPS server and is idempotent |
-| Release Step 5 gets 401 while resolving a queue | Extension token lacks `vso.agentpools`, has not been reauthorized after adding it, or the user cannot view/use the queue | Verify installed version 0.1.65 scopes, reauthorize/reinstall it, then confirm the current user can read and Use the queue |
-| Registry choices fall back to defaults with a 401 in Console | Extension token lacks `vso.serviceendpoint` or has not been reauthorized | Authorize the updated 0.1.65 scopes; the extension only reads endpoint names/types |
-| Release Step 5 cannot resolve `KomodoAPI` | The extension lacks `vso.variablegroups_read`, the new scope has not been authorized, or the group/user lacks Use permission | Reauthorize/install 0.1.65, confirm `KomodoAPI` exists in the current project, and grant the user/extension permission to use it |
+| A composite frontend/backend repository owns `/` or `/api/` although a closer repository exists | The configuration predates repository-priority routing or the preferred repository was not visible to the signed-in user | Ensure the user can list both repositories, then rerun the preferred `front`/`api` (or exact project-name) generator; managed lower-priority routes are demoted to their own service paths and cannot reclaim the base route on rerun |
+| Release Step 5 gets 401 while resolving a queue | Extension token lacks `vso.agentpools`, has not been reauthorized after adding it, or the user cannot view/use the queue | Verify installed version 0.1.67 scopes, reauthorize/reinstall it, then confirm the current user can read and Use the queue |
+| Registry choices fall back to defaults with a 401 in Console | Extension token lacks `vso.serviceendpoint` or has not been reauthorized | Authorize the updated 0.1.67 scopes; the extension only reads endpoint names/types |
+| Release Step 5 cannot resolve `KomodoAPI` | The extension lacks `vso.variablegroups_read`, the new scope has not been authorized, or the group/user lacks Use permission | Reauthorize/install 0.1.67, confirm `KomodoAPI` exists in the current project, and grant the user/extension permission to use it |
 | Release reports missing required variables | `KomodoAPI` exists but lacks one of the wrapper inputs | Add secret variables `AZP_TOKEN`, `KOMODO_API_KEY`, and `KOMODO_API_SECRET` with exact casing; do not put their values in source control |
 | Release cannot be created after a Pipeline error | Step 5 never ran because Step 4 aborted | Fix/read back Pipeline first; then rerun so Release migration/create can execute |
 | Release has a legacy name/configuration | It was created by an older extension | Version 0.1.27 finds it by Pipeline artifact ID and reconciles it without deleting it |
@@ -740,10 +754,11 @@ resources that were cleaned up.
 | MR Pipeline builds every module unexpectedly | Build was manual/first run, or a shell/host project is affected | Expected for manual/first/shell changes; inspect `deployments.yml` shell names and Nx affected output |
 | New Nx module is not packaged | It lacks a Build target, Nx does not classify it as an app, or outputPath is not resolvable | Add/fix the Nx Build target and `targets.build.options.outputPath`; no module list edit is required |
 | Renamed/removed module remains on the server | MR orphan policy is deliberately non-destructive | Confirm the new module is active, review the orphan log/state, then remove the old directory manually after validation |
+| MR Build/Release receives `HTTP 500: Stack busy` | Another Komodo operation temporarily owns the Stack | Version 0.1.66 retries `CreateStack`, `UpdateStack`, or `DeployStack` five times in total at five-second intervals; if all attempts fail, inspect the competing Komodo operation instead of increasing the bounds indefinitely |
 | MR Pipeline gets Komodo 403 while ensuring GitOps resources | `KomodoAPI` cannot list/create/update Repo or Stack resources | Keep the central list key read-only; grant only the required Repo/Stack permissions to the separate Variable Group deployment identity |
 | MR Release gets Komodo 403/permission error | `KomodoAPI` cannot execute the Stack on the selected Server | Grant `DeployStack` execution to the separate Variable Group deployment identity; immutable MR Release does not require Terminal permission |
 | MR `DeployStack` completes with failure | Komodo could not clone/pull the private ADO Repo, resolve `compose.yml`/`.env`, interpolate a managed image tag, or start the Stack | Inspect the returned Update logs, verify the Komodo Git provider account, ADO repo path/main branch, Stack `run_directory`, tracked `.env` tag values, and Compose content |
-| Page redirects after success, leaves the completed form active, or does not show review links | Stale extension version/assets | Verify installed asset version 0.1.65 and hard-refresh; normal mode shows three links and MR mode shows the additional contract link |
+| Page redirects after success, leaves the completed form active, or does not show review links | Stale extension version/assets | Verify installed asset version 0.1.67 and hard-refresh; normal mode shows three links and MR mode shows the additional contract link |
 
 For environment-specific IDs, exact recovery endpoints, failed automation
 approaches, and the last verified successful resource graph, use

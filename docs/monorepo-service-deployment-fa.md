@@ -165,6 +165,12 @@ Release به Node، Docker، دسترسی filesystem سرور یا Komodo Termin
    rollback برمی‌گرداند و Stack را دوباره deploy می‌کند؛ خود Release همچنان
    قرمز می‌شود تا خطای واقعی پنهان نشود.
 
+اگر Komodo هنگام `CreateStack`، `UpdateStack` یا `DeployStack` پاسخ موقت
+`Stack busy` بدهد، عملیات حداکثر در پنج تلاش و با فاصلهٔ پنج ثانیه تکرار
+می‌شود. خطاهای دسترسی، اعتبارسنجی و سایر خطاهای دائمی بدون retry متوقف می‌شوند.
+این مقادیر با `KOMODO_STACK_BUSY_MAX_ATTEMPTS` و
+`KOMODO_STACK_BUSY_RETRY_SECONDS` قابل تنظیم‌اند.
+
 بنابراین مسیرهای `/mnt/graid/projects` و `/var/data/projects` در اجرای مونوریپو
 نقشی ندارند. `projects_root` مرکزی می‌تواند برای workflowهای قدیمی باقی بماند،
 اما Compose و Release جدید از آن استفاده نمی‌کنند.
