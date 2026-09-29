@@ -6,7 +6,7 @@ creates or reuses a project-level repository, writes a generated YAML file,
 registers a YAML Pipeline that points to that file, and creates a classic
 Release definition that consumes the Pipeline as a Build artifact.
 
-The manifest version documented here is **0.1.69**. The manifest targets Azure
+The manifest version documented here is **0.1.70**. The manifest targets Azure
 DevOps Services and Azure DevOps Server range `[16.0,20.0)`. The complete live
 workflow has been verified on the documented on-premises Server environment;
 the Azure DevOps Services Release API route still requires a separate
@@ -320,9 +320,11 @@ environments:
 Every configured environment requires a valid domain; the compact legacy value
 `"dev:bulutdev.ir"` is accepted for migration. The form also accepts a custom
 safe Environment value. Custom values are used by Pipeline, Release, and Compose
-generation, but because they have no configured domain the extension performs no
-Nginx repository or configuration operation for them. Stack is also an editable
-datalist and defaults to `default`, which preserves all legacy names. Existing
+generation, but because they have no configured domain the extension performs
+no Nginx repository or configuration operation for them. Environment and Stack
+use locally packaged Tom Select 2.6.2 editable comboboxes that show their option
+lists on focus, support keyboard search, and accept safe custom values. Stack
+defaults to `default`, which preserves all legacy names. Existing
 non-default Stack suggestions are discovered from top-level Docker DevOps
 directories. A new value such as `worker` isolates the Compose directory,
 Nginx directory (for configured Environments), Pipeline/Release identities,

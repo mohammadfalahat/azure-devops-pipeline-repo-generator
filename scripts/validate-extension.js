@@ -274,8 +274,28 @@ if (
 }
 
 const html = read('dist/index.html');
-if (!/release-config\.js[\s\S]*ui\.js/.test(html)) {
-  fail('index.html must load release-config.js before ui.js.');
+const tomSelectAssets = [
+  'dist/vendor/tom-select/tom-select.complete.min.js',
+  'dist/vendor/tom-select/tom-select.default.min.css',
+  'dist/vendor/tom-select/LICENSE'
+];
+for (const assetPath of tomSelectAssets) {
+  if (!fs.existsSync(path.join(root, assetPath))) {
+    fail('packaged Tom Select asset is missing: ' + assetPath);
+  }
+}
+const tomSelectRuntime = read(tomSelectAssets[0]);
+if (!tomSelectRuntime.includes('Tom Select v2.6.2') || !tomSelectRuntime.includes('TomSelect')) {
+  fail('packaged Tom Select JavaScript does not expose the expected constructor.');
+}
+if (!read(tomSelectAssets[2]).includes('Apache License')) {
+  fail('packaged Tom Select license is missing or invalid.');
+}
+const tomSelectScriptIndex = html.indexOf('vendor/tom-select/tom-select.complete.min.js');
+const releaseConfigScriptIndex = html.indexOf('release-config.js');
+const uiScriptIndex = html.indexOf('ui.js');
+if (tomSelectScriptIndex < 0 || tomSelectScriptIndex > releaseConfigScriptIndex || releaseConfigScriptIndex > uiScriptIndex) {
+  fail('index.html must load local Tom Select before release-config.js and ui.js.');
 }
 if (
   !html.includes('id="authorize-extension"') ||
@@ -295,12 +315,21 @@ if (
 ) {
   fail('Environment and active Komodo server choices must use dynamic loading placeholders.');
 }
+const uiRuntime = read('dist/ui.js');
 if (
+  html.includes('<datalist') ||
+  !html.includes('id="environment"') ||
   !html.includes('id="stack"') ||
-  !html.includes('list="stack-options"') ||
-  !html.includes('<option value="default"></option>')
+  !html.includes('data-placeholder="Choose or enter a Stack"') ||
+  !html.includes('<option value="default" selected>default</option>') ||
+  !uiRuntime.includes('new window.TomSelect') ||
+  !uiRuntime.includes('createOnBlur: true') ||
+  !uiRuntime.includes('openOnFocus: true') ||
+  !uiRuntime.includes('hideSelected: false') ||
+  !uiRuntime.includes("select.setAttribute('aria-hidden', 'true')") ||
+  !uiRuntime.includes("combobox.control_input.setAttribute('aria-describedby'")
 ) {
-  fail('Stack must be an editable datalist with default as its initial suggestion.');
+  fail('Environment and Stack must use local editable Tom Select comboboxes with visible dropdown options.');
 }
 if (
   !html.includes('id="completion-panel"') ||

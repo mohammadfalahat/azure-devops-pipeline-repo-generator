@@ -265,9 +265,7 @@
   const formHint = document.getElementById('form-hint');
   const branchInput = document.getElementById('branch');
   const environmentSelect = document.getElementById('environment');
-  const environmentOptions = document.getElementById('environment-options');
   const stackInput = document.getElementById('stack');
-  const stackOptions = document.getElementById('stack-options');
   const poolSelect = document.getElementById('pool');
   const serviceInput = document.getElementById('service');
   const registrySelect = document.getElementById('containerRegistryService');
@@ -293,6 +291,79 @@
   const dockerfileField = document.getElementById('dockerfile-field');
   const registryAddressField = document.getElementById('registry-address-field');
   const registryServiceField = document.getElementById('registry-service-field');
+
+  const createEditableCombobox = (select, placeholder) => {
+    if (!select || typeof window.TomSelect !== 'function') return null;
+    const combobox = new window.TomSelect(select, {
+      maxItems: 1,
+      create: (input) => {
+        const value = String(input || '').trim();
+        return value ? { value, text: value } : false;
+      },
+      createOnBlur: true,
+      persist: false,
+      openOnFocus: true,
+      closeAfterSelect: true,
+      hideSelected: false,
+      selectOnTab: true,
+      allowEmptyOption: false,
+      placeholder
+    });
+    select.setAttribute('aria-hidden', 'true');
+    const describedBy = select.getAttribute('aria-describedby');
+    if (describedBy) combobox.control_input.setAttribute('aria-describedby', describedBy);
+    if (select.required) combobox.control_input.setAttribute('aria-required', 'true');
+    return combobox;
+  };
+
+  const environmentCombobox = createEditableCombobox(
+    environmentSelect,
+    'Loading from pipeline-generator.yml...'
+  );
+  const stackCombobox = createEditableCombobox(stackInput, 'Choose or enter a Stack');
+
+  const setEditableDisabled = (select, combobox, disabled) => {
+    if (!select) return;
+    select.disabled = disabled;
+    if (!combobox) return;
+    if (disabled) combobox.disable();
+    else combobox.enable();
+  };
+
+  const setEditablePlaceholder = (select, combobox, placeholder) => {
+    if (!select) return;
+    select.dataset.placeholder = placeholder;
+    if (!combobox) return;
+    combobox.settings.placeholder = placeholder;
+    combobox.inputState();
+  };
+
+  const setEditableValue = (select, combobox, value, silent = true) => {
+    if (!select) return;
+    const normalizedValue = String(value || '');
+    if (!combobox) {
+      select.value = normalizedValue;
+      return;
+    }
+    if (normalizedValue && !Object.prototype.hasOwnProperty.call(combobox.options, normalizedValue)) {
+      combobox.addOption({ value: normalizedValue, text: normalizedValue });
+    }
+    combobox.setValue(normalizedValue, silent);
+  };
+
+  const populateEditableOptions = (select, combobox, options, placeholder) => {
+    if (!select) return;
+    if (!combobox) {
+      if (placeholder) setEditablePlaceholder(select, null, placeholder);
+      populateSelectOptions(select, options, options.length ? undefined : placeholder);
+      return;
+    }
+    combobox.clear(true);
+    combobox.clearOptions();
+    combobox.addOptions(options.map((option) => ({ value: option.value, text: option.label })));
+    if (placeholder) setEditablePlaceholder(select, combobox, placeholder);
+    combobox.refreshOptions(false);
+  };
 
   if (targetRepoInput) {
     targetRepoInput.disabled = true;
@@ -853,7 +924,7 @@
 
   const loadDeploymentTargets = async ({ hostUri, branch }) => {
     state.deploymentTargetsReady = false;
-    if (environmentSelect) environmentSelect.disabled = true;
+    setEditableDisabled(environmentSelect, environmentCombobox, true);
     if (komodoSelect) komodoSelect.disabled = true;
     try {
       const [targets, komodoServers] = await Promise.all([
@@ -862,12 +933,14 @@
       ]);
       targets.servers = komodoServers;
       state.deploymentTargets = targets;
-      populateSelectOptions(
-        environmentOptions,
+      populateEditableOptions(
+        environmentSelect,
+        environmentCombobox,
         targets.environmentConfigs.map(({ name, domain }) => ({
           value: name,
-          label: `${name} — ${domain}`
-        }))
+          label: name + ' — ' + domain
+        })),
+        'Choose or enter an Environment'
       );
       populateSelectOptions(
         komodoSelect,
@@ -877,9 +950,12 @@
         const defaultEnvironment = targets.environments.find(
           (value) => value.toLowerCase() === defaultValues.environment.toLowerCase()
         );
-        environmentSelect.value = defaultEnvironment || targets.environments[0];
-        environmentSelect.placeholder = 'Choose or enter an Environment';
-        environmentSelect.disabled = false;
+        setEditableValue(
+          environmentSelect,
+          environmentCombobox,
+          defaultEnvironment || targets.environments[0]
+        );
+        setEditableDisabled(environmentSelect, environmentCombobox, false);
       }
       if (komodoSelect) {
         komodoSelect.disabled = false;
@@ -891,9 +967,14 @@
     } catch (error) {
       state.deploymentTargets = null;
       state.deploymentTargetsReady = false;
-      populateSelectOptions(environmentOptions, []);
+      populateEditableOptions(
+        environmentSelect,
+        environmentCombobox,
+        [],
+        'Deployment environments unavailable'
+      );
       populateSelectOptions(komodoSelect, [], 'Active Komodo servers unavailable');
-      if (environmentSelect) environmentSelect.disabled = true;
+      setEditableDisabled(environmentSelect, environmentCombobox, true);
       if (komodoSelect) komodoSelect.disabled = true;
       throw error;
     }
@@ -1482,8 +1563,8 @@
       return 'pro';
     }
 
-    const candidates = environmentOptions
-      ? Array.from(environmentOptions.options).map((option) => option.value.toLowerCase())
+    const candidates = environmentSelect
+      ? Array.from(environmentSelect.options).map((option) => option.value.toLowerCase())
       : [];
 
     return candidates.find((key) => key && lower.includes(key));
@@ -1492,11 +1573,11 @@
   const applyDetectedEnvironment = (branch) => {
     const detected = detectEnvironmentFromBranch(branch);
     if (detected && environmentSelect) {
-      const available = Array.from(environmentOptions?.options || []).some(
+      const available = Array.from(environmentSelect.options || []).some(
         (option) => option.value.toLowerCase() === detected.toLowerCase()
       );
       if (available) {
-        environmentSelect.value = detected;
+        setEditableValue(environmentSelect, environmentCombobox, detected);
         setKomodoServerFromEnvironment(detected);
       }
     }
@@ -1702,8 +1783,13 @@
     } catch (error) {
       console.warn('Could not discover existing project Stacks; keeping the default option.', error);
     }
-    populateSelectOptions(stackOptions, stacks.map((value) => ({ value, label: value })));
-    if (stackInput) stackInput.value = currentValue;
+    populateEditableOptions(
+      stackInput,
+      stackCombobox,
+      stacks.map((value) => ({ value, label: value })),
+      'Choose or enter a Stack'
+    );
+    setEditableValue(stackInput, stackCombobox, currentValue);
     return stacks;
   };
 
@@ -4548,8 +4634,8 @@
     payload.stack = normalizeStackName(payload.stack);
     payload.service = normalizeServiceNameForForm(payload.service);
     if (serviceInput) serviceInput.value = payload.service;
-    if (environmentSelect) environmentSelect.value = payload.environment;
-    if (stackInput) stackInput.value = payload.stack;
+    setEditableValue(environmentSelect, environmentCombobox, payload.environment);
+    setEditableValue(stackInput, stackCombobox, payload.stack);
     const environmentConfig = state.deploymentTargets?.environmentConfigs?.find(
       ({ name }) => name.toLowerCase() === String(payload.environment || '').toLowerCase()
     );

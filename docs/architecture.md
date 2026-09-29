@@ -1,6 +1,6 @@
 # Architecture and runtime flow
 
-This document describes version 0.1.69 from the implementation in
+This document describes version 0.1.70 from the implementation in
 `vss-extension.json`, `dist/menu-action.js`, `dist/ui.js`, and
 `dist/release-config.js`.
 
@@ -39,6 +39,7 @@ already exist.
 | `vss-extension.json` | Azure DevOps extension host | Declares the normal and Monorepo branch-menu actions, Dialog control, Azure Repos Hub, supported hosts, addressable files, and token scopes |
 | `menu-action.html` / `menu-action.js` | Hidden action contribution iframe | Initializes VSS SDK, registers `generate-pipeline-action` and `generate-monorepo-action`, extracts branch context/mode, warms assets, and asks the host to open the form |
 | `index.html` / `ui.js` | Dialog or `pipeline-generator-hub` host iframe | Reads host configuration/navigation state, obtains the current-user host token, hydrates the form, performs five provisioning steps, displays errors, and renders Nginx/Compose/Pipeline review links |
+| `vendor/tom-select/*` | Loaded by `index.html` before `ui.js` | Provides the locally packaged Tom Select 2.6.2 JavaScript/CSS editable combobox implementation and its Apache-2.0 license |
 | `release-config.js` | Loaded before `ui.js` | Exposes immutable `window.PipelineGeneratorReleaseConfig` with Release settings, `KomodoAPI` requirements, and Bash source selection |
 | `release-inline-task.sh` | Fetched by `ui.js` from the installed extension assets | Provides the wrapper text embedded into the classic Release Bash task |
 | `monorepo-build.cjs` | Maintained mirror of `SharedTemplates:/monorepo/mr-build.cjs` | Discovers buildable Nx apps, computes affected apps, applies shell rebuild-all, resolves output paths, and creates `mr-drop` |
@@ -217,8 +218,8 @@ The form starts with these defaults:
 | --- | --- |
 | Pool | `PublishDockerAgent`; merged with project agent queues |
 | Service | Lowercase source repository suffix after removing a matching project-name prefix and separator; whitespace is replaced only with `_` (other punctuation is preserved) and the value remains user-editable |
-| Environment | Editable input with name/domain suggestions (plus legacy `projects_root` metadata) loaded from `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; `demo` is preferred when present, then inferred from source branch when possible |
-| Stack | Editable input with `default` selected; suggestions are discovered from existing top-level Docker DevOps Compose directories, while free text creates another isolated Stack |
+| Environment | Editable Tom Select 2.6.2 combobox with name/domain suggestions (plus legacy `projects_root` metadata) loaded from `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; `demo` is preferred when present, then inferred from source branch when possible |
+| Stack | Editable Tom Select 2.6.2 combobox with `default` selected; suggestions are discovered from existing top-level Docker DevOps Compose directories, while free text creates another isolated Stack |
 | Dockerfile directory | `**`, then first recursively discovered Dockerfile directory |
 | Registry address | `registry.buluttakin.com` |
 | Registry service | `BulutReg`; merged with Docker Registry service endpoints |
@@ -241,9 +242,12 @@ updates no Nginx repository or configuration.
 The normalized Stack defaults to `default`. That value preserves every legacy
 identity. A non-default value is inserted into Compose/Nginx directories,
 Pipeline/Release names, image/container names, and Komodo Repo/Stack resources.
-The Stack input remains editable after existing values are discovered.
+Both comboboxes use locally packaged JavaScript/CSS, open their full option
+list on click or focus, retain searchable keyboard navigation, and remain
+editable after values are discovered.
 A file-read, permission, API, CORS, TLS, or validation failure keeps the
-Environment input, Komodo Server select, and Submit disabled; the extension never restores compiled-in targets.
+Environment combobox, Komodo Server select, and Submit disabled; the
+extension never restores compiled-in targets.
 
 Environment inference follows this order:
 

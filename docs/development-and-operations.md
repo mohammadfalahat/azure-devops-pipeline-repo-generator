@@ -58,7 +58,11 @@ npm run build
 ```
 
 There is no `src`-to-`dist` compilation. Edit runtime files in `dist/` directly
-and review them as shipped code.
+and review them as shipped code. Tom Select 2.6.2 is vendored under
+`dist/vendor/tom-select`; an upgrade must replace the official complete
+minified JavaScript, default minified CSS, and LICENSE together, then update the
+documented version and run `npm test`. Do not replace these local assets with a
+CDN reference because the extension must remain self-contained.
 
 MR Build/Release Stack operations retry Komodo's exact transient `Stack busy`
 response five times in total with a five-second interval. For controlled test
@@ -107,11 +111,12 @@ packaged path.
 - YAML naming and rendering;
 - REST reconciliation logic.
 
-`dist/index.html` contains a disabled loading input for Environment and a
-disabled loading select for Komodo Server. The Environment input becomes an
-editable datalist after load. Update `pipeline-generator.yml` to change its
-configured suggestions. Stack is a second editable datalist: `default`
-preserves existing identities, and suggestions are discovered from top-level
+`dist/index.html` contains a disabled loading select for Environment and a
+disabled loading select for Komodo Server. The Environment select becomes an
+editable Tom Select 2.6.2 combobox after load; its dropdown opens on click/focus
+and remains searchable. Update `pipeline-generator.yml` to change its configured
+suggestions. Stack uses the same editable combobox: `default` preserves existing
+identities, and suggestions are discovered from top-level
 Docker DevOps Compose directories. Server enable/disable changes come directly
 from Komodo.
 A missing/unreadable/invalid environment or credential file, rejected Komodo

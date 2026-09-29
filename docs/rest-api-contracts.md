@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.69
+This document is the integration contract between Pipeline Generator 0.1.70
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 

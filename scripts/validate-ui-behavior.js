@@ -126,14 +126,8 @@ const environment = element({
   value: '',
   options: []
 });
-const environmentOptions = element({
-  options: []
-});
 const stack = element({
   value: 'default',
-  options: []
-});
-const stackOptions = element({
   options: []
 });
 const nginxResultItem = element({
@@ -149,10 +143,8 @@ const elements = new Map([
   ['form-hint', element()],
   ['branch', element()],
   ['environment', environment],
-  ['environment-options', environmentOptions],
   ['pool', element()],
   ['stack', stack],
-  ['stack-options', stackOptions],
   ['service', element()],
   ['containerRegistryService', element()],
   ['repositoryAddress', element()],
@@ -1670,7 +1662,7 @@ KOMODO_API_SECRET="synthetic-read-secret"
     'nginx-net'
   );
 
-  environmentOptions.options = [];
+  environment.options = [];
   elements.get('komodoServer').options = [];
   context.fetch = async (url) => {
     if (url.includes('path=%2Fkomodo-servers-creds.env')) {
@@ -1703,8 +1695,8 @@ KOMODO_API_SECRET="synthetic-read-secret"
     branch: 'feature/qa'
   });
   assert.strictEqual(environment.value, 'qa');
-  assert.deepStrictEqual(Array.from(environmentOptions.options, (option) => option.value), ['demo', 'qa']);
-  assert.strictEqual(environment.placeholder, 'Choose or enter an Environment');
+  assert.deepStrictEqual(Array.from(environment.options, (option) => option.value), ['demo', 'qa']);
+  assert.strictEqual(environment.dataset.placeholder, 'Choose or enter an Environment');
   assert.strictEqual(elements.get('komodoServer').value, 'QA-192.168.62.153');
   assert.strictEqual(hooks.state.deploymentTargetsReady, true);
 

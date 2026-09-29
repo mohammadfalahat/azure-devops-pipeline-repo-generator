@@ -8,7 +8,7 @@ Latest installed live execution observed: **0.1.62 Build and Release success on 
 
 Latest user-reported live failure: **Build 15247, HTTP 500 `Stack busy`, 2026-08-27**
 
-Current local candidate awaiting packaging and installation: **0.1.69**
+Current local candidate awaiting packaging and installation: **0.1.70**
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -21,7 +21,32 @@ No credentials belong in either file. Credentials exposed in conversation,
 including PATs and Komodo API credentials, must never be copied into commands,
 documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local candidate — version 0.1.69
+## Current local candidate — version 0.1.70
+
+Version 0.1.70 replaces the native Environment and Stack datalists with
+locally packaged Tom Select 2.6.2 editable comboboxes. The native datalist
+rendering was not reliable in the target hosted-browser context: suggestions
+could exist without a visible list affordance. The new controls open their full
+option list on click or focus, support keyboard filtering, and retain free-text
+creation on Enter or blur. The underlying selects remain the submitted form
+controls, so provisioning payload contracts are unchanged.
+
+The JavaScript, default CSS, and Apache-2.0 license are bundled under
+`dist/vendor/tom-select`; the extension has no CDN dependency. After successful
+enhancement, the hidden source select is removed from the accessibility tree
+and `aria-describedby`/required semantics are forwarded to the interactive
+combobox. Loading, enabled, and failure states stay synchronized with the
+existing deployment-target gate.
+
+Local validation passed on 2026-09-29: the complete `npm test` suite and a
+local Chrome interaction check. The browser check visibly opened the Stack
+dropdown, showed `default`, offered `Add worker...` for typed free text, selected
+`worker`, and confirmed that only the enhanced combobox remains in the
+accessibility tree. This was local UI validation only; no Azure DevOps or Komodo
+resource was written. Version 0.1.70 has not been packaged, installed, or
+live-verified.
+
+## Previous local candidate — version 0.1.69
 
 Version 0.1.69 adds an editable Stack datalist with `default` selected. Existing
 non-default Stack values are discovered from top-level

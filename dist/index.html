@@ -7,7 +7,9 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Generate pipeline</title>
+  <link rel="stylesheet" href="vendor/tom-select/tom-select.default.min.css" />
   <link rel="stylesheet" href="styles.css" />
+  <script defer src="vendor/tom-select/tom-select.complete.min.js"></script>
   <script defer src="release-config.js"></script>
   <script defer src="ui.js"></script>
 </head>
@@ -66,33 +68,29 @@
         </div>
         <div class="field">
           <label for="environment">Environment</label>
-          <input
+          <select
             id="environment"
             name="environment"
-            list="environment-options"
-            placeholder="Loading from pipeline-generator.yml..."
-            autocomplete="off"
+            data-placeholder="Loading from pipeline-generator.yml..."
             aria-describedby="environment-help"
             required
             disabled
-          />
-          <datalist id="environment-options"></datalist>
+          >
+            <option value="">Loading from pipeline-generator.yml...</option>
+          </select>
           <small id="environment-help">Choose a configured Environment or enter a custom value. Custom values are used for Pipeline, Release, and Compose generation, but no Nginx configuration is created for them.</small>
         </div>
         <div class="field">
           <label for="stack">Stack</label>
-          <input
+          <select
             id="stack"
             name="stack"
-            list="stack-options"
-            value="default"
-            autocomplete="off"
+            data-placeholder="Choose or enter a Stack"
             aria-describedby="stack-help"
             required
-          />
-          <datalist id="stack-options">
-            <option value="default"></option>
-          </datalist>
+          >
+            <option value="default" selected>default</option>
+          </select>
           <small id="stack-help">Use default to keep the existing names. Enter another Stack, such as worker, to create isolated Compose and Nginx folders and distinct Pipeline, Release, container/image, and Komodo names. Nginx is created only for configured Environments.</small>
         </div>
         <div class="field" id="dockerfile-field">

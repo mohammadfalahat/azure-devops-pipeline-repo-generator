@@ -170,6 +170,60 @@ select {
   font-size: 14px;
 }
 
+.ts-wrapper {
+  width: 100%;
+}
+
+.ts-wrapper.single .ts-control {
+  min-height: 37px;
+  padding: 8px 38px 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: none;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.ts-wrapper.single.focus .ts-control {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.ts-control > input {
+  min-width: 4px;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  font-size: 14px;
+}
+
+.ts-dropdown {
+  z-index: 30;
+  margin-top: 4px;
+  border-color: #d1d5db;
+  border-radius: 6px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+}
+
+.ts-dropdown .option {
+  padding: 8px 10px;
+}
+
+.ts-dropdown .active {
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.ts-wrapper.disabled {
+  opacity: 0.6;
+}
+
+.ts-wrapper.disabled .ts-control {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
 small {
   color: #6b7280;
 }
