@@ -328,6 +328,32 @@ const workerCompose = hooks.buildComposeSample({
 });
 assert(workerCompose.includes('container_name: ridesharing_api_worker_pro'));
 assert(workerCompose.includes('image: registry.buluttakin.com/ridesharing/api-worker-pro:${IMAGE_TAG:-CHANGE_ME}'));
+const underscoredServiceSpecs = hooks.buildSupportRepositorySpecs({
+  projectName: 'DevOpsServices',
+  environment: 'pro',
+  stack: 'worker',
+  service: 'devops_services_agent',
+  repositoryAddress: 'registry.buluttakin.com',
+  includeNginx: false
+});
+const underscoredServiceCompose = underscoredServiceSpecs.find(({ kind }) => kind === 'docker').content;
+assert(underscoredServiceCompose.includes(
+  'image: registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:${IMAGE_TAG:-CHANGE_ME}'
+));
+assert(!underscoredServiceCompose.includes('devops-services-agent-worker-pro'));
+const underscoredMonorepoSpecs = hooks.buildMonorepoSupportRepositorySpecs({
+  projectName: 'DevOpsServices',
+  environment: 'pro',
+  stack: 'worker',
+  service: 'devops_services_agent',
+  repositoryAddress: 'registry.buluttakin.com',
+  includeNginx: false
+});
+const underscoredMonorepoCompose = underscoredMonorepoSpecs.find(({ kind }) => kind === 'docker').content;
+assert(underscoredMonorepoCompose.includes(
+  'image: registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:${devops_services_agent}'
+));
+assert(!underscoredMonorepoCompose.includes('devops-services-agent-worker-pro'));
 const workerPipelineYaml = hooks.buildPipelineYaml({
   pool: 'PublishDockerAgent',
   service: 'api',

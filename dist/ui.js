@@ -1476,6 +1476,20 @@
     return boundedName.toLowerCase().replace(/\s+/g, '_');
   };
 
+  // Build templates receive the form value unchanged, so image repositories
+  // may intentionally contain underscores. Keep that spelling aligned with
+  // the image pushed by the template; resource/path identifiers continue to
+  // use normalizeResourceSegment and may use hyphens instead.
+  const normalizeImageServiceSegment = (value, label) => {
+    const normalized = normalizeServiceNameForForm(value)
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^[._-]+|[._-]+$/g, '');
+    if (!normalized) {
+      throw new Error(`${label} cannot be converted to a safe image repository segment.`);
+    }
+    return normalized;
+  };
+
   const extractRepositoryName = (value) => {
     if (!value) return '';
     const segments = value.split('/').filter(Boolean);
@@ -2100,6 +2114,7 @@
   const buildComposeSample = ({
     projectKey,
     serviceKey,
+    imageServiceKey = serviceKey,
     environment,
     stack = 'default',
     repositoryAddress,
@@ -2117,7 +2132,7 @@
       'services:',
       `  ${containerName}:`,
       `    container_name: ${containerName}`,
-      `    image: ${registry}/${projectKey}/${serviceKey}${imageStackSegment}-${environment}:\${IMAGE_TAG:-CHANGE_ME}`,
+      `    image: ${registry}/${projectKey}/${imageServiceKey}${imageStackSegment}-${environment}:\${IMAGE_TAG:-CHANGE_ME}`,
       '    restart: unless-stopped',
       '    expose:',
       `      - "${internalPort}"`,
@@ -2706,6 +2721,7 @@
   const buildMonorepoComposeServices = ({
     projectKey,
     serviceKey,
+    imageServiceKey = serviceKey,
     environment,
     stack = 'default',
     repositoryAddress,
@@ -2723,8 +2739,8 @@
       .replace(/\/+$/, '')
       .toLowerCase();
     const bffProfile = `mr-${serviceKey}${imageStackSegment}-bff`;
-    const staticRepository = `${registry}/${projectKey}/${serviceKey}${imageStackSegment}-${environment}`;
-    const bffRepository = `${registry}/${projectKey}/${serviceKey}-bff${imageStackSegment}-${environment}`;
+    const staticRepository = `${registry}/${projectKey}/${imageServiceKey}${imageStackSegment}-${environment}`;
+    const bffRepository = `${registry}/${projectKey}/${imageServiceKey}-bff${imageStackSegment}-${environment}`;
     const { staticTagKey, bffTagKey } = buildMonorepoTagKeys({ serviceKey });
     return [
       {
@@ -2760,6 +2776,7 @@
   const buildMonorepoComposeSample = ({
     projectKey,
     serviceKey,
+    imageServiceKey = serviceKey,
     environment,
     repositoryAddress,
     stack = 'default',
@@ -2769,6 +2786,7 @@
     const services = buildMonorepoComposeServices({
       projectKey,
       serviceKey,
+      imageServiceKey,
       environment,
       repositoryAddress,
       stack,
@@ -2790,6 +2808,7 @@
     content,
     projectKey,
     serviceKey,
+    imageServiceKey = serviceKey,
     environment,
     repositoryAddress,
     stack = 'default',
@@ -2799,6 +2818,7 @@
       return buildMonorepoComposeSample({
         projectKey,
         serviceKey,
+        imageServiceKey,
         environment,
         repositoryAddress,
         stack,
@@ -2839,6 +2859,7 @@
     const desiredServices = buildMonorepoComposeServices({
       projectKey,
       serviceKey,
+      imageServiceKey,
       environment,
       repositoryAddress,
       stack,
@@ -3105,6 +3126,7 @@
     }
     const projectKey = normalizeResourceSegment(compactProject.toLowerCase(), 'Project key');
     const serviceKey = normalizeResourceSegment(service, 'Service name');
+    const imageServiceKey = normalizeImageServiceSegment(service, 'Service name');
     const projectHost = projectKey;
     const composeDirectory = buildComposeDirectory({ environment: normalizedEnvironment, stack, projectName: compactProject });
     const nginxDirectory = buildNginxDirectory({ environment: normalizedEnvironment, stack });
@@ -3117,6 +3139,7 @@
         content: buildMonorepoComposeSample({
           projectKey,
           serviceKey,
+          imageServiceKey,
           environment: normalizedEnvironment,
           stack,
           repositoryAddress,
@@ -3126,6 +3149,7 @@
           content,
           projectKey,
           serviceKey,
+          imageServiceKey,
           environment: normalizedEnvironment,
           stack,
           repositoryAddress,
@@ -3194,6 +3218,7 @@
     }
     const compactProjectLower = compactProject.toLowerCase();
     const projectHost = normalizeResourceSegment(compactProjectLower, 'Project hostname');
+    const imageServiceKey = normalizeImageServiceSegment(service, 'Service name');
     const composeDirectory = buildComposeDirectory({ environment: normalizedEnvironment, stack, projectName: compactProject });
     const nginxDirectory = buildNginxDirectory({ environment: normalizedEnvironment, stack });
     return [
@@ -3205,6 +3230,7 @@
         content: buildComposeSample({
           projectKey: compactProjectLower,
           serviceKey,
+          imageServiceKey,
           environment: normalizedEnvironment,
           stack,
           repositoryAddress,
