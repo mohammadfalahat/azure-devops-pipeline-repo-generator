@@ -107,9 +107,13 @@ packaged path.
 - YAML naming and rendering;
 - REST reconciliation logic.
 
-`dist/index.html` contains disabled loading placeholders for Environment and
-Komodo Server. Update `pipeline-generator.yml` to change environments. Server
-enable/disable changes come directly from Komodo and require no repackaging.
+`dist/index.html` contains a disabled loading input for Environment and a
+disabled loading select for Komodo Server. The Environment input becomes an
+editable datalist after load. Update `pipeline-generator.yml` to change its
+configured suggestions. Stack is a second editable datalist: `default`
+preserves existing identities, and suggestions are discovered from top-level
+Docker DevOps Compose directories. Server enable/disable changes come directly
+from Komodo.
 A missing/unreadable/invalid environment or credential file, rejected Komodo
 request, blocked CORS preflight, or empty enabled-server result is blocking and
 has no compiled-in fallback.
@@ -131,6 +135,15 @@ records are the maintained contract. Every record needs a domain because the
 Nginx starter host and certificate filenames are derived from it. `projects_root`
 is retained for legacy workflows; immutable Monorepo deployment does not mount
 or write either path.
+A custom safe Environment value may be typed instead of choosing a suggestion.
+It still participates in Pipeline/Release naming, YAML parameters, and Compose
+generation. Only a case-insensitive match to a configured record has a domain;
+for every other value the provisioning flow omits all Nginx repository and file
+operations.
+A safe custom Stack such as `worker` creates
+`<environment>_<stack>_<project>/compose.yml` and, for a configured
+Environment, `<environment>_<stack>/<project>-<environment>.conf`. It also
+isolates Pipeline/Release, image/container, and Komodo Repo/Stack names.
 
 ### Central Komodo credential file
 
@@ -238,9 +251,10 @@ assembled as text:
 - validate the document in a test Pipeline on the target server.
 
 `buildPipelineFilename` requires Service and Environment and returns
-`<project>-<repository>[-MR]-<service>-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml`;
+`<project>-<repository>[-MR]-<service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml`;
 `buildPipelineName` returns that filename unchanged. `buildReleaseName` uses
-uppercased Service and Environment values, prefixed by `MR` in Monorepo mode.
+uppercased Service, optional non-default Stack, and Environment values, prefixed
+by `MR` in Monorepo mode.
 The immediately preceding Service-less transition names remain migration-only
 identities. If either naming contract changes, update migration lookups,
 artifact aliases, tests, and documentation together.
@@ -253,7 +267,7 @@ uses `buildMonorepoPipelineYaml` and creates these files on generated-repository
 
 | Path | Update rule |
 | --- | --- |
-| `/<project>-<repo>-MR-<Branch>To<ENV>.yml` | Reconciled on every generator run |
+| `/<project>-<repo>-MR-<service>[-<stack>]-<Branch>To<ENV>.yml` | Reconciled on every generator run |
 | `/.devops/deployments.yml` | Created only when missing; later edits are preserved |
 
 The generated YAML imports `monorepo/pipeline.yml@SharedTemplatesRepo`; that
@@ -263,8 +277,8 @@ not receive a Runner or Dockerfile; the generic static/BFF Dockerfiles remain in
 SharedTemplates.
 
 The generated MR runtime is merged into
-`<Project>_Docker_DevOps:/<environment>_<project>/compose.yml@main`, the same
-GitOps Compose used by ordinary project services. The central template upserts
+`<Project>_Docker_DevOps:/<environment>[_<stack>]_<project>/compose.yml@main`,
+the same Stack-specific GitOps Compose used by ordinary project services. The central template upserts
 the normal Komodo Repo and partially reconciles the same normal Docker Stack
 linked to that Compose directory/file. Existing Compose services, Stack
 environment values, and unrelated extra arguments are preserved. It
@@ -381,6 +395,8 @@ REST responses to assert that:
   ownership ensure pure role names outrank names with extra qualifiers across
   multiple frontend/backend aliases (including joined forms), and lower-priority
   reruns cannot reclaim `/` or `/api/`;
+- editable Stack normalization/discovery, default-name compatibility, custom
+  Compose/Nginx directories, Pipeline/Release/Image/Container/Komodo isolation;
 - Docker/Nginx DevOps repository names, Compose/shared-Nginx paths, project
   hostname, service route, ports, WebSocket headers, and certificate paths
   follow the documented semantic frontend/backend/variant convention, including
@@ -390,8 +406,8 @@ REST responses to assert that:
   and a no-URI-slash proxy target so the request URI is preserved; root is
   ordered last and older managed paths/targets/generated rewrites are migrated
   while only a missing Location is inserted;
-- Pipeline name exactly equals the Service-aware Branch-to-Environment transition YAML filename;
-- normal Release name contains uppercased Service and Environment, while MR also has the `MR` prefix;
+- Pipeline name exactly equals the Service/Stack-aware Branch-to-Environment transition YAML filename;
+- normal Release name contains uppercased Service, optional Stack, and Environment, while MR also has the `MR` prefix;
 - an existing byte-identical YAML file is read and reused without a Git Push or
   no-op commit;
 - a sparse exact-name Pipeline reference is resolved through the complete Build
@@ -678,7 +694,8 @@ During the browser test:
 2. confirm the generator is either a modal or the Pipeline Generator Hub under
    Azure Repos, never a separate browser tab;
 3. verify project, source repository, source branch, target repository, and
-   inferred form values, including the dynamically loaded deployment targets;
+   inferred form values, including the dynamically loaded deployment targets and
+   `default` plus any discovered Stack suggestions;
 4. confirm the generator obtained a Bearer host token through its in-frame SDK
    handshake without asking for a PAT;
 5. submit once and record the five status transitions;
@@ -696,8 +713,9 @@ verification.
 After the test, read back and compare:
 
 - exact YAML path and branch;
-- Docker/Nginx DevOps repositories and selected Environment Compose/Nginx
-  starter files; confirm no root `/environments` file was generated;
+- Docker/Nginx DevOps repositories and selected Environment/Stack
+  Compose/Nginx starter files; confirm custom Stack directories and that no root
+  `/environments` file was generated;
 - Pipeline ID, name, folder, repository ID, default branch, and YAML path;
 - classic Build Definition `process.yamlFilename`;
 - Release ID/name/folder, artifact Pipeline and repository IDs;

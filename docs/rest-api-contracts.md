@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.67
+This document is the integration contract between Pipeline Generator 0.1.69
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 
@@ -132,7 +132,7 @@ All calls send the Bearer and redirect-suppression headers.
 | Read one repository | `GET {project}/_apis/git/repositories/{repo}` | `6.0` | Fallback source-repository name lookup |
 | Read environments | `GET /ShonizCollection/SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/pipeline-generator.yml...` | `6.0` | Always target the central sibling collection with the same-origin browser session and no `Authorization` header, then validate non-empty Environment name/domain records from `main`; legacy `servers` entries are ignored |
 | Read Komodo credentials | `GET /ShonizCollection/SharedTemplates/_apis/git/repositories/SharedTemplates/items?path=/komodo-servers-creds.env...` | `6.0` | Always target the central sibling collection with the same-origin browser session and no `Authorization` header, then validate `KOMODO_ADDRESS`, `KOMODO_API_KEY`, and `KOMODO_API_SECRET` from `main` |
-| Ensure support repositories | List/create repository plus refs, items, pushes, and repository PATCH under the current project | `6.0` | Create/reuse Docker/Nginx DevOps repositories, add missing bootstrap files, merge only absent service Locations into the shared Nginx file, and set `main` |
+| Ensure support repositories | List/create repository plus refs, items, pushes, and repository PATCH under the current project | `6.0` | Always create/reuse Docker DevOps; create/reuse Nginx DevOps and merge its managed Location only for an Environment name configured in the central list; set `main` on repositories used by the run |
 | List agent queues | `GET {project}/_apis/distributedtask/queues` | `6.0` | Populate Pool options and resolve Release queue ID |
 | Resolve Release Variable Group | `GET {project}/_apis/distributedtask/variablegroups?groupName=KomodoAPI&actionFilter=Use` | `7.1` | Find the exact group, validate required variable names, and retain only its numeric ID |
 | List Docker Registry endpoints | `GET {project}/_apis/serviceendpoint/endpoints?type=dockerregistry&projectIds=...` | `6.0` | Populate registry service options |
@@ -172,6 +172,17 @@ accepts `"dev:bulutdev.ir"` as a migration-only compact value. The selected
 name remains the Pipeline/Release Environment value; its paired domain renders
 the Nginx starter. `projects_root` remains accepted as legacy environment metadata
 but immutable Monorepo Compose/Release does not use it.
+The Environment control also accepts a custom safe path-segment value. If it
+does not match a configured name case-insensitively, that value still flows
+to Pipeline, Release, and Compose contracts, while every Nginx repository/file
+operation is omitted.
+
+Stack is an independent safe path/resource segment. `default` omits the Stack
+segment and preserves existing identities. A custom value such as `worker`
+changes the Compose path to `/<environment>_<stack>_<project>/compose.yml`
+and, for a configured Environment, the Nginx path to
+`/<environment>_<stack>/<project>-<environment>.conf`. The same value is
+included in Pipeline/Release, image/container, and Komodo identities.
 
 The project display name has whitespace removed and is lowercased for runtime
 resource names. For project `Locanit`, service `api`, Environment `dev`, and
@@ -196,7 +207,7 @@ numeric `v2`/`version2`/`ver2`/`r2` form) moves a frontend to
 `/<variant>/` and a backend to `/api/<variant>/`; for example `UI_V2` becomes
 `/v2/` and `BACK_v2` becomes `/api/v2/`. Every non-root route proxies without
 a URI slash or rewrite, preserving the original request URI. Compose is Git-added only when absent. Nginx uses one
-`/<environment>/<project>-<environment>.conf` per project/Environment. On each
+`/<environment>[_<stack>]/<project>-<environment>.conf` per project/Environment/Stack. On each
 run the browser first ranks visible repositories for base-route ownership. An
 exact repository/project name match is the preferred frontend owner of `/`;
 then a generic semantic-specificity score prefers a pure recognized role name,
@@ -302,9 +313,11 @@ The UI currently does not return or persist the push response; downstream
 provisioning relies on the POST completing successfully and on the server being
 able to resolve the new path immediately.
 
-The Docker and Nginx support repositories use the same Git push contract. A
-missing `main` branch receives one initial commit containing the selected
-Environment's Compose plus adjacent `.env`, or the shared Nginx starter. On an
+The Docker and Nginx support repositories use the same Git push contract, but
+Nginx is absent from the operation set for a custom Environment. A missing
+main branch receives one initial commit containing the selected Environment's
+Compose plus adjacent `.env`, or, for a configured Environment, the shared
+Nginx starter in the Stack-specific directory. On an
 existing branch, the UI reads the exact starter-file paths. Monorepo
 `compose.yml` and `.env` are add-or-semantic-edit only for their managed
 service blocks/tag keys. The shared Nginx file is add-or-semantic-edit: only a missing
@@ -440,7 +453,8 @@ header in a process argument.
 
 The browser reconciles Releases rather than treating any same-name definition
 as final. It first searches the desired exact name
-`<UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>`; if absent, it inspects expanded
+`<UPPERCASE-SERVICE> [<UPPERCASE-STACK>] <UPPERCASE-ENVIRONMENT>`;
+the Stack segment is omitted for `default`. If absent, it inspects expanded
 Build artifacts filtered by `artifactType=Build` and
 `artifactSourceId=<projectId>:<pipelineId>` for a legacy definition that
 references the same Pipeline ID.
@@ -450,7 +464,8 @@ and reconciled. Historical unrelated definitions are never deleted
 automatically.
 
 MR uses the exact desired name
-`MR <UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>`. This prevents two Services
+`MR <UPPERCASE-SERVICE> [<UPPERCASE-STACK>] <UPPERCASE-ENVIRONMENT>`;
+the Stack segment is omitted for `default`. This prevents two Services
 from the same repository, branch, and Environment from sharing a Release
 definition. The same Pipeline-artifact fallback reconciles an earlier
 Service-less `MR <ENVIRONMENT>` definition in place when applicable.
@@ -479,8 +494,9 @@ repository. During Build, the central template uses Komodo `/read` and `/write`
 to create/update:
 
 - a Repo configured for that exact private ADO Git repository and `main`;
-- the same project/Environment Docker Stack used by ordinary services, linked
-  to that Repo with `files_on_host: false`, the shared Compose directory as
+- the same project/Environment/Stack Docker Stack used by ordinary services,
+  named `<Project>_Docker_DevOps-<environment>[-<stack>]` and linked to that
+  Repo with `files_on_host: false`, the Stack-specific Compose directory as
   `run_directory`, and `file_paths: ["compose.yml"]`. Updates are partial and
   reconcile the optional BFF Profile without replacing
   unrelated Stack configuration.
@@ -501,8 +517,8 @@ The Komodo resource/action calls use the normal 1.19.5 typed envelopes:
 
 ```json
 {"type":"CreateRepo","params":{"name":"...","config":{"server_id":"...","repo":"...","branch":"main","path":"..."}}}
-{"type":"CreateStack","params":{"name":"<Project>_Docker_DevOps-<env>","config":{"linked_repo":"...","run_directory":"...","file_paths":["compose.yml"],"files_on_host":false}}}
-{"type":"DeployStack","params":{"stack":"<Project>_Docker_DevOps-<env>"}}
+{"type":"CreateStack","params":{"name":"<Project>_Docker_DevOps-<env>[-<stack>]","config":{"linked_repo":"...","run_directory":"<env>[_<stack>]_<project>","file_paths":["compose.yml"],"files_on_host":false}}}
+{"type":"DeployStack","params":{"stack":"<Project>_Docker_DevOps-<env>[-<stack>]"}}
 {"type":"GetUpdate","params":{"id":"<update-id>"}}
 ```
 

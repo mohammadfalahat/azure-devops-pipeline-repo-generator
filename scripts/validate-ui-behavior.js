@@ -28,12 +28,20 @@ const instrumented = source.replace(
 	    buildLegacyEnvironmentFirstPipelineFilename,
 	    buildPipelineName,
 	    buildReleaseName,
+	    normalizeStackName,
+	    isDefaultStack,
+	    buildComposeDirectory,
+	    buildNginxDirectory,
+	    extractProjectStacks,
+	    fetchProjectStacks,
+	    buildMonorepoKomodoResourceNames,
 	    normalizeGeneratorMode,
 	    applyModePresentation,
 	    getPipelineFolder,
 	    getReleaseConfig,
 	    buildMonorepoDeploymentContract,
 	    buildMonorepoPipelineYaml,
+	    buildPipelineYaml,
 	    buildMonorepoSupportRepositorySpecs,
 	    buildMonorepoComposeSample,
 	    mergeMonorepoComposeServices,
@@ -118,13 +126,33 @@ const environment = element({
   value: '',
   options: []
 });
+const environmentOptions = element({
+  options: []
+});
+const stack = element({
+  value: 'default',
+  options: []
+});
+const stackOptions = element({
+  options: []
+});
+const nginxResultItem = element({
+  classList: {
+    toggle(name, force) {
+      nginxResultItem.className = force ? name : '';
+    }
+  }
+});
 const elements = new Map([
   ['branch-label', element()],
   ['page-title', element()],
   ['form-hint', element()],
   ['branch', element()],
   ['environment', environment],
+  ['environment-options', environmentOptions],
   ['pool', element()],
+  ['stack', stack],
+  ['stack-options', stackOptions],
   ['service', element()],
   ['containerRegistryService', element()],
   ['repositoryAddress', element()],
@@ -138,6 +166,7 @@ const elements = new Map([
   ['authorize-extension', element()],
   ['reauthenticate', element()],
   ['completion-panel', element({ className: 'completion-panel hidden' })],
+  ['nginx-result-item', nginxResultItem],
   ['nginx-result-link', element()],
   ['compose-result-link', element()],
   ['pipeline-result-link', element()],
@@ -250,6 +279,74 @@ assert.strictEqual(previousEnvironmentFirstFilename, 'ridesharing-ridesharing_ba
 assert.strictEqual(legacyFilename, 'ridesharing-ridesharing_backend-feature-definezones.yml');
 assert.strictEqual(hooks.buildPipelineName(filename), filename);
 assert.strictEqual(hooks.buildReleaseName({ service: 'api', environment: 'demo' }), 'API DEMO');
+assert.strictEqual(hooks.normalizeStackName(' Worker Stack '), 'worker-stack');
+assert.strictEqual(hooks.isDefaultStack('DEFAULT'), true);
+assert.strictEqual(
+  hooks.buildComposeDirectory({ environment: 'pro', stack: 'default', projectName: 'Ride Sharing' }),
+  'pro_ridesharing'
+);
+assert.strictEqual(
+  hooks.buildComposeDirectory({ environment: 'pro', stack: 'worker', projectName: 'Ride Sharing' }),
+  'pro_worker_ridesharing'
+);
+assert.strictEqual(hooks.buildNginxDirectory({ environment: 'pro' }), 'pro');
+assert.strictEqual(hooks.buildNginxDirectory({ environment: 'pro', stack: 'worker' }), 'pro_worker');
+const workerFilename = hooks.buildPipelineFilename({
+  projectName: 'RideSharing',
+  repositoryName: 'RideSharing_Backend',
+  service: 'api',
+  environment: 'pro',
+  stack: 'worker',
+  branchName: 'main'
+});
+assert.strictEqual(workerFilename, 'ridesharing-ridesharing_backend-api-worker-MainToPRO.yml');
+assert.strictEqual(
+  hooks.buildReleaseName({ service: 'api', environment: 'pro', stack: 'worker' }),
+  'API WORKER PRO'
+);
+assert.deepStrictEqual(
+  { ...hooks.buildMonorepoKomodoResourceNames({ compactProject: 'RideSharing', environment: 'pro' }) },
+  { repository: 'RideSharing_Docker_DevOps-pro', stack: 'RideSharing_Docker_DevOps-pro' }
+);
+assert.deepStrictEqual(
+  { ...hooks.buildMonorepoKomodoResourceNames({ compactProject: 'RideSharing', environment: 'pro', stack: 'worker' }) },
+  { repository: 'RideSharing_Docker_DevOps-pro-worker', stack: 'RideSharing_Docker_DevOps-pro-worker' }
+);
+assert.deepStrictEqual(
+  Array.from(hooks.extractProjectStacks({
+    projectName: 'RideSharing',
+    environments: ['demo', 'pro'],
+    items: [
+      { isFolder: true, path: '/pro_ridesharing' },
+      { isFolder: true, path: '/pro_worker_ridesharing' },
+      { isFolder: true, path: '/demo_jobs_ridesharing' },
+      { isFolder: true, path: '/sandbox_batch_ridesharing' },
+      { isFolder: true, path: '/pro_worker_ridesharing/nested' },
+      { isFolder: false, path: '/pro_fake_ridesharing' }
+    ]
+  })),
+  ['default', 'batch', 'jobs', 'worker']
+);
+const workerCompose = hooks.buildComposeSample({
+  projectKey: 'ridesharing',
+  serviceKey: 'api',
+  environment: 'pro',
+  stack: 'worker',
+  repositoryAddress: 'registry.buluttakin.com'
+});
+assert(workerCompose.includes('container_name: ridesharing_api_worker_pro'));
+assert(workerCompose.includes('image: registry.buluttakin.com/ridesharing/api-worker-pro:${IMAGE_TAG:-CHANGE_ME}'));
+const workerPipelineYaml = hooks.buildPipelineYaml({
+  pool: 'PublishDockerAgent',
+  service: 'api',
+  environment: 'pro',
+  stack: 'worker',
+  dockerfileDir: '.',
+  repositoryAddress: 'registry.buluttakin.com',
+  containerRegistryService: 'BulutReg',
+  komodoServer: 'Production-192.168.62.20'
+}, { sourceBranch: 'main', rawProjectName: 'RideSharing', rawRepositoryName: 'RideSharing_Backend' });
+assert(workerPipelineYaml.includes("stack: 'worker'"));
 assert.notStrictEqual(
   hooks.buildReleaseName({ service: 'api', environment: 'demo' }),
   hooks.buildReleaseName({ service: 'worker', environment: 'demo' })
@@ -350,6 +447,25 @@ assert.strictEqual(
   }),
   'ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEV.yml'
 );
+const workerMonorepoYaml = hooks.buildMonorepoPipelineYaml(
+  {
+    pool: 'PublishDockerAgent',
+    service: 'frontend',
+    environment: 'pro',
+    stack: 'worker',
+    komodoServer: 'Production-192.168.62.20',
+    repositoryAddress: 'registry.buluttakin.com',
+    containerRegistryService: 'BulutReg'
+  },
+  { sourceBranch: 'main', rawProjectName: 'RideSharing', rawRepositoryName: 'RideSharing_FrontEnd' }
+);
+assert.doesNotThrow(() => yaml.load(workerMonorepoYaml));
+assert(workerMonorepoYaml.includes("stack: 'worker'"));
+assert(workerMonorepoYaml.includes("composePath: '/pro_worker_ridesharing/compose.yml'"));
+assert(workerMonorepoYaml.includes("komodoStack: 'RideSharing_Docker_DevOps-pro-worker'"));
+assert(workerMonorepoYaml.includes("staticContainer: 'ridesharing_frontend_worker_pro'"));
+assert(workerMonorepoYaml.includes("bffContainer: 'ridesharing_frontend_bff_worker_pro'"));
+assert(workerMonorepoYaml.includes("bffProfile: 'mr-frontend-worker-bff'"));
 assert.strictEqual(
   hooks.buildPipelineFilename({
     projectName: 'Locanit',
@@ -476,6 +592,73 @@ assert.deepStrictEqual(
     }
   ]
 );
+const customEnvironmentSpecs = hooks.buildSupportRepositorySpecs({
+  projectName: '180 Feedback',
+  environment: 'sandbox',
+  service: 'api',
+  repositoryAddress: 'registry.buluttakin.com',
+  includeNginx: false
+});
+assert.deepStrictEqual(Array.from(customEnvironmentSpecs, (item) => item.kind), ['docker']);
+assert.strictEqual(
+  customEnvironmentSpecs[0].filePath,
+  '/sandbox_180feedback/compose.yml'
+);
+assert(!customEnvironmentSpecs.some((item) => item.kind === 'nginx'));
+const customMonorepoEnvironmentSpecs = hooks.buildMonorepoSupportRepositorySpecs({
+  projectName: '180 Feedback',
+  environment: 'sandbox',
+  service: 'frontend',
+  repositoryAddress: 'registry.buluttakin.com',
+  includeNginx: false
+});
+assert.deepStrictEqual(
+  Array.from(customMonorepoEnvironmentSpecs, (item) => item.kind),
+  ['docker']
+);
+assert(!customMonorepoEnvironmentSpecs.some((item) => item.kind === 'nginx'));
+const workerSpecs = hooks.buildSupportRepositorySpecs({
+  projectName: '180 Feedback',
+  environment: 'pro',
+  domain: 'bulut.ir',
+  stack: 'worker',
+  service: 'api',
+  repositoryAddress: 'registry.buluttakin.com'
+});
+assert.deepStrictEqual(Array.from(workerSpecs, (item) => item.kind), ['docker', 'nginx']);
+assert.strictEqual(workerSpecs[0].filePath, '/pro_worker_180feedback/compose.yml');
+assert(workerSpecs[0].content.includes('container_name: 180feedback_api_worker_pro'));
+assert(workerSpecs[0].content.includes('image: registry.buluttakin.com/180feedback/api-worker-pro:${IMAGE_TAG:-CHANGE_ME}'));
+assert.strictEqual(workerSpecs[1].directory, 'pro_worker');
+assert.strictEqual(workerSpecs[1].filePath, '/pro_worker/180feedback-pro.conf');
+assert(workerSpecs[1].content.includes('set              $target            180feedback_api_worker_pro;'));
+const workerUiSpecs = hooks.buildSupportRepositorySpecs({
+  projectName: '180 Feedback',
+  environment: 'pro',
+  domain: 'bulut.ir',
+  stack: 'worker',
+  service: 'ui',
+  repositoryAddress: 'registry.buluttakin.com'
+});
+const mergedWorkerNginx = workerUiSpecs[1].mergeExisting(workerSpecs[1].content);
+assert(mergedWorkerNginx.includes('set              $target            180feedback_api_worker_pro;'));
+assert(mergedWorkerNginx.includes('set              $target            180feedback_ui_worker_pro;'));
+assert.strictEqual(workerUiSpecs[1].mergeExisting(mergedWorkerNginx), mergedWorkerNginx);
+
+const workerMonorepoSpecs = hooks.buildMonorepoSupportRepositorySpecs({
+  projectName: '180 Feedback',
+  environment: 'pro',
+  domain: 'bulut.ir',
+  stack: 'worker',
+  service: 'frontend',
+  repositoryAddress: 'registry.buluttakin.com'
+});
+assert.deepStrictEqual(Array.from(workerMonorepoSpecs, (item) => item.kind), ['docker', 'nginx']);
+assert.strictEqual(workerMonorepoSpecs[0].filePath, '/pro_worker_180feedback/compose.yml');
+assert.strictEqual(workerMonorepoSpecs[1].filePath, '/pro_worker/180feedback-pro.conf');
+assert(workerMonorepoSpecs[1].content.includes('set              $target            180feedback_frontend_worker_pro;'));
+assert(workerMonorepoSpecs[1].content.includes('set              $target            180feedback_frontend_bff_worker_pro;'));
+
 const monorepoSpecs = hooks.buildMonorepoSupportRepositorySpecs({
   projectName: '180 Feedback',
   environment: 'demo',
@@ -1275,6 +1458,36 @@ const run = async () => {
   assert.strictEqual(navigationState.branch, 'feature/defineZones');
   assert.strictEqual(navigationState.projectId, projectId);
 
+  const stackDiscoveryUrls = [];
+  context.fetch = async (url) => {
+    stackDiscoveryUrls.push(url);
+    if (url.includes('/_apis/git/repositories?')) {
+      return response({ body: { value: [{ id: 'docker-repo', name: 'RideSharing_Docker_DevOps' }] }, url });
+    }
+    if (url.includes('/repositories/docker-repo/items?')) {
+      return response({
+        body: {
+          value: [
+            { isFolder: true, path: '/pro_ridesharing' },
+            { isFolder: true, path: '/pro_worker_ridesharing' }
+          ]
+        },
+        url
+      });
+    }
+    throw new Error(`Unexpected Stack discovery request: ${url}`);
+  };
+  const discoveredStacks = await hooks.fetchProjectStacks({
+    hostUri,
+    projectId,
+    projectName: 'RideSharing',
+    accessToken: 'test-token',
+    environments: ['demo', 'pro']
+  });
+  assert.deepStrictEqual(Array.from(discoveredStacks), ['default', 'worker']);
+  assert(stackDiscoveryUrls.some((url) => url.includes('recursionLevel=OneLevel')));
+  assert(stackDiscoveryUrls.some((url) => url.includes('versionDescriptor.version=main')));
+
   let navigatedTo;
   hooks.state.hostUri = hostUri;
   hooks.state.accessToken = 'extension-session-token';
@@ -1457,7 +1670,7 @@ KOMODO_API_SECRET="synthetic-read-secret"
     'nginx-net'
   );
 
-  environment.options = [];
+  environmentOptions.options = [];
   elements.get('komodoServer').options = [];
   context.fetch = async (url) => {
     if (url.includes('path=%2Fkomodo-servers-creds.env')) {
@@ -1490,6 +1703,8 @@ KOMODO_API_SECRET="synthetic-read-secret"
     branch: 'feature/qa'
   });
   assert.strictEqual(environment.value, 'qa');
+  assert.deepStrictEqual(Array.from(environmentOptions.options, (option) => option.value), ['demo', 'qa']);
+  assert.strictEqual(environment.placeholder, 'Choose or enter an Environment');
   assert.strictEqual(elements.get('komodoServer').value, 'QA-192.168.62.153');
   assert.strictEqual(hooks.state.deploymentTargetsReady, true);
 
@@ -1563,6 +1778,7 @@ KOMODO_API_SECRET="synthetic-read-secret"
     supportRepositories: supportResults,
     pipelineDefinition: { id: 344, name: filename }
   });
+  assert.strictEqual(nginxResultItem.className, '');
   assert(elements.get('nginx-result-link').href.includes('/RideSharing/_git/RideSharing_Nginx_DevOps?'));
   assert(elements.get('nginx-result-link').href.includes('path=%2Fdemo%2Fridesharing-demo.conf'));
   assert(elements.get('compose-result-link').href.includes('path=%2Fdemo_ridesharing%2Fcompose.yml'));
@@ -1573,6 +1789,12 @@ KOMODO_API_SECRET="synthetic-read-secret"
   assert.strictEqual(hooks.state.provisioningComplete, true);
   assert.strictEqual(form.hidden, true);
   assert.strictEqual(submitButton.disabled, true);
+  hooks.showCompletionLinks({
+    supportRepositories: supportResults.filter((result) => result.kind === 'docker'),
+    pipelineDefinition: { id: 345, name: 'custom-environment-pipeline' }
+  });
+  assert.strictEqual(nginxResultItem.className, 'hidden');
+
 
   const existingSupportCalls = [];
   context.fetch = async (url, options = {}) => {

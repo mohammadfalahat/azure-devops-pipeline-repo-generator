@@ -6,7 +6,7 @@ creates or reuses a project-level repository, writes a generated YAML file,
 registers a YAML Pipeline that points to that file, and creates a classic
 Release definition that consumes the Pipeline as a Build artifact.
 
-The manifest version documented here is **0.1.67**. The manifest targets Azure
+The manifest version documented here is **0.1.69**. The manifest targets Azure
 DevOps Services and Azure DevOps Server range `[16.0,20.0)`. The complete live
 workflow has been verified on the documented on-premises Server environment;
 the Azure DevOps Services Release API route still requires a separate
@@ -23,19 +23,19 @@ selected source repository + branch
         | resolves nginx-net or nginx-network on the selected Docker host
         | ensures <ProjectName>_Docker_DevOps and <ProjectName>_Nginx_DevOps
         |
-        | generates a Branch-to-Environment-specific YAML document
+        | generates a Service/Stack/Branch-to-Environment-specific YAML document
         v
 <ProjectName>_Azure_DevOps @ main
         |
         | YAML configuration points to this repository and file
         v
 YAML Pipeline in \komodo
-        | name: <project>-<repository>-<Branch>To<ENVIRONMENT>.yml
+        | name: <project>-<repository>-<service>[-<stack>]-<Branch>To<ENVIRONMENT>.yml
         |
         | primary Build artifact
         v
 Classic Release definition in \komodo
-        | name: <SERVICE> <ENVIRONMENT> (for example API DEMO)
+        | name: <SERVICE> [<STACK>] <ENVIRONMENT> (for example API WORKER PRO)
         | links project Variable Group KomodoAPI
         |
         v
@@ -48,8 +48,8 @@ one agent-based Bash@3 deployment job with packaged wrapper stored Inline
 the normal generator unchanged:
 
 - one Pipeline named
-  `<project>-<repository>-MR-<service>-<Branch>To<ENVIRONMENT>.yml` under `\komodo\MR`;
-- one classic Release named `MR <SERVICE> <ENVIRONMENT>` under `\komodo\MR`;
+  `<project>-<repository>-MR-<service>[-<stack>]-<Branch>To<ENVIRONMENT>.yml` under `\komodo\MR`;
+- one classic Release named `MR <SERVICE> [<STACK>] <ENVIRONMENT>` under `\komodo\MR`;
 - an automatically created `/.devops/deployments.yml` project contract, with
   the shared `monorepo/pipeline.yml` and `monorepo/mr-build.cjs` loaded from
   `ShonizCollection/SharedTemplates`; the same template packages the central
@@ -72,8 +72,8 @@ the normal generator unchanged:
   image, overlay successful affected outputs, retain failed/unaffected outputs,
   and push a new tag. The BFF is rebuilt only when affected and otherwise keeps
   its prior tag. The central Pipeline template creates or updates a Komodo Repo linked to the
-  ADO Docker repository and partially reconciles the same project/Environment
-  Stack used by ordinary services. Existing Stack settings and existing
+  ADO Docker repository and partially reconciles the same project/Environment/Stack
+  identity used by ordinary services. Existing Stack settings and existing
   Compose services are retained. Stable Compose image fields reference
   service-specific variables such as `${front_monorepo}` and
   `${front_monorepo_bff}`; the adjacent tracked `.env` owns the immutable tags.
@@ -142,16 +142,18 @@ Pipeline run and does not create a Release instance.
   `<ProjectName>_Azure_DevOps`.
 - The **Docker DevOps repository** is named
   `<ProjectNameWithoutSpaces>_Docker_DevOps` and receives
-  `<environment>_<lowercase-project-without-spaces>/compose.yml`; Monorepo mode
-  also ensures the adjacent `.env` used for managed immutable image tags. Its starter
-  service/container is `<project>_<service>_<environment>` and exposes port 80
+  `<environment>[_<stack>]_<lowercase-project-without-spaces>/compose.yml`; the
+  Stack segment is omitted for `default`. Monorepo mode also ensures the adjacent
+  `.env` used for managed immutable image tags. Its starter service/container is
+  `<project>_<service>[_<stack>]_<environment>` and exposes port 80
   for UI/frontend services or 8080 for backend and other services. Its external Nginx
   network is resolved from the selected Komodo Server and may be either
   `nginx-network` or `nginx-net`; the Compose network's explicit `name` maps
   preserved logical service references to the actual host network.
 - The **Nginx DevOps repository** is named
   `<ProjectNameWithoutSpaces>_Nginx_DevOps` and receives
-  `<environment>/<lowercase-project>-<environment>.conf`. Its host is
+  `<environment>[_<stack>]/<lowercase-project>-<environment>.conf`; the Stack
+  segment is omitted for `default`. Its host is
   `<lowercase-sanitized-project>.<environment-domain>`. UI/frontend indicators
   (`ui`, `front`, `frontend`, `web`, `client`, and similar aliases) use `/`,
   while backend/API indicators (`api`, `back`, `backend`, `server`, and similar
@@ -185,8 +187,9 @@ Pipeline run and does not create a Release instance.
 - The Pipeline display name is exactly the generated YAML filename, including
   its `.yml` suffix. This makes the file/Pipeline relationship visible and
   keeps different source branches independently named.
-- The classic Release display name contains only the uppercased Service and
-  Environment form values, for example `UI DEMO` or `API PRO`.
+- The classic Release display name contains the uppercased Service, optional
+  non-default Stack, and Environment values, for example `UI DEMO` or
+  `API WORKER PRO`.
 
 ## Documentation map
 
@@ -314,9 +317,18 @@ environments:
     domain: bulutdev.ir
 ```
 
-Every environment requires a valid domain; the compact legacy value
-`"dev:bulutdev.ir"` is accepted for migration. Any legacy `servers:` list is
-ignored by the form. To load Komodo Server choices, the extension reads
+Every configured environment requires a valid domain; the compact legacy value
+`"dev:bulutdev.ir"` is accepted for migration. The form also accepts a custom
+safe Environment value. Custom values are used by Pipeline, Release, and Compose
+generation, but because they have no configured domain the extension performs no
+Nginx repository or configuration operation for them. Stack is also an editable
+datalist and defaults to `default`, which preserves all legacy names. Existing
+non-default Stack suggestions are discovered from top-level Docker DevOps
+directories. A new value such as `worker` isolates the Compose directory,
+Nginx directory (for configured Environments), Pipeline/Release identities,
+container/image names, and Komodo Repo/Stack resources. Any legacy `servers:`
+list is ignored by the form. To load Komodo Server choices, the extension
+reads
 `ShonizCollection/SharedTemplates/SharedTemplates:/komodo-servers-creds.env@main`,
 calls Komodo
 1.19.x `ListFullServers` directly, filters strictly on

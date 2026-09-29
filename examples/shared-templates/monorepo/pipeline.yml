@@ -7,6 +7,10 @@ parameters:
     type: string
   - name: environment
     type: string
+  - name: stack
+    type: string
+    default: default
+
   - name: komodoServer
     type: string
   - name: staticContainer
@@ -95,6 +99,7 @@ stages:
               MR_PROJECT_KEY: ${{ parameters.projectKey }}
               MR_SERVICE_KEY: ${{ parameters.serviceKey }}
               MR_ENVIRONMENT: ${{ parameters.environment }}
+              MR_STACK: ${{ parameters.stack }}
               MR_STATIC_CONTAINER: ${{ parameters.staticContainer }}
               MR_BFF_CONTAINER: ${{ parameters.bffContainer }}
               MR_COMPOSE_REPOSITORY: ${{ parameters.composeRepository }}
@@ -112,8 +117,9 @@ stages:
                 registry="${registry#http://}"
                 registry="${registry#https://}"
                 case "$registry" in (*/*|*[!a-z0-9.:-]*|'') echo "##[error] Unsafe Registry address"; exit 3;; esac
-                static_repository="${registry}/${MR_PROJECT_KEY}/${MR_SERVICE_KEY}-${MR_ENVIRONMENT}"
-                bff_repository="${registry}/${MR_PROJECT_KEY}/${MR_SERVICE_KEY}-bff-${MR_ENVIRONMENT}"
+                case "$MR_STACK" in (''|default) stack_suffix='' ;; (*[!a-z0-9._-]*) echo "##[error] Unsafe Stack"; exit 3;; (*) stack_suffix="-${MR_STACK}";; esac
+                static_repository="${registry}/${MR_PROJECT_KEY}/${MR_SERVICE_KEY}${stack_suffix}-${MR_ENVIRONMENT}"
+                bff_repository="${registry}/${MR_PROJECT_KEY}/${MR_SERVICE_KEY}-bff${stack_suffix}-${MR_ENVIRONMENT}"
                 case "$static_repository" in (*[!a-z0-9./:_-]*|'') echo "##[error] Unsafe static image repository"; exit 3;; esac
                 case "$bff_repository" in (*[!a-z0-9./:_-]*|'') echo "##[error] Unsafe BFF image repository"; exit 3;; esac
 

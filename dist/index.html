@@ -26,7 +26,7 @@
     <section class="panel" id="pipeline-section">
       <p class="hint" id="form-hint">
         Fill the fields below, then generate the pipeline. The generator will push the template,
-        ensure the project Docker/Nginx DevOps repositories and starter files, register the YAML pipeline
+        ensure the project Docker DevOps files and configured-Environment Nginx files, register the YAML pipeline
         in <code>\komodo</code>, and create its classic Release definition. It will then show review links without
         running or redirecting to the Pipeline.
       </p>
@@ -66,10 +66,34 @@
         </div>
         <div class="field">
           <label for="environment">Environment</label>
-          <select id="environment" name="environment" required disabled>
-            <option value="" selected>Loading from pipeline-generator.yml...</option>
-          </select>
-          <small>Environment names and domains are loaded from ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml; the name is auto-detected from the branch when possible.</small>
+          <input
+            id="environment"
+            name="environment"
+            list="environment-options"
+            placeholder="Loading from pipeline-generator.yml..."
+            autocomplete="off"
+            aria-describedby="environment-help"
+            required
+            disabled
+          />
+          <datalist id="environment-options"></datalist>
+          <small id="environment-help">Choose a configured Environment or enter a custom value. Custom values are used for Pipeline, Release, and Compose generation, but no Nginx configuration is created for them.</small>
+        </div>
+        <div class="field">
+          <label for="stack">Stack</label>
+          <input
+            id="stack"
+            name="stack"
+            list="stack-options"
+            value="default"
+            autocomplete="off"
+            aria-describedby="stack-help"
+            required
+          />
+          <datalist id="stack-options">
+            <option value="default"></option>
+          </datalist>
+          <small id="stack-help">Use default to keep the existing names. Enter another Stack, such as worker, to create isolated Compose and Nginx folders and distinct Pipeline, Release, container/image, and Komodo names. Nginx is created only for configured Environments.</small>
         </div>
         <div class="field" id="dockerfile-field">
           <label for="dockerfileDir">Dockerfile directory</label>
@@ -113,7 +137,7 @@
         <h2 id="completion-title">Review generated files before running the pipeline</h2>
         <p id="completion-hint">The files are only starter templates. Review and edit them, then open and run the Pipeline once.</p>
         <ul>
-          <li><a id="nginx-result-link" target="_blank" rel="noopener noreferrer">Review Nginx configuration</a></li>
+          <li id="nginx-result-item"><a id="nginx-result-link" target="_blank" rel="noopener noreferrer">Review Nginx configuration</a></li>
           <li><a id="compose-result-link" target="_blank" rel="noopener noreferrer">Review Docker compose.yml</a></li>
           <li id="contract-result-item" class="hidden"><a id="contract-result-link" target="_blank" rel="noopener noreferrer">Review Monorepo deployment contract</a></li>
           <li><a id="pipeline-result-link" target="_blank" rel="noopener noreferrer">Open Pipeline</a></li>

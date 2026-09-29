@@ -8,7 +8,7 @@ Latest installed live execution observed: **0.1.62 Build and Release success on 
 
 Latest user-reported live failure: **Build 15247, HTTP 500 `Stack busy`, 2026-08-27**
 
-Current local candidate awaiting packaging and installation: **0.1.67**
+Current local candidate awaiting packaging and installation: **0.1.69**
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -21,11 +21,40 @@ No credentials belong in either file. Credentials exposed in conversation,
 including PATs and Komodo API credentials, must never be copied into commands,
 documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local candidate — version 0.1.67
+## Current local candidate — version 0.1.69
 
-Version 0.1.67 carries the Service-aware Pipeline/Release identities and the
-0.1.66 bounded retry handling for Komodo's transient `Stack busy` response,
-then adds the locally validated Service-field/Nginx routing correction. A
+Version 0.1.69 adds an editable Stack datalist with `default` selected. Existing
+non-default Stack values are discovered from top-level
+`<Project>_Docker_DevOps` directories, and a new safe value remains writable.
+The default Stack omits its name everywhere and preserves the established
+identities.
+
+A custom Stack such as `worker` creates Compose under
+`/<environment>_worker_<project>/compose.yml` and, when the Environment has a
+configured domain, Nginx under
+`/<environment>_worker/<project>-<environment>.conf`. Normal and Monorepo
+container/image targets, Pipeline and Release names, and Komodo Repo/Stack
+resources also include `worker`. The normal SharedTemplates flow gives the
+custom Nginx Komodo Repo resource a distinct suffix and sparse-checks out the
+Stack-specific Nginx directory, preventing one Stack from retargeting another
+resource. An unlisted custom Environment still produces no Nginx configuration.
+
+Local validation passed: the complete `npm test` suite, custom normal and
+Monorepo Compose/Nginx behavior, default-name compatibility, SharedTemplates
+YAML parsing, Bash syntax, and Monorepo mirror equality. The local
+`/home/falahat/SharedTemplates` changes are not pushed. Version 0.1.69 has not
+been packaged, installed, or live-verified.
+
+## Previous local candidate — version 0.1.68
+
+Version 0.1.68 changes Environment to an editable datalist. Configured values
+retain their paired domain and Nginx generation. A safe custom value continues
+through Pipeline, Release, and Compose generation but creates or updates no
+Nginx repository/file and exposes no Nginx completion link. Normal and
+Monorepo regression tests cover both paths.
+
+The candidate carries the 0.1.67 Service-field/Nginx routing correction and
+the 0.1.66 bounded retry handling for Komodo's transient `Stack busy`. A
 user-provided normal Azure DevOps Build log screenshot showed Build
 15247 fail in `Ensure Komodo GitOps repository and shared Docker Stack` after
 one second because `UpdateStack` returned HTTP 500 `Stack busy`. No secret value
@@ -62,10 +91,8 @@ owns `/api/` ahead of `api_admin`, independent of generation order. Losing
 candidates use their own normalized paths. Reconciliation demotes a previously
 managed lower-priority base route and later lower-priority reruns are byte-stable.
 
-Installed/live status: **pending**. The retry candidate is synchronized locally
-to `/home/falahat/SharedTemplates/monorepo/pipeline.yml` and awaits the user's
-commit/push; the extension has not been packaged, installed, or run against
-Komodo.
+Installed/live status: **not performed**. Version 0.1.68 was not packaged,
+installed, or live-verified and is superseded locally by 0.1.69.
 
 ## Previous local candidate — version 0.1.66
 

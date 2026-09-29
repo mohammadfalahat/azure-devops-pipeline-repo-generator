@@ -296,6 +296,13 @@ if (
   fail('Environment and active Komodo server choices must use dynamic loading placeholders.');
 }
 if (
+  !html.includes('id="stack"') ||
+  !html.includes('list="stack-options"') ||
+  !html.includes('<option value="default"></option>')
+) {
+  fail('Stack must be an editable datalist with default as its initial suggestion.');
+}
+if (
   !html.includes('id="completion-panel"') ||
   !html.includes('tabindex="-1"') ||
   !html.includes('id="nginx-result-link"') ||
@@ -387,6 +394,11 @@ for (const requiredImplementation of [
   'ensureReleaseDefinition',
   'buildMonorepoPipelineYaml',
   'buildMonorepoKomodoResourceNames',
+  'normalizeStackName',
+  'buildComposeDirectory',
+  'buildNginxDirectory',
+  'extractProjectStacks',
+  'fetchProjectStacks',
   'buildMonorepoDeploymentContract',
   'buildMonorepoSupportRepositorySpecs',
   'buildMonorepoComposeSample',
@@ -546,9 +558,9 @@ if (
   !ui.includes('const pipelineName = buildPipelineName(pipelineFilename);') ||
   !ui.includes('const buildLegacyServiceLessPipelineFilename = ({') ||
   !ui.includes('service: payload.service,') ||
-  !ui.includes('${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}-${branchSegment}To${environmentSegment}.yml')
+  !ui.includes('${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}.yml')
 ) {
-  fail('Pipeline filename/name must include Service and retain the Service-less transition migration identity.');
+  fail('Pipeline filename/name must include Service, isolate custom Stacks, and retain the default transition identity.');
 }
 if (
   !ui.includes("project: 'SharedTemplates'") ||
@@ -568,15 +580,21 @@ if (
   !ui.includes('BEGIN PIPELINE-GENERATOR MANAGED ROUTES') ||
   !ui.includes('multiple HTTPS server blocks') ||
   !ui.includes('`/${nginxDirectory}/${projectHost}-${normalizedEnvironment}.conf`') ||
-  !ui.includes('Nginx and Compose files below')
+  !ui.includes('const includeNginx = Boolean(environmentConfig?.domain);') ||
+  !ui.includes('const nginxDirectory = buildNginxDirectory({ environment: normalizedEnvironment, stack });') ||
+  !ui.includes('...(shouldIncludeNginx ? [{') ||
+  !ui.includes('Nginx was skipped because')
 ) {
-  fail('Step 1 must provision the Docker/Nginx repositories and idempotent starter configuration files.');
+  fail(
+    'Step 1 must always provision Compose and must provision idempotent Nginx files only for configured Environments.'
+  );
 }
 if (
-  !ui.includes("return `MR ${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;") ||
-  !ui.includes("return `${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;")
+  !ui.includes("const parts = [normalizePart(service, 'Service name')];") ||
+  !ui.includes("if (!isDefaultStack(normalizedStack)) parts.push(normalizePart(normalizedStack, 'Stack'));") ||
+  !ui.includes("return `MR ${parts.join(' ')}`;")
 ) {
-  fail('Classic Release names must retain Service in both normal and MR modes.');
+  fail('Classic Release names must retain Service and isolate non-default Stacks in normal and MR modes.');
 }
 if (ui.includes('state.repositoryName = repo.name')) {
   fail('generated repository metadata must not overwrite the source repository identity used for retries.');

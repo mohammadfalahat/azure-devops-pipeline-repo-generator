@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "pipeline-generator",
   "publisher": "mohammad-falahat",
-  "version": "0.1.68",
+  "version": "0.1.69",
   "name": "Pipeline Generator",
   "description": "Create standard or Nx Monorepo YAML pipelines and classic Komodo release definitions from a branch.",
   "public": false,

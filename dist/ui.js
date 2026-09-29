@@ -189,6 +189,7 @@
   const defaultValues = {
     pool: 'PublishDockerAgent',
     environment: 'demo',
+    stack: 'default',
     repositoryAddress: 'registry.buluttakin.com',
     containerRegistryService: 'BulutReg',
     dockerfileDir: '**'
@@ -264,6 +265,9 @@
   const formHint = document.getElementById('form-hint');
   const branchInput = document.getElementById('branch');
   const environmentSelect = document.getElementById('environment');
+  const environmentOptions = document.getElementById('environment-options');
+  const stackInput = document.getElementById('stack');
+  const stackOptions = document.getElementById('stack-options');
   const poolSelect = document.getElementById('pool');
   const serviceInput = document.getElementById('service');
   const registrySelect = document.getElementById('containerRegistryService');
@@ -278,6 +282,7 @@
   const reauthenticateButton = document.getElementById('reauthenticate');
   const submitButton = form?.querySelector('button[type="submit"]');
   const completionPanel = document.getElementById('completion-panel');
+  const nginxResultItem = document.getElementById('nginx-result-item');
   const nginxResultLink = document.getElementById('nginx-result-link');
   const composeResultLink = document.getElementById('compose-result-link');
   const pipelineResultLink = document.getElementById('pipeline-result-link');
@@ -390,7 +395,7 @@
     if (formHint) {
       formHint.textContent = monorepo
         ? 'Generate one MR Pipeline and one classic Release for this Nx monorepo. SharedTemplates builds immutable static/BFF images, Compose stores their active tags, and Komodo deploys or rolls them back without project Dockerfiles or host mounts.'
-        : 'Fill the fields below, then generate the pipeline. The generator will push the template, ensure the project Docker/Nginx DevOps repositories and starter files, register the YAML pipeline in \\komodo, and create its classic Release definition. It will then show review links without running or redirecting to the Pipeline.';
+        : 'Fill the fields below, then generate the pipeline. The generator will push the template, ensure the project Docker DevOps files and configured-Environment Nginx files, register the YAML pipeline in \\komodo, and create its classic Release definition. It will then show review links without running or redirecting to the Pipeline.';
     }
     if (serviceField) serviceField.hidden = false;
     if (dockerfileField) dockerfileField.hidden = monorepo;
@@ -412,7 +417,7 @@
     }
     if (completionHint) {
       completionHint.textContent = monorepo
-        ? 'Review the generated contract, Compose, and Nginx files. Then run the MR Pipeline once; later source changes are detected automatically.'
+        ? 'Review the generated files shown below. Then run the MR Pipeline once; later source changes are detected automatically.'
         : 'The files are only starter templates. Review and edit them, then open and run the Pipeline once.';
     }
   };
@@ -858,7 +863,7 @@
       targets.servers = komodoServers;
       state.deploymentTargets = targets;
       populateSelectOptions(
-        environmentSelect,
+        environmentOptions,
         targets.environmentConfigs.map(({ name, domain }) => ({
           value: name,
           label: `${name} — ${domain}`
@@ -873,6 +878,7 @@
           (value) => value.toLowerCase() === defaultValues.environment.toLowerCase()
         );
         environmentSelect.value = defaultEnvironment || targets.environments[0];
+        environmentSelect.placeholder = 'Choose or enter an Environment';
         environmentSelect.disabled = false;
       }
       if (komodoSelect) {
@@ -885,7 +891,7 @@
     } catch (error) {
       state.deploymentTargets = null;
       state.deploymentTargetsReady = false;
-      populateSelectOptions(environmentSelect, [], 'Deployment environments unavailable');
+      populateSelectOptions(environmentOptions, []);
       populateSelectOptions(komodoSelect, [], 'Active Komodo servers unavailable');
       if (environmentSelect) environmentSelect.disabled = true;
       if (komodoSelect) komodoSelect.disabled = true;
@@ -1114,6 +1120,7 @@
     repositoryName,
     service,
     environment,
+    stack = 'default',
     branchName,
     mode = 'pipeline'
   }) => {
@@ -1127,18 +1134,20 @@
       throw new Error('Environment is required to build the Pipeline filename.');
     }
     const environmentSegment = sanitizePipelineNameSegment(environment, 'environment').toUpperCase();
+    const normalizedStack = normalizeStackName(stack);
+    const stackSegment = isDefaultStack(normalizedStack) ? '' : `-${sanitizePipelineNameSegment(normalizedStack, 'stack')}`;
     const branchSegment = sanitizePipelineNameSegment(
       branchName?.replace(/^refs\/heads\//, ''),
       'branch',
       { lowercase: false }
     ).replace(/(^|[-_.])([a-z])/g, (_, separator, character) => `${separator}${character.toUpperCase()}`);
     const modeSegment = normalizeGeneratorMode(mode) === 'monorepo' ? '-MR' : '';
-    return `${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}-${branchSegment}To${environmentSegment}.yml`;
+    return `${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}.yml`;
   };
 
   const buildPipelineName = (pipelineFilename) => pipelineFilename;
 
-  const buildReleaseName = ({ service, environment, mode = 'pipeline' }) => {
+  const buildReleaseName = ({ service, environment, stack = 'default', mode = 'pipeline' }) => {
     const normalizePart = (value, label) => {
       const normalized = String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
       if (!normalized || normalized.length > 100 || /[\0\r\n]/.test(normalized)) {
@@ -1146,10 +1155,14 @@
       }
       return normalized;
     };
+    const normalizedStack = normalizeStackName(stack);
+    const parts = [normalizePart(service, 'Service name')];
+    if (!isDefaultStack(normalizedStack)) parts.push(normalizePart(normalizedStack, 'Stack'));
+    parts.push(normalizePart(environment, 'Environment'));
     if (normalizeGeneratorMode(mode) === 'monorepo') {
-      return `MR ${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;
+      return `MR ${parts.join(' ')}`;
     }
-    return `${normalizePart(service, 'Service name')} ${normalizePart(environment, 'Environment')}`;
+    return parts.join(' ');
   };
 
   const getProjectRouteSegment = () => {
@@ -1167,10 +1180,14 @@
   const showCompletionLinks = ({ supportRepositories, pipelineDefinition, generatedRepo, contractPath }) => {
     const nginx = supportRepositories.find((result) => result.kind === 'nginx');
     const docker = supportRepositories.find((result) => result.kind === 'docker');
-    if (!nginx?.repo?.name || !docker?.repo?.name || !pipelineDefinition?.id) {
+    if (!docker?.repo?.name || !pipelineDefinition?.id) {
       throw new Error('Provisioning completed but review links could not be constructed.');
     }
-    if (nginxResultLink) {
+    nginxResultItem?.classList?.toggle('hidden', !nginx);
+    if (nginxResultItem && !nginxResultItem.classList) {
+      nginxResultItem.className = nginx ? '' : 'hidden';
+    }
+    if (nginxResultLink && nginx) {
       nginxResultLink.href = buildRepositoryFileUrl({
         repositoryName: nginx.repo.name,
         filePath: nginx.filePath
@@ -1338,7 +1355,13 @@
         branch: sourceBranch || targetBranch
       });
       const resourceLoads = [
-        loadPools({ hostUri: state.hostUri, projectId: state.projectId, accessToken: state.accessToken })
+        loadPools({ hostUri: state.hostUri, projectId: state.projectId, accessToken: state.accessToken }),
+        loadProjectStacks({
+          hostUri: state.hostUri,
+          projectId: state.projectId,
+          projectName: state.rawProjectName || state.projectName,
+          accessToken: state.accessToken
+        })
       ];
       if (!isMonorepoMode()) {
         resourceLoads.push(
@@ -1459,8 +1482,8 @@
       return 'pro';
     }
 
-    const candidates = environmentSelect
-      ? Array.from(environmentSelect.options).map((option) => option.value.toLowerCase())
+    const candidates = environmentOptions
+      ? Array.from(environmentOptions.options).map((option) => option.value.toLowerCase())
       : [];
 
     return candidates.find((key) => key && lower.includes(key));
@@ -1469,7 +1492,7 @@
   const applyDetectedEnvironment = (branch) => {
     const detected = detectEnvironmentFromBranch(branch);
     if (detected && environmentSelect) {
-      const available = Array.from(environmentSelect.options).some(
+      const available = Array.from(environmentOptions?.options || []).some(
         (option) => option.value.toLowerCase() === detected.toLowerCase()
       );
       if (available) {
@@ -1582,10 +1605,106 @@
     const res = await fetch(url, { headers: authHeaders(accessToken) });
     if (!res.ok) {
       const detail = await readErrorDetail(res);
-      throw buildHttpError('Failed to list repositories for Nginx route ownership', res, detail);
+      throw buildHttpError('Failed to list project repositories', res, detail);
     }
     const payload = await res.json();
     return payload.value || [];
+  };
+
+  const extractProjectStacks = ({ items, projectName, environments = [] }) => {
+    const compactProject = String(projectName || '').replace(/\s+/g, '').toLowerCase();
+    if (!compactProject) return ['default'];
+    const suffix = `_${compactProject}`;
+    const environmentPrefixes = environments
+      .map((value) => {
+        try {
+          return normalizeResourceSegment(value, 'Environment');
+        } catch {
+          return '';
+        }
+      })
+      .filter(Boolean)
+      .sort((left, right) => right.length - left.length);
+    const stacks = new Set(['default']);
+    for (const item of items || []) {
+      if (!item?.isFolder) continue;
+      const folder = String(item.path || item.serverItem || '').replace(/^\/+|\/+$/g, '');
+      if (!folder || folder.includes('/') || !folder.endsWith(suffix)) continue;
+      const prefix = folder.slice(0, -suffix.length);
+      let matchedEnvironment = false;
+      for (const environment of environmentPrefixes) {
+        if (prefix === environment) {
+          matchedEnvironment = true;
+          stacks.add('default');
+          break;
+        }
+        if (!prefix.startsWith(`${environment}_`)) continue;
+        matchedEnvironment = true;
+        const candidate = prefix.slice(environment.length + 1);
+        try {
+          if (candidate && normalizeStackName(candidate) === candidate) stacks.add(candidate);
+        } catch {
+          // Ignore legacy folders that cannot be represented safely as a Stack.
+        }
+        break;
+      }
+      if (!matchedEnvironment) {
+        const separatorIndex = prefix.indexOf('_');
+        const candidate = separatorIndex > 0 ? prefix.slice(separatorIndex + 1) : '';
+        try {
+          if (candidate && normalizeStackName(candidate) === candidate) stacks.add(candidate);
+        } catch {
+          // Unknown custom Environment folders still follow env_stack_project.
+        }
+      }
+    }
+    return ['default', ...Array.from(stacks).filter((value) => value !== 'default').sort()];
+  };
+
+  const fetchProjectStacks = async ({
+    hostUri,
+    projectId,
+    projectName,
+    accessToken,
+    environments = []
+  }) => {
+    const compactProject = String(projectName || '').replace(/\s+/g, '');
+    if (!compactProject) return ['default'];
+    const repositories = await listProjectRepositories({ hostUri, projectId, accessToken });
+    const dockerRepository = repositories.find((repo) => repo.name === `${compactProject}_Docker_DevOps`);
+    if (!dockerRepository?.id) return ['default'];
+    const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${encodeURIComponent(
+      dockerRepository.id
+    )}/items?scopePath=%2F&recursionLevel=OneLevel&versionDescriptor.version=${encodeURIComponent(
+      SCAFFOLD_BRANCH
+    )}&versionDescriptor.versionType=branch&api-version=6.0`;
+    const res = await fetch(url, { headers: authHeaders(accessToken) });
+    if (res.status === 404) return ['default'];
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      throw buildHttpError('Failed to discover existing project Stacks', res, detail);
+    }
+    const payload = await res.json();
+    return extractProjectStacks({ items: payload.value || [], projectName: compactProject, environments });
+  };
+
+  const loadProjectStacks = async ({ hostUri, projectId, projectName, accessToken }) => {
+    const currentValue = String(stackInput?.value || defaultValues.stack).trim() || defaultValues.stack;
+    let stacks = ['default'];
+    try {
+      stacks = await fetchProjectStacks({
+        hostUri,
+        projectId,
+        projectName,
+        accessToken,
+        environments: state.deploymentTargets?.environments || []
+      });
+    } catch (error) {
+      console.warn('Could not discover existing project Stacks; keeping the default option.', error);
+    }
+    populateSelectOptions(stackOptions, stacks.map((value) => ({ value, label: value })));
+    if (stackInput) stackInput.value = currentValue;
+    return stacks;
   };
 
   const ensureRepo = async ({ hostUri, projectId, projectName, accessToken }) => {
@@ -1631,6 +1750,27 @@
       throw new Error(`${label} cannot be converted to a safe resource name.`);
     }
     return normalized;
+  };
+
+  const normalizeStackName = (value = 'default') =>
+    normalizeResourceSegment(String(value || '').trim() || 'default', 'Stack');
+
+  const isDefaultStack = (value) => normalizeStackName(value) === 'default';
+
+  const buildNginxDirectory = ({ environment, stack = 'default' }) => {
+    const normalizedEnvironment = normalizeResourceSegment(environment, 'Environment');
+    const normalizedStack = normalizeStackName(stack);
+    return [normalizedEnvironment, ...(isDefaultStack(normalizedStack) ? [] : [normalizedStack])].join('_');
+  };
+
+  const buildComposeDirectory = ({ environment, stack = 'default', projectName }) => {
+    const normalizedEnvironment = normalizeResourceSegment(environment, 'Environment');
+    const normalizedStack = normalizeStackName(stack);
+    const compactProject = String(projectName || '').replace(/\s+/g, '').toLowerCase();
+    if (!compactProject || /[\\/\0\r\n]/.test(compactProject)) {
+      throw new Error('Project name cannot be converted to a safe Compose directory name.');
+    }
+    return [normalizedEnvironment, ...(isDefaultStack(normalizedStack) ? [] : [normalizedStack]), compactProject].join('_');
   };
 
   const frontendRoleAliases = Object.freeze([
@@ -1875,11 +2015,15 @@
     projectKey,
     serviceKey,
     environment,
+    stack = 'default',
     repositoryAddress,
     nginxNetworkName = 'nginx-network',
     routing: requestedRouting
   }) => {
-    const containerName = `${projectKey}_${serviceKey.replace(/-/g, '_')}_${environment}`;
+    const normalizedStack = normalizeStackName(stack);
+    const containerStackSegment = isDefaultStack(normalizedStack) ? '' : `_${normalizedStack.replace(/-/g, '_')}`;
+    const imageStackSegment = isDefaultStack(normalizedStack) ? '' : `-${normalizedStack}`;
+    const containerName = `${projectKey}_${serviceKey.replace(/-/g, '_')}${containerStackSegment}_${environment}`;
     const internalPort = (requestedRouting || classifyServiceRouting(serviceKey)).internalPort;
     const registry = String(repositoryAddress || defaultValues.repositoryAddress).trim().replace(/\/+$/, '');
     const networkName = selectNginxNetworkName([nginxNetworkName]);
@@ -1887,7 +2031,7 @@
       'services:',
       `  ${containerName}:`,
       `    container_name: ${containerName}`,
-      `    image: ${registry}/${projectKey}/${serviceKey}-${environment}:\${IMAGE_TAG:-CHANGE_ME}`,
+      `    image: ${registry}/${projectKey}/${serviceKey}${imageStackSegment}-${environment}:\${IMAGE_TAG:-CHANGE_ME}`,
       '    restart: unless-stopped',
       '    expose:',
       `      - "${internalPort}"`,
@@ -1909,13 +2053,17 @@
     projectKey,
     serviceKey,
     environment,
+    stack = 'default',
     containerName: requestedContainerName,
     location: requestedLocation,
     internalPort: requestedInternalPort,
     frontend: requestedFrontend,
     routing: requestedRouting
   }) => {
-    const containerName = requestedContainerName || `${projectKey}_${serviceKey.replace(/-/g, '_')}_${environment}`;
+    const normalizedStack = normalizeStackName(stack);
+    const stackSegment = isDefaultStack(normalizedStack) ? '' : `_${normalizedStack.replace(/-/g, '_')}`;
+    const containerName = requestedContainerName ||
+      `${projectKey}_${serviceKey.replace(/-/g, '_')}${stackSegment}_${environment}`;
     const routing = requestedRouting || classifyServiceRouting(serviceKey);
     const frontend = typeof requestedFrontend === 'boolean' ? requestedFrontend : routing.kind === 'frontend';
     const location = requestedLocation || routing.location;
@@ -2331,11 +2479,12 @@
     projectKey,
     serviceKey,
     environment,
+    stack = 'default',
     routeOptions = {}
   }) => {
     let mergedContent = migrateNginxCertificatePaths({ content, serverName, domain });
     let server = findNginxHttpsServer(mergedContent, serverName);
-    const route = buildNginxRouteBlock({ projectKey, serviceKey, environment, ...routeOptions });
+    const route = buildNginxRouteBlock({ projectKey, serviceKey, environment, stack, ...routeOptions });
 
     let startIndex = mergedContent.indexOf(NGINX_MANAGED_ROUTES_START, server.open.end);
     let endIndex = mergedContent.indexOf(NGINX_MANAGED_ROUTES_END, server.open.end);
@@ -2398,8 +2547,8 @@
     return `${beforeClose}${separator}${managedBlock}${mergedContent.slice(server.close.start)}`;
   };
 
-  const buildNginxSample = ({ projectHost, projectKey, serviceKey, environment, domain, routing }) => {
-    const route = buildNginxRouteBlock({ projectKey, serviceKey, environment, routing });
+  const buildNginxSample = ({ projectHost, projectKey, serviceKey, environment, stack = 'default', domain, routing }) => {
+    const route = buildNginxRouteBlock({ projectKey, serviceKey, environment, stack, routing });
     const certificateName = domain;
     const serverName = `${projectHost}.${domain}`;
     return [
@@ -2425,10 +2574,14 @@
     ].join('\n');
   };
 
-  const buildMonorepoKomodoResourceNames = ({ compactProject, environment }) => ({
-    repository: `${compactProject}_Docker_DevOps-${environment}`,
-    stack: `${compactProject}_Docker_DevOps-${environment}`
-  });
+  const buildMonorepoKomodoResourceNames = ({ compactProject, environment, stack = 'default' }) => {
+    const normalizedStack = normalizeStackName(stack);
+    const stackSuffix = isDefaultStack(normalizedStack) ? '' : `-${normalizedStack}`;
+    return {
+      repository: `${compactProject}_Docker_DevOps-${environment}${stackSuffix}`,
+      stack: `${compactProject}_Docker_DevOps-${environment}${stackSuffix}`
+    };
+  };
 
   const buildMonorepoTagKeys = ({ serviceKey }) => {
     const staticTagKey = normalizeResourceSegment(serviceKey, 'Service name').replace(/-/g, '_');
@@ -2468,20 +2621,24 @@
     projectKey,
     serviceKey,
     environment,
+    stack = 'default',
     repositoryAddress,
     nginxNetworkKey = 'nginx-network'
   }) => {
     const normalizedService = serviceKey.replace(/-/g, '_');
-    const staticContainer = `${projectKey}_${normalizedService}_${environment}`;
-    const bffContainer = `${projectKey}_${normalizedService}_bff_${environment}`;
+    const normalizedStack = normalizeStackName(stack);
+    const containerStackSegment = isDefaultStack(normalizedStack) ? '' : `_${normalizedStack.replace(/-/g, '_')}`;
+    const imageStackSegment = isDefaultStack(normalizedStack) ? '' : `-${normalizedStack}`;
+    const staticContainer = `${projectKey}_${normalizedService}${containerStackSegment}_${environment}`;
+    const bffContainer = `${projectKey}_${normalizedService}_bff${containerStackSegment}_${environment}`;
     const registry = String(repositoryAddress || defaultValues.repositoryAddress)
       .trim()
       .replace(/^https?:\/\//i, '')
       .replace(/\/+$/, '')
       .toLowerCase();
-    const bffProfile = `mr-${serviceKey}-bff`;
-    const staticRepository = `${registry}/${projectKey}/${serviceKey}-${environment}`;
-    const bffRepository = `${registry}/${projectKey}/${serviceKey}-bff-${environment}`;
+    const bffProfile = `mr-${serviceKey}${imageStackSegment}-bff`;
+    const staticRepository = `${registry}/${projectKey}/${serviceKey}${imageStackSegment}-${environment}`;
+    const bffRepository = `${registry}/${projectKey}/${serviceKey}-bff${imageStackSegment}-${environment}`;
     const { staticTagKey, bffTagKey } = buildMonorepoTagKeys({ serviceKey });
     return [
       {
@@ -2519,6 +2676,7 @@
     serviceKey,
     environment,
     repositoryAddress,
+    stack = 'default',
     nginxNetworkName = 'nginx-network'
   }) => {
     const networkName = selectNginxNetworkName([nginxNetworkName]);
@@ -2527,6 +2685,7 @@
       serviceKey,
       environment,
       repositoryAddress,
+      stack,
       nginxNetworkKey: networkName
     });
     return [
@@ -2547,6 +2706,7 @@
     serviceKey,
     environment,
     repositoryAddress,
+    stack = 'default',
     nginxNetworkName = 'nginx-network'
   }) => {
     if (!String(content || '').trim()) {
@@ -2555,6 +2715,7 @@
         serviceKey,
         environment,
         repositoryAddress,
+        stack,
         nginxNetworkName
       });
     }
@@ -2594,6 +2755,7 @@
       serviceKey,
       environment,
       repositoryAddress,
+      stack,
       nginxNetworkKey: logicalNetworkKey
     });
     let servicesIndex = lines.findIndex((line) => /^services:\s*(?:#.*)?$/.test(line));
@@ -2632,7 +2794,7 @@
         }
       }
       const desiredImage = /^    image:\s*([^\s#]+)\s*$/m.exec(serviceContent)?.[1] || '';
-      const runtimeSuffix = name.endsWith(`_bff_${environment}`) ? 'node:20-alpine' : 'nginx:1.27-alpine';
+      const runtimeSuffix = name.includes('_bff_') ? 'node:20-alpine' : 'nginx:1.27-alpine';
       const legacyImages = new Set([runtimeSuffix, `registry.buluttakin.com/${runtimeSuffix}`]);
       for (let index = serviceStart + 1; index < serviceEnd; index += 1) {
         const image = /^(\s{4}image:\s*)(["']?)([^\s"'#]+)\2(\s*(?:#.*)?)$/.exec(lines[index]);
@@ -2729,11 +2891,14 @@
     projectKey,
     serviceKey,
     environment,
+    stack = 'default',
     routing,
     routingOverrides
   }) => {
     const normalizedService = serviceKey.replace(/-/g, '_');
-    const bffContainer = `${projectKey}_${normalizedService}_bff_${environment}`;
+    const normalizedStack = normalizeStackName(stack);
+    const stackSegment = isDefaultStack(normalizedStack) ? '' : `_${normalizedStack.replace(/-/g, '_')}`;
+    const bffContainer = `${projectKey}_${normalizedService}_bff${stackSegment}_${environment}`;
     return [
     {
       serviceKey: `${serviceKey}-bff`,
@@ -2755,7 +2920,7 @@
     {
       serviceKey,
       routeOptions: {
-        containerName: `${projectKey}_${normalizedService}_${environment}`,
+        containerName: `${projectKey}_${normalizedService}${stackSegment}_${environment}`,
         location: routing?.location || '/',
         internalPort: 80,
         frontend: true,
@@ -2772,13 +2937,14 @@
     projectKey,
     serviceKey,
     environment,
+    stack = 'default',
     domain,
     routing,
     routingOverrides
   }) => {
     const certificateName = domain;
     const serverName = `${projectHost}.${domain}`;
-    const routes = buildMonorepoNginxRoutes({ projectKey, serviceKey, environment, routing, routingOverrides })
+    const routes = buildMonorepoNginxRoutes({ projectKey, serviceKey, environment, stack, routing, routingOverrides })
       .map(({ serviceKey, routeOptions }) =>
         buildNginxRouteBlock({ projectKey, serviceKey, environment, ...routeOptions }).content
       );
@@ -2812,10 +2978,11 @@
     projectKey,
     serviceKey,
     environment,
+    stack = 'default',
     routing,
     routingOverrides
   }) =>
-    buildMonorepoNginxRoutes({ projectKey, serviceKey, environment, routing, routingOverrides }).reduce(
+    buildMonorepoNginxRoutes({ projectKey, serviceKey, environment, stack, routing, routingOverrides }).reduce(
       (merged, { serviceKey, routeOptions }) => mergeNginxServiceRoute({
         content: merged,
         serverName,
@@ -2823,6 +2990,7 @@
         projectKey,
         serviceKey,
         environment,
+        stack,
         routeOptions
       }),
       content
@@ -2832,25 +3000,28 @@
     projectName,
     environment,
     domain,
+    stack = 'default',
     service,
     repositoryAddress,
     nginxNetworkName = 'nginx-network',
+    includeNginx = true,
     serviceRouting,
     routingOverrides
   }) => {
     const compactProject = String(projectName || '').replace(/\s+/g, '');
     const normalizedEnvironment = normalizeResourceSegment(environment, 'Environment');
+    const shouldIncludeNginx = includeNginx;
     if (!compactProject || /[\\/\0\r\n]/.test(compactProject)) {
       throw new Error('Project name cannot be converted to a safe DevOps repository name.');
     }
-    if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(domain || '')) {
+    if (shouldIncludeNginx && !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(domain || '')) {
       throw new Error(`Environment ${environment || '(empty)'} has no valid domain.`);
     }
     const projectKey = normalizeResourceSegment(compactProject.toLowerCase(), 'Project key');
     const serviceKey = normalizeResourceSegment(service, 'Service name');
     const projectHost = projectKey;
-    const composeDirectory = `${normalizedEnvironment}_${compactProject.toLowerCase()}`;
-    const nginxDirectory = normalizedEnvironment;
+    const composeDirectory = buildComposeDirectory({ environment: normalizedEnvironment, stack, projectName: compactProject });
+    const nginxDirectory = buildNginxDirectory({ environment: normalizedEnvironment, stack });
     return [
       {
         kind: 'docker',
@@ -2861,6 +3032,7 @@
           projectKey,
           serviceKey,
           environment: normalizedEnvironment,
+          stack,
           repositoryAddress,
           nginxNetworkName
         }),
@@ -2869,6 +3041,7 @@
           projectKey,
           serviceKey,
           environment: normalizedEnvironment,
+          stack,
           repositoryAddress,
           nginxNetworkName
         }),
@@ -2880,7 +3053,7 @@
           }
         ]
       },
-      {
+      ...(shouldIncludeNginx ? [{
         kind: 'nginx',
         name: `${compactProject}_Nginx_DevOps`,
         directory: nginxDirectory,
@@ -2890,6 +3063,7 @@
           projectKey,
           serviceKey,
           environment: normalizedEnvironment,
+          stack,
           domain: String(domain).toLowerCase(),
           routing: serviceRouting,
           routingOverrides
@@ -2901,10 +3075,11 @@
           projectKey,
           serviceKey,
           environment: normalizedEnvironment,
+          stack,
           routing: serviceRouting,
           routingOverrides
         })
-      }
+      }] : [])
     ];
   };
 
@@ -2912,26 +3087,29 @@
     projectName,
     environment,
     domain,
+    stack = 'default',
     service,
     projectsRoot,
     repositoryAddress,
     nginxNetworkName = 'nginx-network',
     serviceRouting,
+    includeNginx = true,
     routingOverrides
   }) => {
     const compactProject = String(projectName || '').replace(/\s+/g, '');
     const normalizedEnvironment = normalizeResourceSegment(environment, 'Environment');
+    const shouldIncludeNginx = includeNginx;
     const serviceKey = normalizeResourceSegment(service, 'Service name');
     if (!compactProject || /[\\/\0\r\n]/.test(compactProject)) {
       throw new Error('Project name cannot be converted to a safe DevOps repository name.');
     }
-    if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(domain || '')) {
+    if (shouldIncludeNginx && !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(domain || '')) {
       throw new Error(`Environment ${environment || '(empty)'} has no valid domain.`);
     }
     const compactProjectLower = compactProject.toLowerCase();
     const projectHost = normalizeResourceSegment(compactProjectLower, 'Project hostname');
-    const composeDirectory = `${normalizedEnvironment}_${compactProjectLower}`;
-    const nginxDirectory = normalizedEnvironment;
+    const composeDirectory = buildComposeDirectory({ environment: normalizedEnvironment, stack, projectName: compactProject });
+    const nginxDirectory = buildNginxDirectory({ environment: normalizedEnvironment, stack });
     return [
       {
         kind: 'docker',
@@ -2942,12 +3120,13 @@
           projectKey: compactProjectLower,
           serviceKey,
           environment: normalizedEnvironment,
+          stack,
           repositoryAddress,
           nginxNetworkName,
           routing: serviceRouting
         })
       },
-      {
+      ...(shouldIncludeNginx ? [{
         kind: 'nginx',
         name: `${compactProject}_Nginx_DevOps`,
         directory: nginxDirectory,
@@ -2957,6 +3136,7 @@
           projectKey: compactProjectLower,
           serviceKey,
           environment: normalizedEnvironment,
+          stack,
           domain: String(domain).toLowerCase(),
           routing: serviceRouting
         }),
@@ -2967,12 +3147,13 @@
           projectKey: compactProjectLower,
           serviceKey,
           environment: normalizedEnvironment,
+          stack,
           routeOptions: {
             routing: serviceRouting,
             routingOverrides
           }
         })
-      }
+      }] : [])
     ];
   };
 
@@ -3061,11 +3242,13 @@
     projectName,
     environment,
     domain,
+    stack = 'default',
     service,
     projectsRoot,
     repositoryAddress,
     nginxNetworkName,
     accessToken,
+    includeNginx = true,
     mode = 'pipeline',
     serviceRouting,
     routingOverrides
@@ -3074,20 +3257,24 @@
       ? buildMonorepoSupportRepositorySpecs({
           projectName,
           environment,
+          stack,
           domain,
           service,
           repositoryAddress,
           nginxNetworkName,
+          includeNginx,
           serviceRouting,
           routingOverrides
         })
       : buildSupportRepositorySpecs({
           projectName,
           environment,
+          stack,
           domain,
           service,
           repositoryAddress,
           nginxNetworkName,
+          includeNginx,
           serviceRouting,
           routingOverrides
         });
@@ -4057,6 +4244,7 @@
     pipelineName,
     service,
     environment,
+    stack = 'default',
     branch,
     queueName,
     accessToken,
@@ -4073,7 +4261,7 @@
       throw markErrorDomain(new Error('Release variableGroupName is empty in dist/release-config.js.'), 'release');
     }
 
-    const releaseName = buildReleaseName({ service, environment, mode });
+    const releaseName = buildReleaseName({ service, environment, stack, mode });
     const existingByName = await getReleaseDefinitionByName({ hostUri, projectId, releaseName, accessToken });
     const existingByPipeline = existingByName?.id
       ? undefined
@@ -4216,21 +4404,24 @@
       'Service name'
     );
     const environment = normalizeResourceSegment(payload.environment, 'Environment');
+    const stack = normalizeStackName(payload.stack);
+    const containerStackSegment = isDefaultStack(stack) ? '' : `_${stack.replace(/-/g, '_')}`;
+    const imageStackSegment = isDefaultStack(stack) ? '' : `-${stack}`;
     const registryAddress = String(payload.repositoryAddress || defaultValues.repositoryAddress)
       .trim()
       .replace(/^https?:\/\//i, '')
       .replace(/\/+$/, '')
       .toLowerCase();
     const normalizedService = serviceKey.replace(/-/g, '_');
-    const staticContainer = `${projectKey}_${normalizedService}_${environment}`;
-    const bffContainer = `${projectKey}_${normalizedService}_bff_${environment}`;
-    const runtimeVariablePrefix = `MR_${projectKey}_${serviceKey}_${environment}`
+    const staticContainer = `${projectKey}_${normalizedService}${containerStackSegment}_${environment}`;
+    const bffContainer = `${projectKey}_${normalizedService}_bff${containerStackSegment}_${environment}`;
+    const runtimeVariablePrefix = `MR_${projectKey}_${serviceKey}${imageStackSegment}_${environment}`
       .replace(/[^a-z0-9]+/gi, '_')
       .toUpperCase();
-    const bffProfile = `mr-${serviceKey}-bff`;
+    const bffProfile = `mr-${serviceKey}${imageStackSegment}-bff`;
     const composeRepository = `${compactProject}_Docker_DevOps`;
-    const composePath = `/${environment}_${compactProject.toLowerCase()}/compose.yml`;
-    const komodoResources = buildMonorepoKomodoResourceNames({ compactProject, environment });
+    const composePath = `/${buildComposeDirectory({ environment, stack, projectName: compactProject })}/compose.yml`;
+    const komodoResources = buildMonorepoKomodoResourceNames({ compactProject, environment, stack });
     return [
       'trigger: none',
       '',
@@ -4261,6 +4452,7 @@
       `      projectKey: ${quoteYaml(projectKey)}`,
       `      serviceKey: ${quoteYaml(serviceKey)}`,
       `      environment: ${quoteYaml(environment)}`,
+      `      stack: ${quoteYaml(stack)}`,
       `      komodoServer: ${quoteYaml(payload.komodoServer)}`,
       `      staticContainer: ${quoteYaml(staticContainer)}`,
       `      bffContainer: ${quoteYaml(bffContainer)}`,
@@ -4319,6 +4511,7 @@
       `    pool: '${payload.pool || ''}'`,
       `    service: '${payload.service || ''}'                # service name`,
       `    environment: '${payload.environment || ''}'           # selected deployment environment`,
+      `    stack: '${normalizeStackName(payload.stack)}'             # default preserves legacy names`,
       `    dockerfileDir: '${payload.dockerfileDir || '**'}'  # path of Dockerfile, Default is '**'`,
       `    repositoryAddress: '${payload.repositoryAddress || ''}'`,
       `    containerRegistryService: '${payload.containerRegistryService || ''}'`,
@@ -4351,17 +4544,17 @@
       return;
     }
     const payload = Object.fromEntries(new FormData(form).entries());
+    payload.environment = String(payload.environment || '').trim();
+    payload.stack = normalizeStackName(payload.stack);
     payload.service = normalizeServiceNameForForm(payload.service);
     if (serviceInput) serviceInput.value = payload.service;
+    if (environmentSelect) environmentSelect.value = payload.environment;
+    if (stackInput) stackInput.value = payload.stack;
     const environmentConfig = state.deploymentTargets?.environmentConfigs?.find(
       ({ name }) => name.toLowerCase() === String(payload.environment || '').toLowerCase()
     );
-    if (!environmentConfig?.domain) {
-      setStatus(`No domain is configured for environment ${payload.environment || '(empty)'}.`, true);
-      setSubmitting(false);
-      return;
-    }
-    payload.projectsRoot = environmentConfig.projectsRoot;
+    const includeNginx = Boolean(environmentConfig?.domain);
+    payload.projectsRoot = environmentConfig?.projectsRoot || defaultProjectsRootForEnvironment(payload.environment);
     const generatorOptions = {
       sourceBranch: state.sourceBranch,
       rawProjectName: state.rawProjectName,
@@ -4405,6 +4598,7 @@
       service: payload.service,
       environment: payload.environment,
       branchName: state.sourceBranch,
+      stack: payload.stack,
       mode: state.mode
     });
     const legacyServiceLessPipelineFilename = buildLegacyServiceLessPipelineFilename({
@@ -4429,6 +4623,7 @@
     const releaseName = buildReleaseName({
       service: payload.service,
       environment: payload.environment,
+      stack: payload.stack,
       mode: state.mode
     });
     const pipelineFolder = getPipelineFolder();
@@ -4474,11 +4669,13 @@
             projectId: state.projectId,
             projectName: provisioningProjectName,
             environment: payload.environment,
-            domain: environmentConfig.domain,
+            domain: environmentConfig?.domain,
+            stack: payload.stack,
             service: payload.service,
-            projectsRoot: environmentConfig.projectsRoot,
+            projectsRoot: payload.projectsRoot,
             repositoryAddress: payload.repositoryAddress,
             nginxNetworkName,
+            includeNginx,
             accessToken: state.accessToken,
             mode: state.mode,
             serviceRouting: serviceRoutingPlan.current.routing,
@@ -4538,20 +4735,24 @@
             repo,
             pipelineName,
             pipelinePath: `/${pipelineFilename}`,
-            legacyPipelineNames: isMonorepoMode()
-              ? [legacyServiceLessPipelineFilename]
-              : [
-                  legacyServiceLessPipelineFilename,
-                  legacyEnvironmentFirstPipelineFilename,
-                  legacyPipelineFilename
-                ],
-            legacyPipelinePaths: isMonorepoMode()
-              ? [`/${legacyServiceLessPipelineFilename}`]
-              : [
-                  `/${legacyServiceLessPipelineFilename}`,
-                  `/${legacyEnvironmentFirstPipelineFilename}`,
-                  `/${legacyPipelineFilename}`
-                ],
+            legacyPipelineNames: !isDefaultStack(payload.stack)
+              ? []
+              : isMonorepoMode()
+                ? [legacyServiceLessPipelineFilename]
+                : [
+                    legacyServiceLessPipelineFilename,
+                    legacyEnvironmentFirstPipelineFilename,
+                    legacyPipelineFilename
+                  ],
+            legacyPipelinePaths: !isDefaultStack(payload.stack)
+              ? []
+              : isMonorepoMode()
+                ? [`/${legacyServiceLessPipelineFilename}`]
+                : [
+                    `/${legacyServiceLessPipelineFilename}`,
+                    `/${legacyEnvironmentFirstPipelineFilename}`,
+                    `/${legacyPipelineFilename}`
+                  ],
             branch: targetBranch,
             pipelineFolder,
             accessToken: state.accessToken
@@ -4571,6 +4772,7 @@
             service: payload.service,
             environment: payload.environment,
             branch: targetBranch,
+            stack: payload.stack,
             queueName: payload.pool,
             accessToken: state.accessToken,
             mode: state.mode
@@ -4582,8 +4784,11 @@
         : `Release definition ${
             releaseDefinition.created ? 'created' : releaseDefinition.updated ? 'updated' : 'already up to date'
           } (ID: ${releaseDefinition.id}).`;
+      const generatedFilesMessage = includeNginx
+        ? `${isMonorepoMode() ? 'deployment contract, ' : ''}Nginx and Compose files`
+        : `${isMonorepoMode() ? 'deployment contract and ' : ''}Compose file; Nginx was skipped because ${payload.environment} is not a configured Environment`;
       setStatus(
-        `Done. Pipeline ${pipelineName} is linked to /${pipelineFilename} in ${pipelineFolder} (ID: ${pipelineDefinition?.id || 'unknown'}). ${releaseMessage} Review the generated ${isMonorepoMode() ? 'deployment contract, ' : ''}Nginx and Compose files below, then run the Pipeline manually.`,
+        `Done. Pipeline ${pipelineName} is linked to /${pipelineFilename} in ${pipelineFolder} (ID: ${pipelineDefinition?.id || 'unknown'}). ${releaseMessage} Review the generated ${generatedFilesMessage} below, then run the Pipeline manually.`,
         false
       );
       showCompletionLinks({
@@ -4839,7 +5044,12 @@
           }
         }
         await loadDeploymentTargets({ hostUri, branch });
-        const resourceLoads = [loadPools({ hostUri, projectId, accessToken })];
+        const resourceLoads = [
+          loadPools({ hostUri, projectId, accessToken }),
+          loadProjectStacks({
+            hostUri, projectId, projectName: state.rawProjectName || projectName, accessToken
+          })
+        ];
         if (!isMonorepoMode()) {
           resourceLoads.push(
             loadContainerRegistries({ hostUri, projectId, accessToken }),

@@ -1,6 +1,6 @@
 # Architecture and runtime flow
 
-This document describes version 0.1.67 from the implementation in
+This document describes version 0.1.69 from the implementation in
 `vss-extension.json`, `dist/menu-action.js`, `dist/ui.js`, and
 `dist/release-config.js`.
 
@@ -217,7 +217,8 @@ The form starts with these defaults:
 | --- | --- |
 | Pool | `PublishDockerAgent`; merged with project agent queues |
 | Service | Lowercase source repository suffix after removing a matching project-name prefix and separator; whitespace is replaced only with `_` (other punctuation is preserved) and the value remains user-editable |
-| Environment | Name/domain records (plus legacy `projects_root` metadata) loaded from `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; `demo` is preferred when present, then inferred from source branch when possible |
+| Environment | Editable input with name/domain suggestions (plus legacy `projects_root` metadata) loaded from `ShonizCollection/SharedTemplates/SharedTemplates:/pipeline-generator.yml@main`; `demo` is preferred when present, then inferred from source branch when possible |
+| Stack | Editable input with `default` selected; suggestions are discovered from existing top-level Docker DevOps Compose directories, while free text creates another isolated Stack |
 | Dockerfile directory | `**`, then first recursively discovered Dockerfile directory |
 | Registry address | `registry.buluttakin.com` |
 | Registry service | `BulutReg`; merged with Docker Registry service endpoints |
@@ -233,8 +234,16 @@ The YAML `environments` list must contain a valid domain for every name, and
 the filtered Komodo result must be non-empty. The preferred record shape is
 `- name: dev` followed by `domain: bulutdev.ir`; compact
 `"dev:bulutdev.ir"` values remain accepted for migration.
-A file-read, permission, API, CORS, TLS, or validation failure keeps both
-selects and Submit disabled; the extension never restores compiled-in targets.
+The user may type a value outside that configured list. A case-insensitive
+configured-name match uses its paired domain and enables Nginx generation; an
+unlisted value remains the Pipeline/Release/Compose Environment but creates or
+updates no Nginx repository or configuration.
+The normalized Stack defaults to `default`. That value preserves every legacy
+identity. A non-default value is inserted into Compose/Nginx directories,
+Pipeline/Release names, image/container names, and Komodo Repo/Stack resources.
+The Stack input remains editable after existing values are discovered.
+A file-read, permission, API, CORS, TLS, or validation failure keeps the
+Environment input, Komodo Server select, and Submit disabled; the extension never restores compiled-in targets.
 
 Environment inference follows this order:
 
@@ -285,24 +294,30 @@ Project casing is preserved. Repository reuse uses exact name equality.
 
 ### Support repositories and folders
 
-Step 1 also creates or reuses two project support repositories. Whitespace is
-removed from the project name while casing is preserved in repository names:
+Step 1 creates or reuses the Docker support repository and, only for a
+configured Environment, the Nginx support repository. Whitespace is removed
+from the project name while casing is preserved in repository names:
 
 ```text
 <ProjectNameWithoutSpaces>_Docker_DevOps
 <ProjectNameWithoutSpaces>_Nginx_DevOps
 ```
 
-Each repository uses `main`. The selected environment receives starter files
-instead of empty placeholders:
+Each created repository uses `main`. Compose is generated for every valid
+Environment value; the Nginx path is generated only when the value matches a
+configured Environment:
 
 ```text
-Docker: /<environment>_<lowercase-project-without-spaces>/compose.yml
-Nginx:  /<environment>/<lowercase-project>-<environment>.conf
+Docker default: /<environment>_<lowercase-project-without-spaces>/compose.yml
+Docker custom:  /<environment>_<stack>_<lowercase-project-without-spaces>/compose.yml
+Nginx default:  /<environment>/<lowercase-project>-<environment>.conf
+Nginx custom:   /<environment>_<stack>/<lowercase-project>-<environment>.conf
 ```
 
 The Compose service/container name is
-`<lowercase-project>_<service>_<environment>`. UI/frontend services expose port
+`<lowercase-project>_<service>[_<stack>]_<environment>`; the Stack segment is
+omitted for `default`. Images use the analogous
+`<service>[-<stack>]-<environment>` suffix. UI/frontend services expose port
 80; backend and other services expose port 8080. The Nginx host is
 `<lowercase-sanitized-project>.<environment-domain>`. Routing uses semantic
 tokens rather than a short exact-name list. `ui`, `front`, `frontend`, `web`,
@@ -344,7 +359,7 @@ a lower-priority repository cannot retain or later reclaim `/` or `/api/`.
 ### YAML filename
 
 ```text
-<sanitized-project>-<sanitized-source-repository>[-MR]-<sanitized-service>-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml
+<sanitized-project>-<sanitized-source-repository>[-MR]-<sanitized-service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml
 ```
 
 Project, repository, and Service segments are trimmed and lowercased. Slash and
@@ -368,9 +383,9 @@ Branch: feature/defineZones
 ### Pipeline and Release names
 
 ```text
-Pipeline:   <project>-<repository>[-MR]-<service>-<Branch>To<ENVIRONMENT>.yml
-Release:    <UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>
-MR Release: MR <UPPERCASE-SERVICE> <UPPERCASE-ENVIRONMENT>
+Pipeline:   <project>-<repository>[-MR]-<service>[-<stack>]-<Branch>To<ENVIRONMENT>.yml
+Release:    <UPPERCASE-SERVICE> [<UPPERCASE-STACK>] <UPPERCASE-ENVIRONMENT>
+MR Release: MR <UPPERCASE-SERVICE> [<UPPERCASE-STACK>] <UPPERCASE-ENVIRONMENT>
 ```
 
 The Pipeline name is exactly the filename returned by
@@ -423,6 +438,7 @@ stages:
     pool: '<selected pool>'
     service: '<service>'
     environment: '<environment>'
+    stack: '<stack; default when omitted>'
     dockerfileDir: '<directory or **>'
     repositoryAddress: '<registry host>'
     containerRegistryService: '<service connection>'
@@ -452,11 +468,12 @@ Each step updates the status element and attaches its label to any thrown error.
 ### Step 1: ensure generated and support repositories
 
 The UI lists project repositories using Git API 6.0 and compares exact names.
-If the generated, Docker DevOps, or Nginx DevOps repository is missing, it
-creates it in the current project. The two support repositories are initialized
-idempotently with their selected-environment starter configuration and `main`
-default branch before Step 2 begins. The extension does not create a root
-`environments` file in either repository.
+If the generated or Docker DevOps repository is missing, it creates it in the
+current project. For a configured Environment it does the same for Nginx
+DevOps; for a custom Environment it makes no Nginx read or write. Created
+support repositories are initialized idempotently with their
+selected-environment starter configuration and `main` default branch before
+Step 2 begins. The extension does not create a root `environments` file.
 
 ### Step 2: add or edit YAML
 
@@ -562,14 +579,15 @@ No continuous deployment trigger is configured.
 
 Monorepo mode uses the same five provisioning steps but selects separate
 renderers and identities. The generated Pipeline/Release live under
-`\komodo\MR`, the Pipeline filename contains `-MR-<service>-<Branch>To<ENV>`,
-and the Release is named `MR <SERVICE> <ENV>`. The immediately preceding
+`\komodo\MR`, the Pipeline filename contains `-MR-<service>[-<stack>]-<Branch>To<ENV>`,
+and the Release is named `MR <SERVICE> [<STACK>] <ENV>`. The immediately preceding
 Service-less MR Pipeline is eligible for in-place migration; normal Pipeline
 definitions are never considered legacy candidates for MR reconciliation.
 
 Step 1 creates/reuses the same project Docker and Nginx repositories and merges
-the Monorepo runtime into the existing project/Environment Compose instead of
-creating another Compose directory. The logical service has one immutable Nginx
+the Monorepo runtime into the selected project/Environment/Stack Compose. The
+default Stack reuses the legacy paths; a custom Stack uses separate Compose and
+Nginx directories. The logical service has one immutable Nginx
 image for shell/static assets and an optional immutable Node image for BFF output.
 Before any repository write, the browser calls Komodo `ListDockerNetworks` for
 the selected Server and requires an exact existing `nginx-network` or
@@ -662,8 +680,8 @@ not retried.
 | Pipeline | Exact Service-aware BranchToEnvironment name/path, then Service-less transition, 0.1.37 Environment-first, and older branch-only identities | Reuse or GET-modify-PUT through Build Definitions |
 | Release definition | Exact Release name, then Pipeline artifact ID | Reuse or reconcile through Release Definitions PUT |
 | MR deployment contract | `/.devops/deployments.yml` on `main` | Create when missing; preserve all later edits |
-| MR Compose Git source | `<Project>_Docker_DevOps:/<environment>_<project>/{compose.yml,.env}@main` | Reuse the shared Compose; merge absent services, migrate legacy runtime fields, keep stable image repositories in Compose, and store managed immutable tags in `.env` without changing unrelated/operator-edited services |
-| MR Komodo Repo/Stack | The same `<Project>_Docker_DevOps-<environment>` Repo and Stack identities used by ordinary services | Apply only partial Stack updates, preserving unrelated config; deploy only from Release |
+| MR Compose Git source | `<Project>_Docker_DevOps:/<environment>[_<stack>]_<project>/{compose.yml,.env}@main` | Reuse the shared Compose; merge absent services, migrate legacy runtime fields, keep stable image repositories in Compose, and store managed immutable tags in `.env` without changing unrelated/operator-edited services |
+| MR Komodo Repo/Stack | `<Project>_Docker_DevOps-<environment>[-<stack>]`; the custom suffix is omitted for `default` | Apply only partial Stack updates, preserving unrelated config; deploy only from Release |
 | MR runtime state | Immutable Registry tags referenced by managed Compose `.env` keys | Hydrate the prior image, overlay affected outputs, push a new build tag, and restore the exact prior Compose/`.env` state on failed deployment |
 
 Because there is no rollback, a later failure leaves earlier successful
@@ -682,8 +700,8 @@ Release definition result and stays on the form. It renders three explicit
 links:
 
 ```text
-<Nginx repository>/<environment>/<project>-<environment>.conf
-<Docker repository>/<environment>_<project>/compose.yml
+<Nginx repository>/<environment>[_<stack>]/<project>-<environment>.conf
+<Docker repository>/<environment>[_<stack>]_<project>/compose.yml
 <collection>/<project>/_build?definitionId=<pipeline-id>
 ```
 
