@@ -350,10 +350,10 @@ On creation, `repositoryId=<generated-repository-guid>` is also required in the
 query string. The target on-premises server can otherwise fail to bind the YAML
 repository even though the body contains its ID.
 
-The Pipeline display name is the exact Service-aware generated YAML filename,
+The Pipeline display name is the exact Service-, Environment-, and Server-aware generated YAML filename,
 including its `.yml` suffix. Its normal shape is
-`<project>-<repository>-<service>-<Branch>To<ENV>.yml`; MR inserts `-MR-`
-before the Service segment. Before writing, the UI compares:
+`<project>-<repository>-<service>-<Branch>To<ENV>EnvOn<SERVER>Srv.yml`; MR
+inserts `-MR-` before the Service segment. Before writing, the UI compares:
 
 - `folder` against `\komodo`, case-insensitively;
 - `configuration.path`;
@@ -367,10 +367,10 @@ Azure DevOps Server's Pipelines by-ID model can omit
 mismatch would cause a needless Build Definition PUT and revision increment on
 every otherwise-idempotent rerun.
 
-When the desired Service-aware `BranchToEnvironment` name does not exist, the
-lookup also accepts the immediately preceding Service-less transition name,
-the 0.1.37 Environment-first name, and the earlier branch-only name. Build
-Definitions are likewise filtered by generated repository ID and
+When the desired Server-aware `BranchToEnvironmentEnvOnServerSrv` name does not
+exist, the lookup also accepts the immediately preceding Service-aware serverless
+transition name, the Service-less transition name, the 0.1.37 Environment-first
+name, and the earlier branch-only name. Build Definitions are likewise filtered by generated repository ID and
 `process.yamlFilename` in that order. MR migration considers only its
 Service-less `-MR-` predecessor, never a normal definition. A legacy match is
 renamed and rebound to the new path instead of creating a duplicate.

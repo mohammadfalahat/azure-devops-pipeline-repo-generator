@@ -381,13 +381,13 @@ Service: api
 Environment: demo
 Branch: feature/defineZones
 
-/ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMO.yml
+/ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml
 ```
 
 ### Pipeline and Release names
 
 ```text
-Pipeline:   <project>-<repository>[-MR]-<service>[-<stack>]-<Branch>To<ENVIRONMENT>.yml
+Pipeline:   <project>-<repository>[-MR]-<service>[-<stack>]-<Branch>To<ENVIRONMENT>EnvOn<SERVER>Srv.yml
 Release:    <UPPERCASE-SERVICE> [<UPPERCASE-STACK>] <UPPERCASE-ENVIRONMENT>
 MR Release: MR <UPPERCASE-SERVICE> [<UPPERCASE-STACK>] <UPPERCASE-ENVIRONMENT>
 ```
@@ -395,16 +395,17 @@ MR Release: MR <UPPERCASE-SERVICE> [<UPPERCASE-STACK>] <UPPERCASE-ENVIRONMENT>
 The Pipeline name is exactly the filename returned by
 `buildPipelineFilename`, including `.yml` and excluding only the leading
 repository path slash. For example, the YAML path
-`/ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMO.yml` maps to
-Pipeline name `ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMO.yml`.
+`/ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml` maps to
+Pipeline name `ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml`.
 
 For example, Service `api` and Environment `dev` produce Release name
 `API DEV`. Service and Environment are mandatory in the Pipeline filename;
-Environment is expressed as the destination of the source Branch:
-`<Branch>To<ENVIRONMENT>`. For example, Branch `Production` and Environment
-`soc` produce `ProductionToSOC`. The same
-repository and branch can therefore have distinct Service and destination
-Pipelines without sharing a YAML path or Build Definition identity.
+Environment is expressed as the destination of the source Branch and the selected
+Komodo Server is appended as the deployment target:
+`<Branch>To<ENVIRONMENT>EnvOn<SERVER>Srv`. For example, Branch `master`,
+Environment `pro`, and Server `Production` produce `masterToPROEnvOnProductionSrv`.
+The same repository and branch can therefore have distinct Service, destination,
+and Server Pipelines without sharing a YAML path or Build Definition identity.
 Release lookup still falls back to Pipeline artifact ID, so a legacy
 filename-based Release is renamed and reconciled in place rather than
 duplicated.
@@ -499,19 +500,20 @@ branch. This is performed even when the repository already existed.
 
 ### Step 4: upsert or migrate Pipeline
 
-The UI searches Pipelines by the desired exact Service-aware
-`BranchToEnvironment` name, then by the immediate predecessor's Service-less
-transition name, the 0.1.37 Environment-first name, and finally by the earlier
-branch-only filename.
+The UI searches Pipelines by the desired exact Service-, Environment-, and
+Server-aware `BranchToEnvironmentEnvOnServerSrv` name, then by the immediately
+preceding Service-aware serverless transition name, the Service-less transition
+name, the 0.1.37 Environment-first name, and finally by the earlier branch-only
+filename.
 
 - If an exact filename-named Pipeline exists, it reads the canonical complete
   Build Definition and compares the binding. The Pipelines by-ID response is
   not used for this decision because the target Server omits
   `repository.defaultBranch` from that sparse model.
 - If none of those names is present, it searches Build Definitions by the new
-  Service-aware transition YAML path, the immediately preceding Service-less
-  transition path, the 0.1.37 Environment-first path, and the earlier
-  branch-only path, in that order. This migrates the existing Pipeline ID
+  Server-aware transition YAML path, the immediately preceding Service-aware
+  serverless path, the Service-less transition path, the 0.1.37
+  Environment-first path, and the earlier branch-only path, in that order. This migrates the existing Pipeline ID
   instead of creating a duplicate. If an old bug created more than one path
   match, the lowest/oldest definition ID is selected deterministically and
   unrelated duplicates are left untouched.
@@ -583,7 +585,7 @@ No continuous deployment trigger is configured.
 
 Monorepo mode uses the same five provisioning steps but selects separate
 renderers and identities. The generated Pipeline/Release live under
-`\komodo\MR`, the Pipeline filename contains `-MR-<service>[-<stack>]-<Branch>To<ENV>`,
+`\komodo\MR`, the Pipeline filename contains `-MR-<service>[-<stack>]-<Branch>To<ENV>EnvOn<SERVER>Srv`,
 and the Release is named `MR <SERVICE> [<STACK>] <ENV>`. The immediately preceding
 Service-less MR Pipeline is eligible for in-place migration; normal Pipeline
 definitions are never considered legacy candidates for MR reconciliation.
@@ -681,7 +683,7 @@ not retried.
 | Generated/support repository | Exact repository name | Before writes, resolve the selected Server's exact `nginx-network`/`nginx-net`; reuse repositories, add missing bootstrap files, map the actual external network, and merge only missing Compose services and Nginx Locations |
 | YAML file | Generated path on `main` | Reuse without Push when byte-identical; otherwise add/edit with a new commit |
 | Default branch | Repository ID | Always patch to `refs/heads/main` |
-| Pipeline | Exact Service-aware BranchToEnvironment name/path, then Service-less transition, 0.1.37 Environment-first, and older branch-only identities | Reuse or GET-modify-PUT through Build Definitions |
+| Pipeline | Exact Service/Environment/Server-aware BranchToEnvironmentEnvOnServerSrv name/path, then the Service-aware serverless transition, Service-less transition, 0.1.37 Environment-first, and older branch-only identities | Reuse or GET-modify-PUT through Build Definitions |
 | Release definition | Exact Release name, then Pipeline artifact ID | Reuse or reconcile through Release Definitions PUT |
 | MR deployment contract | `/.devops/deployments.yml` on `main` | Create when missing; preserve all later edits |
 | MR Compose Git source | `<Project>_Docker_DevOps:/<environment>[_<stack>]_<project>/{compose.yml,.env}@main` | Reuse the shared Compose; merge absent services, migrate legacy runtime fields, keep stable image repositories in Compose, and store managed immutable tags in `.env` without changing unrelated/operator-edited services |
@@ -733,7 +735,7 @@ login page.
 - List calls do not follow continuation tokens or implement pagination. Large
   projects can hide a repository, Pipeline, Release, queue, or service endpoint
   beyond the first response page.
-- Pipeline names intentionally include Service and the Branch-to-Environment transition YAML filename;
+- Pipeline names intentionally include Service, the Branch-to-Environment transition, and the selected Server in the YAML filename;
   normal Release names contain Service and Environment, while MR names also contain the MR marker.
 - Pipeline and Release folder comparison is case-insensitive.
 - Pipeline migration depends on Build Definitions list filtering by repository

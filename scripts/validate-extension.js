@@ -584,12 +584,15 @@ if (!ui.includes('readPipelineResponse')) {
 }
 if (
   !ui.includes('const buildPipelineName = (pipelineFilename) => pipelineFilename;') ||
+  !ui.includes('Komodo Server is required to build the Pipeline filename.') ||
+  !ui.includes('EnvOn${serverSegment}Srv.yml') ||
   !ui.includes('const pipelineName = buildPipelineName(pipelineFilename);') ||
   !ui.includes('const buildLegacyServiceLessPipelineFilename = ({') ||
+  !ui.includes('const buildLegacyServerlessPipelineFilename = ({') ||
   !ui.includes('service: payload.service,') ||
-  !ui.includes('${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}.yml')
+  !ui.includes('${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}EnvOn${serverSegment}Srv.yml')
 ) {
-  fail('Pipeline filename/name must include Service, isolate custom Stacks, and retain the default transition identity.');
+  fail('Pipeline filename/name must include Service, destination Environment, selected Server, isolate custom Stacks, and retain migration identities.');
 }
 if (
   !ui.includes("project: 'SharedTemplates'") ||
@@ -667,8 +670,8 @@ if (!restContracts.includes("`7.1-preview.1`") || !restContracts.includes('`repo
 if (!restContracts.includes('default is `7.1`')) {
   fail('REST documentation must distinguish the shell API_VERSION default from the browser contract.');
 }
-if (!restContracts.includes('GET-modify-PUT') || !restContracts.includes('exact Service-aware generated YAML filename')) {
-  fail('REST documentation must describe Build Definition reconciliation and Service-aware filename-based Pipeline naming.');
+if (!restContracts.includes('GET-modify-PUT') || !restContracts.includes('exact Service-, Environment-, and Server-aware generated YAML filename')) {
+  fail('REST documentation must describe Build Definition reconciliation and Service/Environment/Server-aware filename-based Pipeline naming.');
 }
 if (
   !restContracts.includes('`_signout`') ||

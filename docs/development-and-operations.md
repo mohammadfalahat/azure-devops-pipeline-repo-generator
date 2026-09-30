@@ -255,8 +255,8 @@ assembled as text:
 - run `npm test` and inspect a concrete generated document;
 - validate the document in a test Pipeline on the target server.
 
-`buildPipelineFilename` requires Service and Environment and returns
-`<project>-<repository>[-MR]-<service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml`;
+`buildPipelineFilename` requires Service, Environment, and the selected Komodo Server and returns
+`<project>-<repository>[-MR]-<service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>EnvOn<SERVER>Srv.yml`;
 `buildPipelineName` returns that filename unchanged. `buildReleaseName` uses
 uppercased Service, optional non-default Stack, and Environment values, prefixed
 by `MR` in Monorepo mode.
@@ -411,17 +411,18 @@ REST responses to assert that:
   and a no-URI-slash proxy target so the request URI is preserved; root is
   ordered last and older managed paths/targets/generated rewrites are migrated
   while only a missing Location is inserted;
-- Pipeline name exactly equals the Service/Stack-aware Branch-to-Environment transition YAML filename;
+- Pipeline name exactly equals the Service/Stack-aware Branch-to-Environment-and-Server transition YAML filename;
 - normal Release name contains uppercased Service, optional Stack, and Environment, while MR also has the `MR` prefix;
 - an existing byte-identical YAML file is read and reused without a Git Push or
   no-op commit;
 - a sparse exact-name Pipeline reference is resolved through the complete Build
   Definition, and a correctly linked definition with folder `\KOMODO` is reused
   without any PUT or revision increment;
-- the immediately preceding Service-less transition, a 0.1.37
-  Environment-first, or an earlier branch-only Pipeline is found by legacy
-  name or YAML path, selected deterministically, and migrated to the
-  Service-aware BranchToEnvironment name/path through Build Definitions
+- the immediately preceding Service-aware serverless transition, a Service-less
+  transition, a 0.1.37 Environment-first, or an earlier branch-only Pipeline is
+  found by legacy name or YAML path, selected deterministically, and migrated to
+  the Service/Environment/Server-aware BranchToEnvironmentEnvOnServerSrv
+  name/path through Build Definitions
   GET-modify-PUT while preserving its ID;
 - no `PUT /_apis/pipelines/{id}` is sent;
 - a legacy Release is found by `<projectId>:<pipelineId>` Build artifact source,

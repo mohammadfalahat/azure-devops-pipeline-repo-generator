@@ -23,6 +23,7 @@ const instrumented = source.replace(
   initializationMarker,
   `  window.__PipelineGeneratorTestHooks = {
 	    buildPipelineFilename,
+	    buildLegacyServerlessPipelineFilename,
 	    buildLegacyServiceLessPipelineFilename,
 	    buildLegacyPipelineFilename,
 	    buildLegacyEnvironmentFirstPipelineFilename,
@@ -246,6 +247,14 @@ const filename = hooks.buildPipelineFilename({
   repositoryName: 'RideSharing_Backend',
   service: 'api',
   environment: 'demo',
+  branchName: 'feature/defineZones',
+  komodoServer: 'Production'
+});
+const serverlessFilename = hooks.buildLegacyServerlessPipelineFilename({
+  projectName: 'RideSharing',
+  repositoryName: 'RideSharing_Backend',
+  service: 'api',
+  environment: 'demo',
   branchName: 'feature/defineZones'
 });
 const serviceLessFilename = hooks.buildLegacyServiceLessPipelineFilename({
@@ -265,7 +274,30 @@ const legacyFilename = hooks.buildLegacyPipelineFilename({
   repositoryName: 'RideSharing_Backend',
   branchName: 'feature/defineZones'
 });
-assert.strictEqual(filename, 'ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMO.yml');
+assert.strictEqual(filename, 'ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml');
+assert.strictEqual(serverlessFilename, 'ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMO.yml');
+assert.notStrictEqual(
+  filename,
+  hooks.buildPipelineFilename({
+    projectName: 'RideSharing',
+    repositoryName: 'RideSharing_Backend',
+    service: 'api',
+    environment: 'demo',
+    branchName: 'feature/defineZones',
+    komodoServer: 'Demo'
+  })
+);
+assert.throws(
+  () =>
+    hooks.buildPipelineFilename({
+      projectName: 'RideSharing',
+      repositoryName: 'RideSharing_Backend',
+      service: 'api',
+      environment: 'demo',
+      branchName: 'feature/defineZones'
+    }),
+  /Komodo Server is required/
+);
 assert.strictEqual(serviceLessFilename, 'ridesharing-ridesharing_backend-Feature-DefineZonesToDEMO.yml');
 assert.strictEqual(previousEnvironmentFirstFilename, 'ridesharing-ridesharing_backend-demo-feature-definezones.yml');
 assert.strictEqual(legacyFilename, 'ridesharing-ridesharing_backend-feature-definezones.yml');
@@ -289,9 +321,10 @@ const workerFilename = hooks.buildPipelineFilename({
   service: 'api',
   environment: 'pro',
   stack: 'worker',
-  branchName: 'main'
+  branchName: 'main',
+  komodoServer: 'Production'
 });
-assert.strictEqual(workerFilename, 'ridesharing-ridesharing_backend-api-worker-MainToPRO.yml');
+assert.strictEqual(workerFilename, 'ridesharing-ridesharing_backend-api-worker-MainToPROEnvOnProductionSrv.yml');
 assert.strictEqual(
   hooks.buildReleaseName({ service: 'api', environment: 'pro', stack: 'worker' }),
   'API WORKER PRO'
@@ -376,9 +409,10 @@ assert.strictEqual(
     service: 'frontend',
     environment: 'demo',
     branchName: 'feature/defineZones',
+    komodoServer: 'Demo',
     mode: 'monorepo'
   }),
-  'ridesharing-ridesharing_backend-MR-frontend-Feature-DefineZonesToDEMO.yml'
+  'ridesharing-ridesharing_backend-MR-frontend-Feature-DefineZonesToDEMOEnvOnDemoSrv.yml'
 );
 assert.strictEqual(
   hooks.buildReleaseName({ service: 'frontend', environment: 'demo', mode: 'monorepo' }),
@@ -391,7 +425,8 @@ assert.notStrictEqual(
     repositoryName: 'RideSharing_Backend',
     service: 'worker',
     environment: 'demo',
-    branchName: 'feature/defineZones'
+    branchName: 'feature/defineZones',
+    komodoServer: 'Production'
   })
 );
 hooks.applyModePresentation('monorepo');
@@ -461,9 +496,10 @@ assert.strictEqual(
     repositoryName: 'RideSharing_Backend',
     service: 'api',
     environment: 'dev',
-    branchName: 'feature/defineZones'
+    branchName: 'feature/defineZones',
+    komodoServer: 'Development'
   }),
-  'ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEV.yml'
+  'ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEVEnvOnDevelopmentSrv.yml'
 );
 const workerMonorepoYaml = hooks.buildMonorepoPipelineYaml(
   {
@@ -490,9 +526,10 @@ assert.strictEqual(
     repositoryName: 'Locanit_API',
     service: 'api',
     environment: 'soc',
-    branchName: 'Production'
+    branchName: 'Production',
+    komodoServer: 'Production'
   }),
-  'locanit-locanit_api-api-ProductionToSOC.yml'
+  'locanit-locanit_api-api-ProductionToSOCEnvOnProductionSrv.yml'
 );
 assert.throws(
   () =>
@@ -500,7 +537,8 @@ assert.throws(
       projectName: 'RideSharing',
       repositoryName: 'RideSharing_Backend',
       service: 'api',
-      branchName: 'feature/defineZones'
+      branchName: 'feature/defineZones',
+      komodoServer: 'Demo'
     }),
   /Environment is required/
 );
@@ -510,7 +548,8 @@ assert.throws(
       projectName: 'RideSharing',
       repositoryName: 'RideSharing_Backend',
       environment: 'demo',
-      branchName: 'feature/defineZones'
+      branchName: 'feature/defineZones',
+      komodoServer: 'Demo'
     }),
   /Service name is required/
 );
@@ -2300,7 +2339,7 @@ KOMODO_API_SECRET="synthetic-read-secret"
   assert(noOpReleaseCalls.every(({ method }) => method === 'GET'));
 
 console.log(
-  'UI behavior regression tests passed: Environment/domain parsing, direct enabled-server discovery, underscore-normalized Service autofill, semantic frontend/backend/version routing with repository-priority ownership, Service-aware BranchToEnvironment Pipeline naming with legacy migration, root-last Nginx routing with managed rewrite removal, idempotent Compose/shared-route merging, locked completion links, Service-aware Release naming, and Pipeline/Release/KomodoAPI reconciliation.'
+  'UI behavior regression tests passed: Environment/domain parsing, direct enabled-server discovery, underscore-normalized Service autofill, semantic frontend/backend/version routing with repository-priority ownership, Service-aware BranchToEnvironmentEnvOnServerSrv Pipeline naming with legacy migration, root-last Nginx routing with managed rewrite removal, idempotent Compose/shared-route merging, locked completion links, Service-aware Release naming, and Pipeline/Release/KomodoAPI reconciliation.'
 );
 };
 

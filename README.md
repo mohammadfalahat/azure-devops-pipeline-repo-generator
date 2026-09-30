@@ -6,7 +6,7 @@ creates or reuses a project-level repository, writes a generated YAML file,
 registers a YAML Pipeline that points to that file, and creates a classic
 Release definition that consumes the Pipeline as a Build artifact.
 
-The manifest version documented here is **0.1.71**. The manifest targets Azure
+The manifest version documented here is **0.1.72**. The manifest targets Azure
 DevOps Services and Azure DevOps Server range `[16.0,20.0)`. The complete live
 workflow has been verified on the documented on-premises Server environment;
 the Azure DevOps Services Release API route still requires a separate
@@ -48,7 +48,7 @@ one agent-based Bash@3 deployment job with packaged wrapper stored Inline
 the normal generator unchanged:
 
 - one Pipeline named
-  `<project>-<repository>-MR-<service>[-<stack>]-<Branch>To<ENVIRONMENT>.yml` under `\komodo\MR`;
+  `<project>-<repository>-MR-<service>[-<stack>]-<Branch>To<ENVIRONMENT>EnvOn<SERVER>Srv.yml` under `\komodo\MR`;
 - one classic Release named `MR <SERVICE> [<STACK>] <ENVIRONMENT>` under `\komodo\MR`;
 - an automatically created `/.devops/deployments.yml` project contract, with
   the shared `monorepo/pipeline.yml` and `monorepo/mr-build.cjs` loaded from

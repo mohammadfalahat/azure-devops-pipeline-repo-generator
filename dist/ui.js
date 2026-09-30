@@ -1196,6 +1196,30 @@
     return `${projectSegment}-${repoSegment}${modeSegment}-${branchSegment}To${environmentSegment}.yml`;
   };
 
+  const buildLegacyServerlessPipelineFilename = ({
+    projectName,
+    repositoryName,
+    service,
+    environment,
+    stack = 'default',
+    branchName,
+    mode = 'pipeline'
+  }) => {
+    const projectSegment = sanitizePipelineNameSegment(projectName, 'project');
+    const repoSegment = sanitizePipelineNameSegment(repositoryName || projectName, 'repo');
+    const serviceSegment = sanitizePipelineNameSegment(service, 'service');
+    const environmentSegment = sanitizePipelineNameSegment(environment, 'environment').toUpperCase();
+    const normalizedStack = normalizeStackName(stack);
+    const stackSegment = isDefaultStack(normalizedStack) ? '' : `-${sanitizePipelineNameSegment(normalizedStack, 'stack')}`;
+    const branchSegment = sanitizePipelineNameSegment(
+      branchName?.replace(/^refs\/heads\//, ''),
+      'branch',
+      { lowercase: false }
+    ).replace(/(^|[-_.])([a-z])/g, (_, separator, character) => `${separator}${character.toUpperCase()}`);
+    const modeSegment = normalizeGeneratorMode(mode) === 'monorepo' ? '-MR' : '';
+    return `${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}.yml`;
+  };
+
   const buildPipelineFilename = ({
     projectName,
     repositoryName,
@@ -1203,6 +1227,7 @@
     environment,
     stack = 'default',
     branchName,
+    komodoServer,
     mode = 'pipeline'
   }) => {
     if (!String(service || '').trim()) {
@@ -1214,7 +1239,11 @@
     if (!String(environment || '').trim()) {
       throw new Error('Environment is required to build the Pipeline filename.');
     }
+    if (!String(komodoServer || '').trim()) {
+      throw new Error('Komodo Server is required to build the Pipeline filename.');
+    }
     const environmentSegment = sanitizePipelineNameSegment(environment, 'environment').toUpperCase();
+    const serverSegment = sanitizePipelineNameSegment(komodoServer, 'server', { lowercase: false });
     const normalizedStack = normalizeStackName(stack);
     const stackSegment = isDefaultStack(normalizedStack) ? '' : `-${sanitizePipelineNameSegment(normalizedStack, 'stack')}`;
     const branchSegment = sanitizePipelineNameSegment(
@@ -1223,7 +1252,7 @@
       { lowercase: false }
     ).replace(/(^|[-_.])([a-z])/g, (_, separator, character) => `${separator}${character.toUpperCase()}`);
     const modeSegment = normalizeGeneratorMode(mode) === 'monorepo' ? '-MR' : '';
-    return `${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}.yml`;
+    return `${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}EnvOn${serverSegment}Srv.yml`;
   };
 
   const buildPipelineName = (pipelineFilename) => pipelineFilename;
@@ -4711,6 +4740,16 @@
       environment: payload.environment,
       branchName: state.sourceBranch,
       stack: payload.stack,
+      komodoServer: payload.komodoServer,
+      mode: state.mode
+    });
+    const legacyServerlessPipelineFilename = buildLegacyServerlessPipelineFilename({
+      projectName: state.projectName,
+      repositoryName: sourceRepositoryName,
+      service: payload.service,
+      environment: payload.environment,
+      branchName: state.sourceBranch,
+      stack: payload.stack,
       mode: state.mode
     });
     const legacyServiceLessPipelineFilename = buildLegacyServiceLessPipelineFilename({
@@ -4847,24 +4886,30 @@
             repo,
             pipelineName,
             pipelinePath: `/${pipelineFilename}`,
-            legacyPipelineNames: !isDefaultStack(payload.stack)
-              ? []
-              : isMonorepoMode()
-                ? [legacyServiceLessPipelineFilename]
-                : [
-                    legacyServiceLessPipelineFilename,
-                    legacyEnvironmentFirstPipelineFilename,
-                    legacyPipelineFilename
-                  ],
-            legacyPipelinePaths: !isDefaultStack(payload.stack)
-              ? []
-              : isMonorepoMode()
-                ? [`/${legacyServiceLessPipelineFilename}`]
-                : [
-                    `/${legacyServiceLessPipelineFilename}`,
-                    `/${legacyEnvironmentFirstPipelineFilename}`,
-                    `/${legacyPipelineFilename}`
-                  ],
+            legacyPipelineNames: isMonorepoMode()
+              ? [legacyServerlessPipelineFilename, legacyServiceLessPipelineFilename]
+              : [
+                  legacyServerlessPipelineFilename,
+                  ...(!isDefaultStack(payload.stack)
+                    ? []
+                    : [
+                        legacyServiceLessPipelineFilename,
+                        legacyEnvironmentFirstPipelineFilename,
+                        legacyPipelineFilename
+                      ])
+                ],
+            legacyPipelinePaths: isMonorepoMode()
+              ? [`/${legacyServerlessPipelineFilename}`, `/${legacyServiceLessPipelineFilename}`]
+              : [
+                  `/${legacyServerlessPipelineFilename}`,
+                  ...(!isDefaultStack(payload.stack)
+                    ? []
+                    : [
+                        `/${legacyServiceLessPipelineFilename}`,
+                        `/${legacyEnvironmentFirstPipelineFilename}`,
+                        `/${legacyPipelineFilename}`
+                      ])
+                ],
             branch: targetBranch,
             pipelineFolder,
             accessToken: state.accessToken
