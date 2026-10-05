@@ -1,13 +1,13 @@
 schema_version: 1
 last_verified_at: "2026-08-27"
-status: "candidate_0_1_70_tom_select_editable_comboboxes_awaiting_packaging"
+status: "local_0_1_73_projectless_pipeline_names_validated_not_live_tested"
 
 development_candidate:
-  version: "0.1.70"
-  local_validated_at: "2026-09-29"
+  version: "0.1.73"
+  local_validated_at: "2026-10-05"
   package_path: null
   package_sha256: null
-  local_validation: "passed: full npm test suite; locally packaged Tom Select 2.6.2 assets and license; editable Environment and Stack combobox contract; local Chrome dropdown, free-text creation, selection, and accessibility-tree verification; plus all 0.1.69 Stack isolation, routing, retry, reconciliation, rollback, listener, and provisioner regressions"
+  local_validation: "passed: full npm test suite and git diff --check for project-prefix removal, normal/MR image repository parity, service-specific Compose tag keys, and normal multi-service Compose merge; prior Tom Select local Chrome validation was 2026-09-29; no live Azure DevOps or Komodo test"
   installed: false
   live_verified: false
   editable_combobox:
@@ -30,22 +30,26 @@ development_candidate:
     - "/home/falahat/SharedTemplates/release-komodo.sh"
   sharedtemplates_local_sync: true
   sharedtemplates_pushed: false
-  intended_pipeline_name: "ridesharing-ridesharing_backend-backend-Feature-ZonesToDEMO.yml"
+  intended_pipeline_name: "ridesharing_backend-backend-Feature-ZonesToDEMOEnvOn<SERVER>Srv.yml"
   intended_release_name: "BACKEND DEMO"
-  intended_monorepo_pipeline_name: "ridesharing-ridesharing_frontend-MR-frontend-Feature-ZonesToDEMO.yml"
+  intended_monorepo_pipeline_name: "ridesharing_frontend-MR-frontend-Feature-ZonesToDEMOEnvOn<SERVER>Srv.yml"
   intended_monorepo_release_name: "MR FRONTEND DEMO"
   intended_custom_stack:
     value: "worker"
     compose_path: "/pro_worker_ridesharing/compose.yml"
     nginx_path: "/pro_worker/ridesharing-pro.conf"
-    pipeline_name: "ridesharing-ridesharing_backend-backend-worker-MainToPRO.yml"
+    pipeline_name: "ridesharing_backend-backend-worker-MainToPROEnvOn<SERVER>Srv.yml"
     release_name: "BACKEND WORKER PRO"
     komodo_stack: "RideSharing_Docker_DevOps-pro-worker"
     komodo_nginx_repo: "RideSharing_Nginx_DevOps-pro-worker"
   migration:
-    pipeline: "For default Stack only, find by desired Service-aware BranchToEnvironment name/path, then the immediately preceding Service-less transition, 0.1.37 Environment-first, and earlier branch-only identities; GET-modify-PUT the same Build Definition ID. Custom Stacks use only their isolated identity. MR considers only its Service-less MR predecessor."
+    pipeline: "Find by repository-prefixed desired name/path, then the project-prefixed Server-aware predecessor and earlier allowed legacy names/paths; GET-modify-PUT the same Build Definition ID. Custom Stacks remain isolated. MR considers only MR predecessors."
     release: "Find by exact uppercased Service/optional-Stack/Environment name or Pipeline artifact ID, then reconcile the full Release definition."
   fixes:
+    - "Match normal and MR Compose image repositories to their respective Build image names, including the Service punctuation contract."
+    - "Use normal Service/optional-Stack .env keys instead of generic IMAGE_TAG in Compose; seed and merge the adjacent tracked .env without replacing existing versions."
+    - "Append a missing normal Service to an existing Compose file and correct only its managed image reference on rerun; keep unrelated services and fields."
+    - "Omit the explicit project segment from normal and MR YAML filenames/Pipeline names; retain the former project-prefixed Server-aware identity for in-place Build Definition migration. Release display names already omit the project."
     - "Replace native Environment and Stack datalists with locally packaged Tom Select 2.6.2 editable comboboxes so configured options visibly open on click or focus while custom values remain supported."
     - "Keep the native selects as FormData controls, synchronize asynchronous options, values, placeholders, and disabled state through Tom Select, and remove enhanced source selects from the accessibility tree."
     - "Package Tom Select JavaScript, default CSS, and Apache-2.0 license inside dist/vendor so the extension has no CDN dependency."
@@ -74,7 +78,7 @@ development_candidate:
     - "Preserve an existing logical Compose network key and map its explicit external name to the actual Docker host network."
     - "Print every non-empty Komodo message, command, stdout, and stderr field on MR DeployStack failure so an empty message cannot hide the real Compose error."
     - "Contribute a separate Generate MonoRepo branch action and propagate mode=monorepo through token-free Dialog/Hub context."
-    - "Name MR Pipelines <project>-<repository>-MR-<service>[-<stack>]-<Branch>To<ENV>.yml and MR Releases MR <SERVICE> [<STACK>] <ENV>, under \\komodo\\MR, without migrating normal definitions."
+    - "Name MR Pipelines <repository>-MR-<service>[-<stack>]-<Branch>To<ENV>EnvOn<SERVER>Srv.yml and MR Releases MR <SERVICE> [<STACK>] <ENV>, under \\komodo\\MR, without migrating normal definitions."
     - "Generate only the create-once /.devops/deployments.yml project contract and make every MR Pipeline import monorepo/pipeline.yml plus monorepo/mr-build.cjs from SharedTemplates."
     - "Package SharedTemplates:/monorepo/nginx/default.conf inside each immutable static image; Compose has no runtime config or project-output bind mount."
     - "Merge missing Monorepo service entries into <environment>[_<stack>]_<project>/compose.yml on main in <Project>_Docker_DevOps; preserve existing services and never create a target-side Compose copy."
@@ -102,7 +106,7 @@ development_candidate:
     - "Stay on the form after provisioning and display Compose and Pipeline links plus an Nginx link only when Nginx was generated, instead of redirecting automatically."
     - "After success, lock repeat submission, collapse the completed form, and focus/scroll the review-links panel; keep the form visible after errors."
     - "Name normal classic Releases using uppercased Service, optional non-default Stack, and Environment; prefix MR Release names with MR while retaining those segments."
-    - "Require Service, optional non-default Stack, and Environment in the generated YAML filename and identical Pipeline name: <project>-<repository>[-MR]-<service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml."
+    - "Require Service, optional non-default Stack, Environment, and Server in the generated YAML filename and identical Pipeline name: <repository>[-MR]-<service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>EnvOn<SERVER>Srv.yml."
     - "Migrate the immediately preceding Service-less transition, 0.1.37 Environment-first, and earlier branch-only Pipelines by legacy name/path so Pipeline ID and Release artifact identity are preserved."
     - "Load dist/release-inline-task.sh from the installed extension and embed its complete text as the classic Release Bash task's inline script."
     - "Resolve exact Variable Group KomodoAPI with actionFilter=Use and validate AZP_TOKEN, KOMODO_API_KEY, and KOMODO_API_SECRET names without exposing values."
@@ -774,7 +778,7 @@ next_run:
   - "Read back the Docker/Nginx support repositories and verify no /environments file was generated and only missing compose.yml, a shared route, or managed-route normalization was committed; prove root is last and every route has no rewrite and a no-URI-slash proxy target."
   - "Read Release 7 back: top-level variableGroups includes ID 7, environment variableGroups is empty, and the Inline task text matches the packaged wrapper."
   - "Commit and push the locally synchronized SharedTemplates monorepo/pipeline.yml to main, then rerun Build 15247 or a new equivalent Build and verify transient Stack busy responses are logged as warnings before success or bounded final failure."
-  - "Package/install 0.1.70 and rerun default Stack normal mode twice; verify legacy names remain unchanged and the second run has no Build Definition PUT or support-repository commit."
+  - "After packaging/installing the current 0.1.73 candidate, rerun default Stack normal mode twice; verify the project-prefixed Pipeline is migrated under the same ID and the second run has no Build Definition PUT or support-repository commit."
   - "In a disposable configured Environment, generate Stack worker and verify Compose /pro_worker_<project>/compose.yml, Nginx /pro_worker/<project>-pro.conf, Stack-specific container/image targets, Pipeline/Release names, and Komodo Docker/Nginx resources all include worker without altering default."
   - "Create a second service in the same project and verify the Stack combobox visibly offers both default and worker while still accepting a new free-text Stack."
   - "In a disposable project, enter an unlisted Environment and verify Pipeline, Release, and Compose are produced while no Nginx repository/file read, create, push, or completion link occurs."
@@ -786,7 +790,7 @@ next_run:
   - "Verify the extension-token queue and Docker Registry endpoint reads return HTTP 200 before submitting."
   - "Verify mouse wheel, touchpad, Page Down, and scrollbar can reach every form field plus the submit button."
   - "If HostAuthorizationNotFound appears, use Open extension authorization as a Collection Administrator and authorize the requested scopes."
-  - "If no authorization action is exposed, clean-install the same published 0.1.70 version and verify installState.flags."
+  - "If no authorization action is exposed, clean-install the same published candidate version and verify installState.flags."
   - "Verify the generator opens in an Azure DevOps Dialog or the Azure Repos Pipeline Generator Hub, never a separate tab."
   - "Verify the hosted generator itself obtains VSS.getAccessToken without a PAT prompt or token transfer."
   - "Verify success stays on the page, locks/collapses the form, focuses valid Compose/Pipeline links plus Nginx when generated, and performs no automatic navigation."

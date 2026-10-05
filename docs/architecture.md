@@ -1,6 +1,6 @@
 # Architecture and runtime flow
 
-This document describes version 0.1.70 from the implementation in
+This document describes version 0.1.73 from the implementation in
 `vss-extension.json`, `dist/menu-action.js`, `dist/ui.js`, and
 `dist/release-config.js`.
 
@@ -323,8 +323,16 @@ The Compose service/container name is
 omitted for `default`. Images use the analogous
 `<service>[-<stack>]-<environment>` suffix. UI/frontend services expose port
 80; backend and other services expose port 8080. The Nginx host is
-`<lowercase-sanitized-project>.<environment-domain>`. Routing uses semantic
-tokens rather than a short exact-name list. `ui`, `front`, `frontend`, `web`,
+`<lowercase-sanitized-project>.<environment-domain>`.
+Normal Pipeline image repositories preserve the validated Service spelling,
+including `_`, `-`, and `.`, in both Build and Compose. The Compose tag uses
+`${<service>[_<stack>]}` with punctuation converted to underscores; the
+adjacent tracked `.env` stores that key and Release updates its version.
+Existing normal Compose files gain a missing service at the end of `services`;
+an existing generated service's image reference is corrected in place while
+other service fields remain intact. MR Compose image repositories use the MR
+Pipeline's normalized Service key, so its Build and Compose paths also match.
+Routing uses semantic tokens rather than a short exact-name list. `ui`, `front`, `frontend`, `web`,
 `fe`, `website`, `client`, `portal`, and `spa` indicate frontend; `api`, `back`,
 `backend`, `be`, `server`, `bff`, `rest`, `graphql`, and `gateway` indicate backend.
 Unversioned frontend owns `/`, unversioned backend owns `/api/`, and every
@@ -363,10 +371,10 @@ a lower-priority repository cannot retain or later reclaim `/` or `/api/`.
 ### YAML filename
 
 ```text
-<sanitized-project>-<sanitized-source-repository>[-MR]-<sanitized-service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>.yml
+<sanitized-source-repository>[-MR]-<sanitized-service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>EnvOn<SERVER>Srv.yml
 ```
 
-Project, repository, and Service segments are trimmed and lowercased. Slash and
+Repository and Service segments are trimmed and lowercased. Slash and
 backslash runs become `-`; characters outside word characters, dot, and hyphen
 become `-`; repeated and edge hyphens are removed. The Branch retains its
 word-leading capitalization and the Environment is uppercased. JavaScript `\w`
@@ -381,13 +389,13 @@ Service: api
 Environment: demo
 Branch: feature/defineZones
 
-/ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml
+/ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml
 ```
 
 ### Pipeline and Release names
 
 ```text
-Pipeline:   <project>-<repository>[-MR]-<service>[-<stack>]-<Branch>To<ENVIRONMENT>EnvOn<SERVER>Srv.yml
+Pipeline:   <repository>[-MR]-<service>[-<stack>]-<Branch>To<ENVIRONMENT>EnvOn<SERVER>Srv.yml
 Release:    <UPPERCASE-SERVICE> [<UPPERCASE-STACK>] <UPPERCASE-ENVIRONMENT>
 MR Release: MR <UPPERCASE-SERVICE> [<UPPERCASE-STACK>] <UPPERCASE-ENVIRONMENT>
 ```
@@ -395,8 +403,8 @@ MR Release: MR <UPPERCASE-SERVICE> [<UPPERCASE-STACK>] <UPPERCASE-ENVIRONMENT>
 The Pipeline name is exactly the filename returned by
 `buildPipelineFilename`, including `.yml` and excluding only the leading
 repository path slash. For example, the YAML path
-`/ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml` maps to
-Pipeline name `ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml`.
+`/ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml` maps to
+Pipeline name `ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml`.
 
 For example, Service `api` and Environment `dev` produce Release name
 `API DEV`. Service and Environment are mandatory in the Pipeline filename;
@@ -409,6 +417,9 @@ and Server Pipelines without sharing a YAML path or Build Definition identity.
 Release lookup still falls back to Pipeline artifact ID, so a legacy
 filename-based Release is renamed and reconciled in place rather than
 duplicated.
+The previous project-prefixed Pipeline name and YAML path are also migration
+identities. A matching Build Definition is rebound to the shorter path under
+the same ID. Release display names already omit the project.
 
 ## Generated YAML contract
 
@@ -502,7 +513,8 @@ branch. This is performed even when the repository already existed.
 
 The UI searches Pipelines by the desired exact Service-, Environment-, and
 Server-aware `BranchToEnvironmentEnvOnServerSrv` name, then by the immediately
-preceding Service-aware serverless transition name, the Service-less transition
+preceding project-prefixed Server-aware name, the Service-aware serverless
+transition name, the Service-less transition
 name, the 0.1.37 Environment-first name, and finally by the earlier branch-only
 filename.
 
@@ -511,7 +523,7 @@ filename.
   not used for this decision because the target Server omits
   `repository.defaultBranch` from that sparse model.
 - If none of those names is present, it searches Build Definitions by the new
-  Server-aware transition YAML path, the immediately preceding Service-aware
+  Server-aware YAML path, the project-prefixed Server-aware path, the Service-aware
   serverless path, the Service-less transition path, the 0.1.37
   Environment-first path, and the earlier branch-only path, in that order. This migrates the existing Pipeline ID
   instead of creating a duplicate. If an old bug created more than one path
@@ -683,7 +695,7 @@ not retried.
 | Generated/support repository | Exact repository name | Before writes, resolve the selected Server's exact `nginx-network`/`nginx-net`; reuse repositories, add missing bootstrap files, map the actual external network, and merge only missing Compose services and Nginx Locations |
 | YAML file | Generated path on `main` | Reuse without Push when byte-identical; otherwise add/edit with a new commit |
 | Default branch | Repository ID | Always patch to `refs/heads/main` |
-| Pipeline | Exact Service/Environment/Server-aware BranchToEnvironmentEnvOnServerSrv name/path, then the Service-aware serverless transition, Service-less transition, 0.1.37 Environment-first, and older branch-only identities | Reuse or GET-modify-PUT through Build Definitions |
+| Pipeline | Exact repository-prefixed Service/Environment/Server-aware name/path, then the project-prefixed Server-aware predecessor, Service-aware serverless transition, Service-less transition, 0.1.37 Environment-first, and older branch-only identities | Reuse or GET-modify-PUT through Build Definitions |
 | Release definition | Exact Release name, then Pipeline artifact ID | Reuse or reconcile through Release Definitions PUT |
 | MR deployment contract | `/.devops/deployments.yml` on `main` | Create when missing; preserve all later edits |
 | MR Compose Git source | `<Project>_Docker_DevOps:/<environment>[_<stack>]_<project>/{compose.yml,.env}@main` | Reuse the shared Compose; merge absent services, migrate legacy runtime fields, keep stable image repositories in Compose, and store managed immutable tags in `.env` without changing unrelated/operator-edited services |

@@ -23,6 +23,7 @@ const instrumented = source.replace(
   initializationMarker,
   `  window.__PipelineGeneratorTestHooks = {
 	    buildPipelineFilename,
+	    buildLegacyProjectPrefixedPipelineFilename,
 	    buildLegacyServerlessPipelineFilename,
 	    buildLegacyServiceLessPipelineFilename,
 	    buildLegacyPipelineFilename,
@@ -250,6 +251,14 @@ const filename = hooks.buildPipelineFilename({
   branchName: 'feature/defineZones',
   komodoServer: 'Production'
 });
+const projectPrefixedFilename = hooks.buildLegacyProjectPrefixedPipelineFilename({
+  projectName: 'RideSharing',
+  repositoryName: 'RideSharing_Backend',
+  service: 'api',
+  environment: 'demo',
+  branchName: 'feature/defineZones',
+  komodoServer: 'Production'
+});
 const serverlessFilename = hooks.buildLegacyServerlessPipelineFilename({
   projectName: 'RideSharing',
   repositoryName: 'RideSharing_Backend',
@@ -274,7 +283,15 @@ const legacyFilename = hooks.buildLegacyPipelineFilename({
   repositoryName: 'RideSharing_Backend',
   branchName: 'feature/defineZones'
 });
-assert.strictEqual(filename, 'ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml');
+assert.strictEqual(filename, 'ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml');
+assert.strictEqual(projectPrefixedFilename, 'ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml');
+assert.strictEqual(
+  hooks.buildPipelineFilename({
+    projectName: 'OtherProject', repositoryName: 'RideSharing_Backend', service: 'api',
+    environment: 'demo', branchName: 'feature/defineZones', komodoServer: 'Production'
+  }),
+  filename
+);
 assert.strictEqual(serverlessFilename, 'ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEMO.yml');
 assert.notStrictEqual(
   filename,
@@ -324,7 +341,7 @@ const workerFilename = hooks.buildPipelineFilename({
   branchName: 'main',
   komodoServer: 'Production'
 });
-assert.strictEqual(workerFilename, 'ridesharing-ridesharing_backend-api-worker-MainToPROEnvOnProductionSrv.yml');
+assert.strictEqual(workerFilename, 'ridesharing_backend-api-worker-MainToPROEnvOnProductionSrv.yml');
 assert.strictEqual(
   hooks.buildReleaseName({ service: 'api', environment: 'pro', stack: 'worker' }),
   'API WORKER PRO'
@@ -360,7 +377,7 @@ const workerCompose = hooks.buildComposeSample({
   repositoryAddress: 'registry.buluttakin.com'
 });
 assert(workerCompose.includes('container_name: ridesharing_api_worker_pro'));
-assert(workerCompose.includes('image: registry.buluttakin.com/ridesharing/api-worker-pro:${IMAGE_TAG:-CHANGE_ME}'));
+assert(workerCompose.includes('image: registry.buluttakin.com/ridesharing/api-worker-pro:${api_worker}'));
 const underscoredServiceSpecs = hooks.buildSupportRepositorySpecs({
   projectName: 'DevOpsServices',
   environment: 'pro',
@@ -371,7 +388,7 @@ const underscoredServiceSpecs = hooks.buildSupportRepositorySpecs({
 });
 const underscoredServiceCompose = underscoredServiceSpecs.find(({ kind }) => kind === 'docker').content;
 assert(underscoredServiceCompose.includes(
-  'image: registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:${IMAGE_TAG:-CHANGE_ME}'
+  'image: registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:${devops_services_agent_worker}'
 ));
 assert(!underscoredServiceCompose.includes('devops-services-agent-worker-pro'));
 const underscoredMonorepoSpecs = hooks.buildMonorepoSupportRepositorySpecs({
@@ -384,9 +401,45 @@ const underscoredMonorepoSpecs = hooks.buildMonorepoSupportRepositorySpecs({
 });
 const underscoredMonorepoCompose = underscoredMonorepoSpecs.find(({ kind }) => kind === 'docker').content;
 assert(underscoredMonorepoCompose.includes(
-  'image: registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:${devops_services_agent}'
+  'image: registry.buluttakin.com/devopsservices/devops-services-agent-worker-pro:${devops_services_agent}'
 ));
-assert(!underscoredMonorepoCompose.includes('devops-services-agent-worker-pro'));
+assert(!underscoredMonorepoCompose.includes('devops_services_agent-worker-pro'));
+const underscoredMonorepoYaml = hooks.buildMonorepoPipelineYaml({
+  pool: 'PublishDockerAgent', service: 'devops_services_agent', environment: 'pro',
+  stack: 'worker', komodoServer: 'Production', repositoryAddress: 'registry.buluttakin.com',
+  containerRegistryService: 'BulutReg'
+}, { sourceBranch: 'main', rawProjectName: 'DevOpsServices', rawRepositoryName: 'DevOpsServices_Agent' });
+assert(underscoredMonorepoYaml.includes("serviceKey: 'devops-services-agent'"));
+const punctuatedServiceSpecs = hooks.buildSupportRepositorySpecs({
+  projectName: 'RideSharing', environment: 'demo', domain: 'bulutdemo.ir',
+  service: 'ui-v2.preview', repositoryAddress: 'registry.buluttakin.com'
+});
+assert(punctuatedServiceSpecs[0].content.includes(
+  'image: registry.buluttakin.com/ridesharing/ui-v2.preview-demo:${ui_v2_preview}'
+));
+assert.strictEqual(punctuatedServiceSpecs[0].additionalFiles[0].content, 'ui_v2_preview:CHANGE_ME\n');
+assert.strictEqual(
+  punctuatedServiceSpecs[0].additionalFiles[0].mergeExisting('ui-v2.preview:1.0.42\n'),
+  'ui_v2_preview:1.0.42\n'
+);
+const punctuatedWorkerSpecs = hooks.buildSupportRepositorySpecs({
+  projectName: 'RideSharing', environment: 'demo', domain: 'bulutdemo.ir',
+  stack: 'worker', service: 'ui-v2.preview', repositoryAddress: 'registry.buluttakin.com'
+});
+assert(punctuatedWorkerSpecs[0].content.includes(
+  'image: registry.buluttakin.com/ridesharing/ui-v2.preview-worker-demo:${ui_v2_preview_worker}'
+));
+assert.strictEqual(
+  punctuatedWorkerSpecs[0].additionalFiles[0].mergeExisting('ui_v2.preview_worker:1.0.42\n'),
+  'ui_v2_preview_worker:1.0.42\n'
+);
+assert.strictEqual(
+  punctuatedWorkerSpecs[0].additionalFiles[0].mergeExisting('ui_v2.preview-worker:1.0.42\n'),
+  'ui_v2_preview_worker:1.0.42\n'
+);
+assert(hooks.buildPipelineYaml({ service: 'ui-v2.preview', environment: 'demo' }).includes(
+  "    service: 'ui-v2.preview'"
+));
 const workerPipelineYaml = hooks.buildPipelineYaml({
   pool: 'PublishDockerAgent',
   service: 'api',
@@ -411,6 +464,13 @@ assert.strictEqual(
     branchName: 'feature/defineZones',
     komodoServer: 'Demo',
     mode: 'monorepo'
+  }),
+  'ridesharing_backend-MR-frontend-Feature-DefineZonesToDEMOEnvOnDemoSrv.yml'
+);
+assert.strictEqual(
+  hooks.buildLegacyProjectPrefixedPipelineFilename({
+    projectName: 'RideSharing', repositoryName: 'RideSharing_Backend', service: 'frontend',
+    environment: 'demo', branchName: 'feature/defineZones', komodoServer: 'Demo', mode: 'monorepo'
   }),
   'ridesharing-ridesharing_backend-MR-frontend-Feature-DefineZonesToDEMOEnvOnDemoSrv.yml'
 );
@@ -499,7 +559,7 @@ assert.strictEqual(
     branchName: 'feature/defineZones',
     komodoServer: 'Development'
   }),
-  'ridesharing-ridesharing_backend-api-Feature-DefineZonesToDEVEnvOnDevelopmentSrv.yml'
+  'ridesharing_backend-api-Feature-DefineZonesToDEVEnvOnDevelopmentSrv.yml'
 );
 const workerMonorepoYaml = hooks.buildMonorepoPipelineYaml(
   {
@@ -529,7 +589,7 @@ assert.strictEqual(
     branchName: 'Production',
     komodoServer: 'Production'
   }),
-  'locanit-locanit_api-api-ProductionToSOCEnvOnProductionSrv.yml'
+  'locanit_api-api-ProductionToSOCEnvOnProductionSrv.yml'
 );
 assert.throws(
   () =>
@@ -685,7 +745,8 @@ const workerSpecs = hooks.buildSupportRepositorySpecs({
 assert.deepStrictEqual(Array.from(workerSpecs, (item) => item.kind), ['docker', 'nginx']);
 assert.strictEqual(workerSpecs[0].filePath, '/pro_worker_180feedback/compose.yml');
 assert(workerSpecs[0].content.includes('container_name: 180feedback_api_worker_pro'));
-assert(workerSpecs[0].content.includes('image: registry.buluttakin.com/180feedback/api-worker-pro:${IMAGE_TAG:-CHANGE_ME}'));
+assert(workerSpecs[0].content.includes('image: registry.buluttakin.com/180feedback/api-worker-pro:${api_worker}'));
+assert.strictEqual(workerSpecs[0].additionalFiles[0].content, 'api_worker:CHANGE_ME\n');
 assert.strictEqual(workerSpecs[1].directory, 'pro_worker');
 assert.strictEqual(workerSpecs[1].filePath, '/pro_worker/180feedback-pro.conf');
 assert(workerSpecs[1].content.includes('set              $target            180feedback_api_worker_pro;'));
@@ -697,6 +758,26 @@ const workerUiSpecs = hooks.buildSupportRepositorySpecs({
   service: 'ui',
   repositoryAddress: 'registry.buluttakin.com'
 });
+const existingWorkerCompose = workerSpecs[0].content.replace(
+  '    restart: unless-stopped',
+  '    restart: always\n    labels:\n      owner: operator'
+);
+const mergedWorkerCompose = workerUiSpecs[0].mergeExisting(existingWorkerCompose);
+assert(mergedWorkerCompose.includes('180feedback_api_worker_pro:'));
+assert(mergedWorkerCompose.includes('180feedback_ui_worker_pro:'));
+assert(mergedWorkerCompose.includes('    restart: always\n    labels:\n      owner: operator'));
+assert(mergedWorkerCompose.indexOf('180feedback_ui_worker_pro:') > mergedWorkerCompose.indexOf('180feedback_api_worker_pro:'));
+assert.doesNotThrow(() => yaml.load(mergedWorkerCompose));
+assert.strictEqual(workerUiSpecs[0].mergeExisting(mergedWorkerCompose), mergedWorkerCompose);
+const mergedEmptyCompose = workerUiSpecs[0].mergeExisting('services: {}\n');
+assert.doesNotThrow(() => yaml.load(mergedEmptyCompose));
+assert(mergedEmptyCompose.includes('180feedback_ui_worker_pro:'));
+const legacyWorkerCompose = workerSpecs[0].content.replace('${api_worker}', '${IMAGE_TAG:-CHANGE_ME}');
+const migratedWorkerCompose = workerSpecs[0].mergeExisting(legacyWorkerCompose);
+assert(migratedWorkerCompose.includes('image: registry.buluttakin.com/180feedback/api-worker-pro:${api_worker}'));
+assert.strictEqual(workerSpecs[0].mergeExisting(migratedWorkerCompose), migratedWorkerCompose);
+assert.strictEqual(workerUiSpecs[0].additionalFiles[0].mergeExisting('api_worker:1.0.100\n'),
+  'api_worker:1.0.100\nui_worker:CHANGE_ME\n');
 const mergedWorkerNginx = workerUiSpecs[1].mergeExisting(workerSpecs[1].content);
 assert(mergedWorkerNginx.includes('set              $target            180feedback_api_worker_pro;'));
 assert(mergedWorkerNginx.includes('set              $target            180feedback_ui_worker_pro;'));
@@ -1813,13 +1894,13 @@ KOMODO_API_SECRET="synthetic-read-secret"
   const nginxPaths = supportPushes
     .get('nginx-repo-id')
     .commits[0].changes.map((change) => change.item.path);
-  assert.deepStrictEqual(dockerPaths, ['/demo_ridesharing/compose.yml']);
+  assert.deepStrictEqual(dockerPaths, ['/demo_ridesharing/compose.yml', '/demo_ridesharing/.env']);
   assert.deepStrictEqual(nginxPaths, ['/demo/ridesharing-demo.conf']);
   const dockerComposeContent = supportPushes
     .get('docker-repo-id')
     .commits[0].changes.find((change) => change.item.path.endsWith('/compose.yml')).newContent.content;
   assert(dockerComposeContent.includes('container_name: ridesharing_api_demo'));
-  assert(dockerComposeContent.includes('registry.buluttakin.com/ridesharing/api-demo:${IMAGE_TAG:-CHANGE_ME}'));
+  assert(dockerComposeContent.includes('registry.buluttakin.com/ridesharing/api-demo:${api}'));
   const nginxContent = supportPushes
     .get('nginx-repo-id')
     .commits[0].changes.find((change) => change.item.path.endsWith('.conf')).newContent.content;
@@ -1878,6 +1959,46 @@ KOMODO_API_SECRET="synthetic-read-secret"
   });
   assert.strictEqual(existingBootstrap.skipped, true);
   assert(existingSupportCalls.every(({ method }) => method === 'GET'));
+
+  let secondServicePush;
+  context.fetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    if (url.includes('/refs?') && method === 'GET') {
+      return response({ body: { value: [{ objectId: '3333333333333333333333333333333333333333' }] }, url });
+    }
+    if (url.includes('/items?') && method === 'GET') {
+      const path = new URL(url).searchParams.get('path');
+      return response({ body: path.endsWith('/.env') ? 'api_worker:1.0.100\n' : workerSpecs[0].content, url });
+    }
+    if (url.includes('/pushes?') && method === 'POST') {
+      secondServicePush = JSON.parse(options.body);
+      return response({ body: { pushId: 4 }, url });
+    }
+    throw new Error(`Unexpected second Service request: ${method} ${url}`);
+  };
+  const secondServiceBootstrap = await hooks.ensureRepositoryBootstrapFiles({
+    hostUri, projectId,
+    repo: { id: 'docker-repo-id', name: '180Feedback_Docker_DevOps' },
+    directory: 'pro_worker_180feedback',
+    sampleFile: {
+      path: workerUiSpecs[0].filePath,
+      content: workerUiSpecs[0].content,
+      mergeExisting: workerUiSpecs[0].mergeExisting
+    },
+    additionalFiles: workerUiSpecs[0].additionalFiles,
+    accessToken: 'extension-session-token'
+  });
+  assert.strictEqual(secondServiceBootstrap.skipped, false);
+  assert.deepStrictEqual(secondServicePush.commits[0].changes.map(({ changeType, item }) =>
+    [changeType, item.path]), [
+    ['edit', '/pro_worker_180feedback/compose.yml'],
+    ['edit', '/pro_worker_180feedback/.env']
+  ]);
+  const secondServiceCompose = secondServicePush.commits[0].changes[0].newContent.content;
+  assert(secondServiceCompose.includes('180feedback_api_worker_pro:'));
+  assert(secondServiceCompose.includes('180feedback_ui_worker_pro:'));
+  assert.strictEqual(secondServicePush.commits[0].changes[1].newContent.content,
+    'api_worker:1.0.100\nui_worker:CHANGE_ME\n');
 
   let nginxMergePush;
   context.fetch = async (url, options = {}) => {
@@ -2008,6 +2129,38 @@ KOMODO_API_SECRET="synthetic-read-secret"
   assert.strictEqual(reused.id, 344);
   assert.strictEqual(reuseCalls.length, 2);
   assert(reuseCalls.every(({ options }) => !options.method || options.method === 'GET'));
+
+  const projectPrefixMigrationCalls = [];
+  context.fetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    projectPrefixMigrationCalls.push({ url, method });
+    if (url.includes('/_apis/pipelines?')) {
+      return response({ body: { value: [{ id: 348, name: projectPrefixedFilename }] }, url });
+    }
+    if (url.includes('/_apis/build/definitions/348') && method === 'GET') {
+      return response({ body: {
+        id: 348, revision: 2, name: projectPrefixedFilename, path: '\\KOMODO',
+        process: { type: 2, yamlFilename: `/${projectPrefixedFilename}` },
+        repository: { id: repo.id, name: repo.name, type: 'TfsGit', defaultBranch: 'refs/heads/main' }
+      }, url });
+    }
+    if (url.includes('/_apis/build/definitions/348') && method === 'PUT') {
+      const body = JSON.parse(options.body);
+      assert.strictEqual(body.id, 348);
+      assert.strictEqual(body.name, filename);
+      assert.strictEqual(body.process.yamlFilename, `/${filename}`);
+      return response({ body: { ...body, revision: 3 }, url });
+    }
+    throw new Error(`Unexpected project-prefix migration request: ${method} ${url}`);
+  };
+  const projectPrefixMigration = await hooks.upsertPipelineDefinition({
+    hostUri, projectId, repo, pipelineName: filename, pipelinePath: `/${filename}`,
+    legacyPipelineNames: [projectPrefixedFilename],
+    legacyPipelinePaths: [`/${projectPrefixedFilename}`],
+    branch: 'main', accessToken: 'test-token'
+  });
+  assert.strictEqual(projectPrefixMigration.id, 348);
+  assert(projectPrefixMigrationCalls.some(({ method }) => method === 'PUT'));
 
   const serviceLessMigrationCalls = [];
   context.fetch = async (url, options = {}) => {
@@ -2339,7 +2492,7 @@ KOMODO_API_SECRET="synthetic-read-secret"
   assert(noOpReleaseCalls.every(({ method }) => method === 'GET'));
 
 console.log(
-  'UI behavior regression tests passed: Environment/domain parsing, direct enabled-server discovery, underscore-normalized Service autofill, semantic frontend/backend/version routing with repository-priority ownership, Service-aware BranchToEnvironmentEnvOnServerSrv Pipeline naming with legacy migration, root-last Nginx routing with managed rewrite removal, idempotent Compose/shared-route merging, locked completion links, Service-aware Release naming, and Pipeline/Release/KomodoAPI reconciliation.'
+  'UI behavior regression tests passed: deployment targets, routing, Pipeline naming/migration, normal and MR image parity, service-specific Compose/.env tags, multi-service Compose merge, Nginx merge, Release naming, and Pipeline/Release reconciliation.'
 );
 };
 

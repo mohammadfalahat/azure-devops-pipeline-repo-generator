@@ -589,8 +589,11 @@ if (
   !ui.includes('const pipelineName = buildPipelineName(pipelineFilename);') ||
   !ui.includes('const buildLegacyServiceLessPipelineFilename = ({') ||
   !ui.includes('const buildLegacyServerlessPipelineFilename = ({') ||
+  !ui.includes('const buildLegacyProjectPrefixedPipelineFilename = (options) =>') ||
+  !ui.includes('legacyPipelineNames: isMonorepoMode()') ||
+  !ui.includes('legacyProjectPrefixedPipelineFilename,') ||
   !ui.includes('service: payload.service,') ||
-  !ui.includes('${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}EnvOn${serverSegment}Srv.yml')
+  !ui.includes('${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}EnvOn${serverSegment}Srv.yml')
 ) {
   fail('Pipeline filename/name must include Service, destination Environment, selected Server, isolate custom Stacks, and retain migration identities.');
 }

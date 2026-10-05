@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.70
+This document is the integration contract between Pipeline Generator 0.1.73
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 
@@ -206,7 +206,10 @@ indicators (`api`, `back`, `backend`, `be`, `server`, `bff`, `rest`, `graphql`, 
 numeric `v2`/`version2`/`ver2`/`r2` form) moves a frontend to
 `/<variant>/` and a backend to `/api/<variant>/`; for example `UI_V2` becomes
 `/v2/` and `BACK_v2` becomes `/api/v2/`. Every non-root route proxies without
-a URI slash or rewrite, preserving the original request URI. Compose is Git-added only when absent. Nginx uses one
+a URI slash or rewrite, preserving the original request URI. Normal Compose is
+added when absent and edited to append a missing service or correct its image
+reference when present. Its adjacent `.env` uses the same service-specific tag
+key referenced by Compose. Nginx uses one
 `/<environment>[_<stack>]/<project>-<environment>.conf` per project/Environment/Stack. On each
 run the browser first ranks visible repositories for base-route ownership. An
 exact repository/project name match is the preferred frontend owner of `/`;
@@ -318,7 +321,7 @@ Nginx is absent from the operation set for a custom Environment. A missing
 main branch receives one initial commit containing the selected Environment's
 Compose plus adjacent `.env`, or, for a configured Environment, the shared
 Nginx starter in the Stack-specific directory. On an
-existing branch, the UI reads the exact starter-file paths. Monorepo
+existing branch, the UI reads the exact starter-file paths. Normal and Monorepo
 `compose.yml` and `.env` are add-or-semantic-edit only for their managed
 service blocks/tag keys. The shared Nginx file is add-or-semantic-edit: only a missing
 managed Location is inserted; existing Location blocks and manual content are
@@ -352,7 +355,7 @@ repository even though the body contains its ID.
 
 The Pipeline display name is the exact Service-, Environment-, and Server-aware generated YAML filename,
 including its `.yml` suffix. Its normal shape is
-`<project>-<repository>-<service>-<Branch>To<ENV>EnvOn<SERVER>Srv.yml`; MR
+`<repository>-<service>-<Branch>To<ENV>EnvOn<SERVER>Srv.yml`; MR
 inserts `-MR-` before the Service segment. Before writing, the UI compares:
 
 - `folder` against `\komodo`, case-insensitively;
@@ -368,11 +371,11 @@ mismatch would cause a needless Build Definition PUT and revision increment on
 every otherwise-idempotent rerun.
 
 When the desired Server-aware `BranchToEnvironmentEnvOnServerSrv` name does not
-exist, the lookup also accepts the immediately preceding Service-aware serverless
+exist, the lookup also accepts the project-prefixed Server-aware name, the Service-aware serverless
 transition name, the Service-less transition name, the 0.1.37 Environment-first
 name, and the earlier branch-only name. Build Definitions are likewise filtered by generated repository ID and
 `process.yamlFilename` in that order. MR migration considers only its
-Service-less `-MR-` predecessor, never a normal definition. A legacy match is
+project-prefixed and Service-less `-MR-` predecessors, never a normal definition. A legacy match is
 renamed and rebound to the new path instead of creating a duplicate.
 
 The target server rejects `PUT /_apis/pipelines/{id}` with HTTP 405. Therefore

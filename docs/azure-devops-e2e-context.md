@@ -8,7 +8,7 @@ Latest installed live execution observed: **0.1.62 Build and Release success on 
 
 Latest user-reported live failure: **Build 15247, HTTP 500 `Stack busy`, 2026-08-27**
 
-Current local candidate awaiting packaging and installation: **0.1.70**
+Current local workspace manifest: **0.1.73**; recent fixes are locally validated only.
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -21,7 +21,37 @@ No credentials belong in either file. Credentials exposed in conversation,
 including PATs and Komodo API credentials, must never be copied into commands,
 documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local candidate — version 0.1.70
+## Current local workspace — version 0.1.73
+
+Normal Compose previously used a generic `${IMAGE_TAG:-CHANGE_ME}` tag even
+though the normal Release wrote `service[_stack]:version` to the adjacent
+`.env`. The generator also supplied no normal Compose merge callback, so a
+second service could not be added to an existing file. Normal Compose now
+uses the Service/Stack-specific `.env` key, seeds that key on first generation,
+appends a missing service, and corrects the image reference of an existing
+generated service. Image repository spelling is shared with the Build
+template's Service parameter. MR Compose previously preserved underscores in
+the image repository while its Build normalized them to hyphens; it now uses
+the MR Build spelling. The local SharedTemplates `release-komodo.sh` also
+normalizes dots and hyphens in its `.env` key while preserving old-key migration.
+Local `npm test`, Compose rendering checks, Bash syntax, and diff checks passed
+on 2026-10-05. These are local validations; no live resource was written.
+
+The generated normal and MR Pipeline names and YAML filenames omit the explicit
+project prefix. For example, `RideSharing_Backend`, Service `api`, Branch
+`feature/defineZones`, Environment `demo`, and Server `Production` now produce
+`ridesharing_backend-api-Feature-DefineZonesToDEMOEnvOnProductionSrv.yml`.
+The previous project-prefixed Server-aware name/path is retained as a migration
+identity. Matching Build Definitions are renamed and rebound under the same ID;
+Release lookup by Pipeline artifact ID keeps the existing Release identity.
+Normal and MR Release display names already omitted the project and remain
+`<SERVICE> [<STACK>] <ENV>` and `MR <SERVICE> [<STACK>] <ENV>`.
+
+Local validation on 2026-10-05: complete `npm test` suite, including normal/MR
+naming checks and Build Definition migration regression; `git diff --check`.
+This was local validation only. No Azure DevOps or Komodo resources were written.
+
+## Previous local candidate — version 0.1.70
 
 Version 0.1.70 replaces the native Environment and Stack datalists with
 locally packaged Tom Select 2.6.2 editable comboboxes. The native datalist

@@ -256,13 +256,23 @@ assembled as text:
 - validate the document in a test Pipeline on the target server.
 
 `buildPipelineFilename` requires Service, Environment, and the selected Komodo Server and returns
-`<project>-<repository>[-MR]-<service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>EnvOn<SERVER>Srv.yml`;
+`<repository>[-MR]-<service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>EnvOn<SERVER>Srv.yml`;
 `buildPipelineName` returns that filename unchanged. `buildReleaseName` uses
 uppercased Service, optional non-default Stack, and Environment values, prefixed
 by `MR` in Monorepo mode.
 The immediately preceding Service-less transition names remain migration-only
-identities. If either naming contract changes, update migration lookups,
+identities, as does the project-prefixed Server-aware name used immediately
+before this change. If either naming contract changes, update migration lookups,
 artifact aliases, tests, and documentation together.
+
+For normal services, the Build template pushes
+`<registry>/<project>/<service>[-<stack>]-<environment>`. The generated
+Compose file uses that exact repository and `${<service>[_<stack>]}` as its tag
+reference, with punctuation in the tag key converted to underscores. The
+adjacent tracked `.env` stores the matching version key. A new Service is
+appended to the existing Compose `services` section; a rerun leaves an
+unchanged file untouched. The maintained SharedTemplates `release-komodo.sh`
+updates that same `.env` key and migrates its older punctuated spelling.
 
 ### Generated Nx Monorepo assets
 
@@ -272,7 +282,7 @@ uses `buildMonorepoPipelineYaml` and creates these files on generated-repository
 
 | Path | Update rule |
 | --- | --- |
-| `/<project>-<repo>-MR-<service>[-<stack>]-<Branch>To<ENV>.yml` | Reconciled on every generator run |
+| `/<repo>-MR-<service>[-<stack>]-<Branch>To<ENV>EnvOn<SERVER>Srv.yml` | Reconciled on every generator run |
 | `/.devops/deployments.yml` | Created only when missing; later edits are preserved |
 
 The generated YAML imports `monorepo/pipeline.yml@SharedTemplatesRepo`; that

@@ -6,7 +6,7 @@ creates or reuses a project-level repository, writes a generated YAML file,
 registers a YAML Pipeline that points to that file, and creates a classic
 Release definition that consumes the Pipeline as a Build artifact.
 
-The manifest version documented here is **0.1.72**. The manifest targets Azure
+The manifest version documented here is **0.1.73**. The manifest targets Azure
 DevOps Services and Azure DevOps Server range `[16.0,20.0)`. The complete live
 workflow has been verified on the documented on-premises Server environment;
 the Azure DevOps Services Release API route still requires a separate
@@ -30,7 +30,7 @@ selected source repository + branch
         | YAML configuration points to this repository and file
         v
 YAML Pipeline in \komodo
-        | name: <project>-<repository>-<service>[-<stack>]-<Branch>To<ENVIRONMENT>.yml
+        | name: <repository>-<service>[-<stack>]-<Branch>To<ENVIRONMENT>EnvOn<SERVER>Srv.yml
         |
         | primary Build artifact
         v
@@ -48,7 +48,7 @@ one agent-based Bash@3 deployment job with packaged wrapper stored Inline
 the normal generator unchanged:
 
 - one Pipeline named
-  `<project>-<repository>-MR-<service>[-<stack>]-<Branch>To<ENVIRONMENT>EnvOn<SERVER>Srv.yml` under `\komodo\MR`;
+  `<repository>-MR-<service>[-<stack>]-<Branch>To<ENVIRONMENT>EnvOn<SERVER>Srv.yml` under `\komodo\MR`;
 - one classic Release named `MR <SERVICE> [<STACK>] <ENVIRONMENT>` under `\komodo\MR`;
 - an automatically created `/.devops/deployments.yml` project contract, with
   the shared `monorepo/pipeline.yml` and `monorepo/mr-build.cjs` loaded from
@@ -143,8 +143,8 @@ Pipeline run and does not create a Release instance.
 - The **Docker DevOps repository** is named
   `<ProjectNameWithoutSpaces>_Docker_DevOps` and receives
   `<environment>[_<stack>]_<lowercase-project-without-spaces>/compose.yml`; the
-  Stack segment is omitted for `default`. Monorepo mode also ensures the adjacent
-  `.env` used for managed immutable image tags. Its starter service/container is
+  Stack segment is omitted for `default`. Both modes ensure the adjacent
+  `.env` used for image tags. Its starter service/container is
   `<project>_<service>[_<stack>]_<environment>` and exposes port 80
   for UI/frontend services or 8080 for backend and other services. Its external Nginx
   network is resolved from the selected Komodo Server and may be either

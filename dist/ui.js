@@ -1233,7 +1233,6 @@
     if (!String(service || '').trim()) {
       throw new Error('Service name is required to build the Pipeline filename.');
     }
-    const projectSegment = sanitizePipelineNameSegment(projectName, 'project');
     const repoSegment = sanitizePipelineNameSegment(repositoryName || projectName, 'repo');
     const serviceSegment = sanitizePipelineNameSegment(service, 'service');
     if (!String(environment || '').trim()) {
@@ -1252,8 +1251,11 @@
       { lowercase: false }
     ).replace(/(^|[-_.])([a-z])/g, (_, separator, character) => `${separator}${character.toUpperCase()}`);
     const modeSegment = normalizeGeneratorMode(mode) === 'monorepo' ? '-MR' : '';
-    return `${projectSegment}-${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}EnvOn${serverSegment}Srv.yml`;
+    return `${repoSegment}${modeSegment}-${serviceSegment}${stackSegment}-${branchSegment}To${environmentSegment}EnvOn${serverSegment}Srv.yml`;
   };
+
+  const buildLegacyProjectPrefixedPipelineFilename = (options) =>
+    `${sanitizePipelineNameSegment(options.projectName, 'project')}-${buildPipelineFilename(options)}`;
 
   const buildPipelineName = (pipelineFilename) => pipelineFilename;
 
@@ -1505,15 +1507,11 @@
     return boundedName.toLowerCase().replace(/\s+/g, '_');
   };
 
-  // Build templates receive the form value unchanged, so image repositories
-  // may intentionally contain underscores. Keep that spelling aligned with
-  // the image pushed by the template; resource/path identifiers continue to
-  // use normalizeResourceSegment and may use hyphens instead.
+  // Build templates receive the form value unchanged. Never silently change
+  // punctuation in the Compose image repository that the template pushes.
   const normalizeImageServiceSegment = (value, label) => {
-    const normalized = normalizeServiceNameForForm(value)
-      .replace(/[^a-z0-9._-]+/g, '-')
-      .replace(/^[._-]+|[._-]+$/g, '');
-    if (!normalized) {
+    const normalized = normalizeServiceNameForForm(value);
+    if (!/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/.test(normalized)) {
       throw new Error(`${label} cannot be converted to a safe image repository segment.`);
     }
     return normalized;
@@ -2157,11 +2155,12 @@
     const internalPort = (requestedRouting || classifyServiceRouting(serviceKey)).internalPort;
     const registry = String(repositoryAddress || defaultValues.repositoryAddress).trim().replace(/\/+$/, '');
     const networkName = selectNginxNetworkName([nginxNetworkName]);
+    const tagKey = buildNormalTagKey({ imageServiceKey, stack });
     return [
       'services:',
       `  ${containerName}:`,
       `    container_name: ${containerName}`,
-      `    image: ${registry}/${projectKey}/${imageServiceKey}${imageStackSegment}-${environment}:\${IMAGE_TAG:-CHANGE_ME}`,
+      `    image: ${registry}/${projectKey}/${imageServiceKey}${imageStackSegment}-${environment}:\${${tagKey}}`,
       '    restart: unless-stopped',
       '    expose:',
       `      - "${internalPort}"`,
@@ -2174,6 +2173,111 @@
       '    external: true',
       ''
     ].join('\n');
+  };
+
+  const buildNormalTagKey = ({ imageServiceKey, stack = 'default' }) => {
+    const service = normalizeImageServiceSegment(imageServiceKey, 'Service name').replace(/[.-]/g, '_');
+    const normalizedStack = normalizeStackName(stack);
+    return isDefaultStack(normalizedStack) ? service : `${service}_${normalizedStack.replace(/-/g, '_')}`;
+  };
+
+  const buildNormalEnvSample = ({ imageServiceKey, stack = 'default' }) =>
+    `${buildNormalTagKey({ imageServiceKey, stack })}:CHANGE_ME\n`;
+
+  const mergeNormalEnvTag = ({ content, imageServiceKey, stack = 'default' }) => {
+    const key = buildNormalTagKey({ imageServiceKey, stack });
+    const newline = content.includes('\r\n') ? '\r\n' : '\n';
+    const hadTrailingNewline = content.endsWith('\n');
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+    if (hadTrailingNewline) lines.pop();
+    const existingKeys = lines.map((line) => /^\s*([a-zA-Z_][a-zA-Z0-9_.-]*)\s*[:=]/.exec(line)?.[1]);
+    if (existingKeys.includes(key)) return content;
+    const imageName = normalizeImageServiceSegment(imageServiceKey, 'Service name');
+    const normalizedStack = normalizeStackName(stack);
+    const previousKey = isDefaultStack(normalizedStack)
+      ? imageName.replace(/-/g, '_')
+      : `${imageName.replace(/-/g, '_')}_${normalizedStack.replace(/-/g, '_')}`;
+    const oldStackKey = isDefaultStack(normalizedStack)
+      ? previousKey
+      : `${imageName.replace(/-/g, '_')}-${normalizedStack}`;
+    const legacyKey = isDefaultStack(normalizedStack) ? imageName : `${imageName}-${normalizedStack}`;
+    const legacyIndex = [previousKey, oldStackKey, legacyKey].map((candidate) => existingKeys.indexOf(candidate))
+      .find((index) => index !== -1) ?? -1;
+    if (legacyIndex !== -1) {
+      lines[legacyIndex] = lines[legacyIndex].replace(/^([ \t]*)[a-zA-Z_][a-zA-Z0-9_.-]*(\s*[:=])/, `$1${key}$2`);
+    } else {
+      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+      lines.push(`${key}:CHANGE_ME`);
+    }
+    return `${lines.join('\n')}${hadTrailingNewline ? '\n' : ''}`.replace(/\n/g, newline);
+  };
+
+  const mergeComposeService = ({ content, sample, nginxNetworkName = 'nginx-network' }) => {
+    const newline = content.includes('\r\n') ? '\r\n' : '\n';
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const sampleLines = sample.replace(/\r\n/g, '\n').split('\n');
+    const serviceName = /^  ([A-Za-z0-9_.-]+):$/.exec(sampleLines[1])?.[1];
+    const desiredImage = /^    image:\s*(\S+)\s*$/.exec(sampleLines[3])?.[1];
+    if (!serviceName || !desiredImage) throw new Error('Generated Compose service is invalid.');
+    let servicesIndex = lines.findIndex((line) => /^services:\s*(?:#.*)?$/.test(line));
+    if (servicesIndex === -1) {
+      servicesIndex = lines.findIndex((line) => /^services:\s*\{\s*\}\s*(?:#.*)?$/.test(line));
+      if (servicesIndex !== -1) lines[servicesIndex] = 'services:';
+    }
+    if (servicesIndex === -1) throw new Error('Existing Compose file has no services section.');
+    const nextSection = (start) => {
+      const index = lines.findIndex((line, offset) => offset > start && /^[A-Za-z0-9_.-]+:\s*(?:.*)?$/.test(line));
+      return index === -1 ? lines.length : index;
+    };
+    let servicesEnd = nextSection(servicesIndex);
+    const existingService = lines.findIndex(
+      (line, index) => index > servicesIndex && index < servicesEnd &&
+        /^  ([A-Za-z0-9_.-]+):\s*(?:#.*)?$/.exec(line)?.[1] === serviceName
+    );
+    if (existingService !== -1) {
+      let serviceEnd = servicesEnd;
+      for (let index = existingService + 1; index < servicesEnd; index += 1) {
+        if (/^  [A-Za-z0-9_.-]+:\s*(?:#.*)?$/.test(lines[index])) {
+          serviceEnd = index;
+          break;
+        }
+      }
+      const imageIndex = lines.findIndex(
+        (line, index) => index > existingService && index < serviceEnd && /^    image:\s*/.test(line)
+      );
+      if (imageIndex === -1) {
+        lines.splice(existingService + 1, 0, `    image: ${desiredImage}`);
+      } else {
+        lines[imageIndex] = lines[imageIndex].replace(/^(    image:\s*)(\S+)(.*)$/, `$1${desiredImage}$3`);
+      }
+    } else {
+      const networkName = selectNginxNetworkName([nginxNetworkName]);
+      const networksIndex = lines.findIndex((line) => /^networks:\s*(?:#.*)?$/.test(line));
+      const networkEnd = networksIndex === -1 ? -1 : nextSection(networksIndex);
+      const networkEntries = networksIndex === -1 ? [] : lines.slice(networksIndex + 1, networkEnd)
+        .map((line, offset) => ({ name: /^  ([A-Za-z0-9_.-]+):\s*(?:#.*)?$/.exec(line)?.[1], index: networksIndex + 1 + offset }))
+        .filter(({ name }) => name);
+      const logicalNetwork = networkEntries.find((entry, index) => {
+        const end = networkEntries[index + 1]?.index ?? networkEnd;
+        return lines.slice(entry.index + 1, end).some((line) =>
+          /^    name:\s*["']?([^\s"'#]+)["']?\s*(?:#.*)?$/.exec(line)?.[1] === networkName
+        );
+      })?.name || networkEntries.find(({ name }) => name === networkName)?.name || networkName;
+      const sampleNetworkIndex = sampleLines.findIndex((line) => line === '    networks:');
+      const sampleNetwork = /^      - ([A-Za-z0-9_.-]+)$/.exec(sampleLines[sampleNetworkIndex + 1])?.[1];
+      const block = sampleLines.slice(1, sampleLines.indexOf('networks:') - 1)
+        .map((line) => line === `      - ${sampleNetwork}` ? `      - ${logicalNetwork}` : line);
+      while (servicesEnd > servicesIndex + 1 && !lines[servicesEnd - 1].trim()) servicesEnd -= 1;
+      lines.splice(servicesEnd, 0, ...(servicesEnd > servicesIndex + 1 ? [''] : []), ...block);
+      if (networksIndex === -1) {
+        while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+        lines.push('', 'networks:', `  ${logicalNetwork}:`, `    name: ${networkName}`, '    external: true');
+      } else if (!networkEntries.some(({ name }) => name === logicalNetwork)) {
+        const currentNetworksIndex = lines.findIndex((line) => /^networks:\s*(?:#.*)?$/.test(line));
+        lines.splice(nextSection(currentNetworksIndex), 0, `  ${logicalNetwork}:`, `    name: ${networkName}`, '    external: true');
+      }
+    }
+    return lines.join(newline);
   };
 
   const NGINX_MANAGED_ROUTES_START = '    # BEGIN PIPELINE-GENERATOR MANAGED ROUTES';
@@ -3155,7 +3259,8 @@
     }
     const projectKey = normalizeResourceSegment(compactProject.toLowerCase(), 'Project key');
     const serviceKey = normalizeResourceSegment(service, 'Service name');
-    const imageServiceKey = normalizeImageServiceSegment(service, 'Service name');
+    // MR builds use the normalized serviceKey as their image repository name.
+    const imageServiceKey = serviceKey;
     const projectHost = projectKey;
     const composeDirectory = buildComposeDirectory({ environment: normalizedEnvironment, stack, projectName: compactProject });
     const nginxDirectory = buildNginxDirectory({ environment: normalizedEnvironment, stack });
@@ -3250,22 +3355,33 @@
     const imageServiceKey = normalizeImageServiceSegment(service, 'Service name');
     const composeDirectory = buildComposeDirectory({ environment: normalizedEnvironment, stack, projectName: compactProject });
     const nginxDirectory = buildNginxDirectory({ environment: normalizedEnvironment, stack });
+    const composeSample = buildComposeSample({
+      projectKey: compactProjectLower,
+      serviceKey,
+      imageServiceKey,
+      environment: normalizedEnvironment,
+      stack,
+      repositoryAddress,
+      nginxNetworkName,
+      routing: serviceRouting
+    });
     return [
       {
         kind: 'docker',
         name: `${compactProject}_Docker_DevOps`,
         directory: composeDirectory,
         filePath: `/${composeDirectory}/compose.yml`,
-        content: buildComposeSample({
-          projectKey: compactProjectLower,
-          serviceKey,
-          imageServiceKey,
-          environment: normalizedEnvironment,
-          stack,
-          repositoryAddress,
-          nginxNetworkName,
-          routing: serviceRouting
-        })
+        content: composeSample,
+        mergeExisting: (content) => mergeComposeService({
+          content,
+          sample: composeSample,
+          nginxNetworkName
+        }),
+        additionalFiles: [{
+          path: `/${composeDirectory}/.env`,
+          content: buildNormalEnvSample({ imageServiceKey, stack }),
+          mergeExisting: (content) => mergeNormalEnvTag({ content, imageServiceKey, stack })
+        }]
       },
       ...(shouldIncludeNginx ? [{
         kind: 'nginx',
@@ -4618,6 +4734,7 @@
       options.rawRepositoryName || options.repositoryName || options.sourceRepositoryName || 'repository';
     const projectName = options.rawProjectName || options.projectName || 'PROJECTNAME';
     const projectRepoName = `${projectName}/${sourceRepositoryName}`;
+    const imageServiceKey = normalizeImageServiceSegment(payload.service, 'Service name');
     return [
       "trigger: none",
       '',
@@ -4650,7 +4767,7 @@
       '- template: build-push-komodo.yml@SharedTemplatesRepo',
       '  parameters:',
       `    pool: '${payload.pool || ''}'`,
-      `    service: '${payload.service || ''}'                # service name`,
+      `    service: '${imageServiceKey}'                # service name`,
       `    environment: '${payload.environment || ''}'           # selected deployment environment`,
       `    stack: '${normalizeStackName(payload.stack)}'             # default preserves legacy names`,
       `    dockerfileDir: '${payload.dockerfileDir || '**'}'  # path of Dockerfile, Default is '**'`,
@@ -4734,6 +4851,16 @@
 
     const sourceRepositoryName = state.rawRepositoryName || state.repositoryName || state.projectName;
     const pipelineFilename = buildPipelineFilename({
+      projectName: state.projectName,
+      repositoryName: sourceRepositoryName,
+      service: payload.service,
+      environment: payload.environment,
+      branchName: state.sourceBranch,
+      stack: payload.stack,
+      komodoServer: payload.komodoServer,
+      mode: state.mode
+    });
+    const legacyProjectPrefixedPipelineFilename = buildLegacyProjectPrefixedPipelineFilename({
       projectName: state.projectName,
       repositoryName: sourceRepositoryName,
       service: payload.service,
@@ -4887,8 +5014,9 @@
             pipelineName,
             pipelinePath: `/${pipelineFilename}`,
             legacyPipelineNames: isMonorepoMode()
-              ? [legacyServerlessPipelineFilename, legacyServiceLessPipelineFilename]
+              ? [legacyProjectPrefixedPipelineFilename, legacyServerlessPipelineFilename, legacyServiceLessPipelineFilename]
               : [
+                  legacyProjectPrefixedPipelineFilename,
                   legacyServerlessPipelineFilename,
                   ...(!isDefaultStack(payload.stack)
                     ? []
@@ -4899,8 +5027,9 @@
                       ])
                 ],
             legacyPipelinePaths: isMonorepoMode()
-              ? [`/${legacyServerlessPipelineFilename}`, `/${legacyServiceLessPipelineFilename}`]
+              ? [`/${legacyProjectPrefixedPipelineFilename}`, `/${legacyServerlessPipelineFilename}`, `/${legacyServiceLessPipelineFilename}`]
               : [
+                  `/${legacyProjectPrefixedPipelineFilename}`,
                   `/${legacyServerlessPipelineFilename}`,
                   ...(!isDefaultStack(payload.stack)
                     ? []
