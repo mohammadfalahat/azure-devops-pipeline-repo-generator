@@ -2457,7 +2457,10 @@
         }
       }
       const hasServerName = names.some((name) => name.toLowerCase() === serverName.toLowerCase());
-      const listensOnHttps = listens.some((listen) => /(?:^|:)443$/.test(listen));
+      const listensOnHttps = listens.some((listen) => {
+        const normalizedListen = String(listen).replace(/^\[[^\]]+\]:/, '');
+        return /(?:^|:)443$/.test(normalizedListen);
+      });
       if (hasServerName && listensOnHttps) {
         matches.push({
           open: tokens[openIndex],
@@ -2474,6 +2477,39 @@
       throw new Error(`Nginx file has multiple HTTPS server blocks for ${serverName}; merge them manually first.`);
     }
     return matches[0];
+  };
+
+  const reactivateCommentedGeneratedNginx = ({ content, serverName }) => {
+    const lines = content.split(/(\r?\n)/);
+    const sourceLines = lines.filter((_, index) => index % 2 === 0);
+    if (!sourceLines.every((line) => !line.trim() || /^\s*#/.test(line))) return content;
+    if (!sourceLines.some((line) => /^\s*#\s*# BEGIN PIPELINE-GENERATOR MANAGED ROUTES\s*$/.test(line))) {
+      return content;
+    }
+
+    const generatedLine = /^(?:server\s*\{|}|listen\s+[^;]+;|server_name\s+[^;]+;|return\s+[^;]+;|client_max_body_size\s+[^;]+;|ssl_certificate(?:_key)?\s+[^;]+;|location\s+[^{};]+\{|resolver\s+[^;]+;|set\s+[^;]+;|rewrite\s+[^;]+;|proxy_(?:pass|http_version|set_header|read_timeout|send_timeout)\s+[^;]+;|# (?:BEGIN|END) PIPELINE-GENERATOR (?:MANAGED ROUTES|ROUTE [^\r\n]+))$/;
+    let depth = 0;
+    const reactivated = lines.map((line, index) => {
+      if (index % 2 === 1 || !line.trim()) return line;
+      const restored = line.replace(/^[ \t]*#[ \t]?/, '').trim();
+      if (restored && !generatedLine.test(restored)) {
+        throw new Error('Commented generated Nginx file contains an unknown directive; review it before reactivating.');
+      }
+      if (restored.startsWith('server_name ')) {
+        const names = restored.slice('server_name '.length, -1).trim().split(/\s+/);
+        if (!names.every((name) => name.toLowerCase() === serverName.toLowerCase())) {
+          throw new Error('Commented generated Nginx file contains another server name; review it before reactivating.');
+        }
+      }
+      if (restored === '}') depth -= 1;
+      if (depth < 0) throw new Error('Commented generated Nginx file has unmatched braces.');
+      const indented = restored ? `${'    '.repeat(depth)}${restored}` : '';
+      if (/^(?:server|location)\s+[^{}]*\{$/.test(restored)) depth += 1;
+      return indented;
+    }).join('');
+    if (depth !== 0) throw new Error('Commented generated Nginx file has unmatched braces.');
+    findNginxHttpsServer(reactivated, serverName);
+    return reactivated;
   };
 
   const migrateNginxCertificatePaths = ({ content, serverName, domain }) => {
@@ -2644,6 +2680,54 @@
     return -1;
   };
 
+  const moveNginxRootLocationLast = ({ content, serverName }) => {
+    const server = findNginxHttpsServer(content, serverName);
+    const tokens = tokenizeNginx(content);
+    const blockDepth = server.open.depth + 1;
+    const locations = [];
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token.start <= server.open.end || token.start >= server.close.start ||
+          token.depth !== blockDepth || token.value.toLowerCase() !== 'location') continue;
+      const values = [];
+      let openIndex = index + 1;
+      while (openIndex < tokens.length && tokens[openIndex].value !== '{') {
+        if (tokens[openIndex].depth !== blockDepth || tokens[openIndex].value === ';') break;
+        values.push(tokens[openIndex].value);
+        openIndex += 1;
+      }
+      if (tokens[openIndex]?.value !== '{' || tokens[openIndex].depth !== blockDepth) continue;
+      const closeIndex = findMatchingBraceToken(tokens, openIndex);
+      if (closeIndex === -1) throw new Error('Nginx Location block has no matching closing brace.');
+      const location = ['=', '^~'].includes(values[0]) ? values[1] : values[0];
+      locations.push({ location, start: token.start, end: tokens[closeIndex].end });
+      index = closeIndex;
+    }
+    const roots = locations.filter(({ location }) => location === '/');
+    if (!roots.length) return content;
+    if (roots.length > 1) throw new Error(`Nginx file has multiple root Locations for ${serverName}.`);
+    const root = roots[0];
+    if (locations[locations.length - 1] === root) return content;
+
+    const managedStart = content.indexOf(NGINX_MANAGED_ROUTES_START, server.open.end);
+    const managedEnd = content.indexOf(NGINX_MANAGED_ROUTES_END, server.open.end);
+    const rootIsManaged = managedStart !== -1 && managedStart < root.start &&
+      managedEnd > root.end && managedEnd < server.close.start;
+    const blockStart = rootIsManaged ? managedStart : root.start;
+    const blockEnd = rootIsManaged ? managedEnd + NGINX_MANAGED_ROUTES_END.length : root.end;
+    const lineStart = content.lastIndexOf('\n', blockStart - 1) + 1;
+    const nextNewline = content.indexOf('\n', blockEnd);
+    const lineSuffixEnd = nextNewline === -1 ? server.close.start : Math.min(nextNewline, server.close.start);
+    if (content.slice(lineStart, blockStart).trim() || content.slice(blockEnd, lineSuffixEnd).trim()) {
+      throw new Error('Nginx root Location must occupy its own lines before it can be reordered.');
+    }
+    const lineEnd = nextNewline === -1 ? blockEnd : nextNewline + 1;
+    const movedBlock = content.slice(lineStart, lineEnd).trimEnd();
+    const beforeClose = content.slice(0, lineStart) + content.slice(lineEnd, server.close.start);
+    const separator = beforeClose.endsWith('\n\n') ? '' : beforeClose.endsWith('\n') ? '\n' : '\n\n';
+    return `${beforeClose}${separator}${movedBlock}\n${content.slice(server.close.start)}`;
+  };
+
   const replaceManagedNginxRouteAtLocation = ({
     content,
     startIndex,
@@ -2716,7 +2800,9 @@
     stack = 'default',
     routeOptions = {}
   }) => {
-    let mergedContent = migrateNginxCertificatePaths({ content, serverName, domain });
+    const finish = (result) => moveNginxRootLocationLast({ content: result, serverName });
+    let mergedContent = reactivateCommentedGeneratedNginx({ content, serverName });
+    mergedContent = migrateNginxCertificatePaths({ content: mergedContent, serverName, domain });
     let server = findNginxHttpsServer(mergedContent, serverName);
     const route = buildNginxRouteBlock({ projectKey, serviceKey, environment, stack, ...routeOptions });
 
@@ -2757,9 +2843,9 @@
           managedContainerNames: routeOptions.managedContainerNames || [],
           routeContent: route.content
         });
-        if (replacement.replaced) return replacement.content;
+        if (replacement.replaced) return finish(replacement.content);
       }
-      if (server.locations.includes(route.location)) return mergedContent;
+      if (server.locations.includes(route.location)) return finish(mergedContent);
     }
 
     if (startInsideServer && endInsideServer) {
@@ -2767,7 +2853,7 @@
         route.location === '/' ? -1 : findManagedRootRouteIndex({ content: mergedContent, startIndex, endIndex });
       const insertionIndex =
         rootRouteIndex === -1 ? mergedContent.lastIndexOf('\n', endIndex) + 1 : rootRouteIndex;
-      return `${mergedContent.slice(0, insertionIndex)}${route.content}\n\n${mergedContent.slice(insertionIndex)}`;
+      return finish(`${mergedContent.slice(0, insertionIndex)}${route.content}\n\n${mergedContent.slice(insertionIndex)}`);
     }
 
     const beforeClose = mergedContent.slice(0, server.close.start);
@@ -2778,7 +2864,7 @@
       NGINX_MANAGED_ROUTES_END,
       ''
     ].join('\n');
-    return `${beforeClose}${separator}${managedBlock}${mergedContent.slice(server.close.start)}`;
+    return finish(`${beforeClose}${separator}${managedBlock}${mergedContent.slice(server.close.start)}`);
   };
 
   const buildNginxSample = ({ projectHost, projectKey, serviceKey, environment, stack = 'default', domain, routing }) => {

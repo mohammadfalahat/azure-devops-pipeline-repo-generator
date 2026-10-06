@@ -1,13 +1,13 @@
 schema_version: 1
 last_verified_at: "2026-08-27"
-status: "local_0_1_73_projectless_pipeline_names_validated_not_live_tested"
+status: "local_0_1_76_nginx_root_last_validated_not_live_tested"
 
 development_candidate:
-  version: "0.1.73"
+  version: "0.1.76"
   local_validated_at: "2026-10-05"
   package_path: null
   package_sha256: null
-  local_validation: "passed: full npm test suite and git diff --check for project-prefix removal, normal/MR image repository parity, service-specific Compose tag keys, and normal multi-service Compose merge; prior Tom Select local Chrome validation was 2026-09-29; no live Azure DevOps or Komodo test"
+  local_validation: "passed: full npm test suite and git diff --check, including Nginx root Location ordering across the matching HTTPS server, managed/manual routes, rerun idempotency, commented Nginx recovery, and prior local changes; no live Azure DevOps, Komodo, or Nginx test"
   installed: false
   live_verified: false
   editable_combobox:
@@ -46,6 +46,8 @@ development_candidate:
     pipeline: "Find by repository-prefixed desired name/path, then the project-prefixed Server-aware predecessor and earlier allowed legacy names/paths; GET-modify-PUT the same Build Definition ID. Custom Stacks remain isolated. MR considers only MR predecessors."
     release: "Find by exact uppercased Service/optional-Stack/Environment name or Pipeline artifact ID, then reconcile the full Release definition."
   fixes:
+    - "Keep location / last among every direct-child Location in the matching HTTPS server, including routes outside managed markers; move the managed section or manual root block without changing the block contents. Locally tested only."
+    - "Reactivate a wholly commented generated Nginx file with managed-route markers, restore canonical indentation, preserve existing managed routes, and append the new service; reject unknown directives. Based on the user-provided locanit-pro.conf and local validation only."
     - "Match normal and MR Compose image repositories to their respective Build image names, including the Service punctuation contract."
     - "Use normal Service/optional-Stack .env keys instead of generic IMAGE_TAG in Compose; seed and merge the adjacent tracked .env without replacing existing versions."
     - "Append a missing normal Service to an existing Compose file and correct only its managed image reference on rerun; keep unrelated services and fields."
@@ -778,7 +780,7 @@ next_run:
   - "Read back the Docker/Nginx support repositories and verify no /environments file was generated and only missing compose.yml, a shared route, or managed-route normalization was committed; prove root is last and every route has no rewrite and a no-URI-slash proxy target."
   - "Read Release 7 back: top-level variableGroups includes ID 7, environment variableGroups is empty, and the Inline task text matches the packaged wrapper."
   - "Commit and push the locally synchronized SharedTemplates monorepo/pipeline.yml to main, then rerun Build 15247 or a new equivalent Build and verify transient Stack busy responses are logged as warnings before success or bounded final failure."
-  - "After packaging/installing the current 0.1.73 candidate, rerun default Stack normal mode twice; verify the project-prefixed Pipeline is migrated under the same ID and the second run has no Build Definition PUT or support-repository commit."
+  - "After packaging/installing the current 0.1.76 candidate, rerun default Stack normal mode twice; verify the project-prefixed Pipeline is migrated under the same ID and the second run has no Build Definition PUT or support-repository commit."
   - "In a disposable configured Environment, generate Stack worker and verify Compose /pro_worker_<project>/compose.yml, Nginx /pro_worker/<project>-pro.conf, Stack-specific container/image targets, Pipeline/Release names, and Komodo Docker/Nginx resources all include worker without altering default."
   - "Create a second service in the same project and verify the Stack combobox visibly offers both default and worker while still accepting a new free-text Stack."
   - "In a disposable project, enter an unlisted Environment and verify Pipeline, Release, and Compose are produced while no Nginx repository/file read, create, push, or completion link occurs."

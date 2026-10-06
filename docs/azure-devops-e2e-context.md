@@ -8,7 +8,7 @@ Latest installed live execution observed: **0.1.62 Build and Release success on 
 
 Latest user-reported live failure: **Build 15247, HTTP 500 `Stack busy`, 2026-08-27**
 
-Current local workspace manifest: **0.1.73**; recent fixes are locally validated only.
+Current local workspace manifest: **0.1.76**; recent fixes are locally validated only.
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -21,7 +21,26 @@ No credentials belong in either file. Credentials exposed in conversation,
 including PATs and Komodo API credentials, must never be copied into commands,
 documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local workspace — version 0.1.73
+## Current local workspace — version 0.1.76
+
+The user reported that new Nginx Locations could appear after `location /`.
+The previous merge kept root last only within managed-route markers, missing
+manual Locations after that section and manual root blocks before a new section.
+The final merge now checks all direct-child Locations in the matching HTTPS
+server and moves the managed section or manual root block so root is last.
+Local regression tests cover new-route insertion, an existing route rerun,
+manual root, and idempotency. No live Azure DevOps or Nginx test was run.
+
+The user-provided `locanit-pro.conf` has both HTTP and HTTPS `server` blocks
+fully commented, including the generated `back` route. This directly explains
+the Step 1 "no HTTPS server block" failure; the prior IPv6-listen hypothesis
+does not explain this file. Local reconciliation now reactivates only a wholly
+commented generated file with managed-route markers, restores canonical
+indentation, retains the `back` route, migrates the legacy certificate paths,
+and appends the new service to the same managed block. Unknown directives
+still stop reconciliation. This finding and fix came from the user-provided
+file and local validation, not a signed-in Azure DevOps session or direct REST
+call; no live resource was changed.
 
 Normal Compose previously used a generic `${IMAGE_TAG:-CHANGE_ME}` tag even
 though the normal Release wrote `service[_stack]:version` to the adjacent

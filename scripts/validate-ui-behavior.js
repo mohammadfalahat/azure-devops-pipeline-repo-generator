@@ -1032,6 +1032,14 @@ const nginxApiSample = hooks.buildNginxSample({
   domain: 'bulutdev.ir'
 });
 assert(nginxApiSample.includes('server_name locanit.bulutdev.ir;'));
+const ipv6HttpsNginx = nginxApiSample.replace('    listen 443 ssl;', '    listen [::]:443 ssl;');
+assert(hooks.mergeNginxServiceRoute({
+  content: ipv6HttpsNginx,
+  serverName: 'locanit.bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'api',
+  environment: 'dev'
+}).includes('listen [::]:443 ssl;'));
 assert(nginxApiSample.includes('location /api/ {'));
 assert(nginxApiSample.includes('resolver         127.0.0.11         ipv6=off;'));
 assert(nginxApiSample.includes('set              $target            locanit_api_dev;'));
@@ -1406,6 +1414,93 @@ assert.strictEqual(
   }),
   migratedCertificateNginx
 );
+const commentedGeneratedNginx = [
+  '#server {',
+  '# listen 80;',
+  '# server_name locanit.bulutco.cloud;',
+  '# return 301 https://$host$request_uri;',
+  '#}',
+  '#',
+  '#server {',
+  '# listen 443 ssl;',
+  '# server_name locanit.bulutco.cloud;',
+  '#',
+  '# client_max_body_size 0;',
+  '# ssl_certificate /etc/nginx/conf.d/bulutco.pem;',
+  '# ssl_certificate_key /etc/nginx/conf.d/bulutco.key;',
+  '#',
+  '# # BEGIN PIPELINE-GENERATOR MANAGED ROUTES',
+  '# # BEGIN PIPELINE-GENERATOR ROUTE back',
+  '# location /back {',
+  '# proxy_pass http://locanit_back_pro:8080;',
+  '# proxy_http_version 1.1;',
+  '# proxy_set_header Upgrade $http_upgrade;',
+  '# proxy_set_header Connection "upgrade";',
+  '# proxy_set_header Host $host;',
+  '# proxy_set_header X-Real-IP $remote_addr;',
+  '# proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+  '# proxy_set_header X-Forwarded-Proto $scheme;',
+  '# proxy_read_timeout 3600s;',
+  '# proxy_send_timeout 3600s;',
+  '# }',
+  '# # END PIPELINE-GENERATOR ROUTE back',
+  '# # END PIPELINE-GENERATOR MANAGED ROUTES',
+  '#}',
+  ''
+].join('\n');
+const restoredGeneratedNginx = hooks.mergeNginxServiceRoute({
+  content: commentedGeneratedNginx,
+  serverName: 'locanit.bulutco.cloud',
+  domain: 'bulutco.cloud',
+  projectKey: 'locanit',
+  serviceKey: 'ui',
+  environment: 'pro'
+});
+assert.strictEqual((restoredGeneratedNginx.match(/^server \{/gm) || []).length, 2);
+assert.strictEqual((restoredGeneratedNginx.match(/# BEGIN PIPELINE-GENERATOR MANAGED ROUTES/g) || []).length, 1);
+assert(restoredGeneratedNginx.includes('server_name locanit.bulutco.cloud;'));
+assert(restoredGeneratedNginx.includes('ssl_certificate /etc/nginx/conf.d/bulutco.cloud.pem;'));
+assert(restoredGeneratedNginx.includes('ssl_certificate_key /etc/nginx/conf.d/bulutco.cloud.key;'));
+assert(restoredGeneratedNginx.includes('# BEGIN PIPELINE-GENERATOR ROUTE back'));
+assert(restoredGeneratedNginx.includes('set              $target            locanit_back_pro;'));
+assert(restoredGeneratedNginx.includes('# BEGIN PIPELINE-GENERATOR ROUTE ui'));
+assert(restoredGeneratedNginx.includes('location / {'));
+assert.strictEqual(
+  hooks.mergeNginxServiceRoute({
+    content: restoredGeneratedNginx,
+    serverName: 'locanit.bulutco.cloud',
+    domain: 'bulutco.cloud',
+    projectKey: 'locanit',
+    serviceKey: 'ui',
+    environment: 'pro'
+  }),
+  restoredGeneratedNginx
+);
+assert.throws(
+  () => hooks.mergeNginxServiceRoute({
+    content: commentedGeneratedNginx.replace('# location /back {', '# custom_directive on;'),
+    serverName: 'locanit.bulutco.cloud',
+    domain: 'bulutco.cloud',
+    projectKey: 'locanit',
+    serviceKey: 'ui',
+    environment: 'pro'
+  }),
+  /unknown directive/
+);
+assert.throws(
+  () => hooks.mergeNginxServiceRoute({
+    content: commentedGeneratedNginx.replace(
+      '# server_name locanit.bulutco.cloud;',
+      '# server_name other.bulutco.cloud;'
+    ),
+    serverName: 'locanit.bulutco.cloud',
+    domain: 'bulutco.cloud',
+    projectKey: 'locanit',
+    serviceKey: 'ui',
+    environment: 'pro'
+  }),
+  /another server name/
+);
 const mergedNginxSample = hooks.mergeNginxServiceRoute({
   content: `${nginxApiSample.replace('    client_max_body_size 0;', '    # manual setting is preserved\n    client_max_body_size 0;')}`,
   serverName: 'locanit.bulutdev.ir',
@@ -1428,6 +1523,73 @@ assert.strictEqual(
     environment: 'dev'
   }),
   mergedNginxSample
+);
+const manualLocationAfterRoot = nginxUiSample.replace(
+  '    # END PIPELINE-GENERATOR MANAGED ROUTES',
+  [
+    '    # END PIPELINE-GENERATOR MANAGED ROUTES',
+    '',
+    '    location /health/ {',
+    '        return 200;',
+    '    }'
+  ].join('\n')
+);
+const reorderedExistingRoot = hooks.mergeNginxServiceRoute({
+  content: manualLocationAfterRoot,
+  serverName: 'locanit.bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'ui',
+  environment: 'dev'
+});
+assert(reorderedExistingRoot.indexOf('location /health/ {') < reorderedExistingRoot.indexOf('location / {'));
+const reorderedWholeServer = hooks.mergeNginxServiceRoute({
+  content: manualLocationAfterRoot,
+  serverName: 'locanit.bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'api',
+  environment: 'dev'
+});
+assert(reorderedWholeServer.indexOf('location /health/ {') < reorderedWholeServer.indexOf('location / {'));
+assert(reorderedWholeServer.indexOf('location /api/ {') < reorderedWholeServer.indexOf('location / {'));
+assert.strictEqual((reorderedWholeServer.match(/# BEGIN PIPELINE-GENERATOR MANAGED ROUTES/g) || []).length, 1);
+assert.strictEqual(
+  hooks.mergeNginxServiceRoute({
+    content: reorderedWholeServer,
+    serverName: 'locanit.bulutdev.ir',
+    projectKey: 'locanit',
+    serviceKey: 'api',
+    environment: 'dev'
+  }),
+  reorderedWholeServer
+);
+const manualRootWithoutMarkers = [
+  'server {',
+  '    listen 443 ssl;',
+  '    server_name locanit.bulutdev.ir;',
+  '    location / {',
+  '        proxy_pass http://manual_front:80;',
+  '    }',
+  '}',
+  ''
+].join('\n');
+const manualRootLast = hooks.mergeNginxServiceRoute({
+  content: manualRootWithoutMarkers,
+  serverName: 'locanit.bulutdev.ir',
+  projectKey: 'locanit',
+  serviceKey: 'api',
+  environment: 'dev'
+});
+assert(manualRootLast.indexOf('location /api/ {') < manualRootLast.indexOf('location / {'));
+assert(manualRootLast.includes('proxy_pass http://manual_front:80;'));
+assert.strictEqual(
+  hooks.mergeNginxServiceRoute({
+    content: manualRootLast,
+    serverName: 'locanit.bulutdev.ir',
+    projectKey: 'locanit',
+    serviceKey: 'api',
+    environment: 'dev'
+  }),
+  manualRootLast
 );
 const rootFirstSample = hooks.mergeNginxServiceRoute({
   content: nginxUiSample,

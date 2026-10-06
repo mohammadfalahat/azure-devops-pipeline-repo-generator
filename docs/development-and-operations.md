@@ -731,7 +731,8 @@ After the test, read back and compare:
 - exact YAML path and branch;
 - Docker/Nginx DevOps repositories and selected Environment/Stack
   Compose/Nginx starter files; confirm custom Stack directories and that no root
-  `/environments` file was generated;
+  `/environments` file was generated; in the matching HTTPS server, verify
+  `location /` follows every other Location, including manual routes;
 - Pipeline ID, name, folder, repository ID, default branch, and YAML path;
 - classic Build Definition `process.yamlFilename`;
 - Release ID/name/folder, artifact Pipeline and repository IDs;
@@ -768,6 +769,7 @@ resources that were cleaned up.
 | Environment stays unavailable | `pipeline-generator.yml` is missing/invalid, an Environment lacks a valid domain, `main` is absent, or the signed-in browser user cannot read the central repository | Verify the URL targets `ShonizCollection/SharedTemplates/SharedTemplates`, structured non-empty `environments` records, the browser session, and repository Read permission; central reads intentionally do not use the current collection's Bearer token and there is no static fallback |
 | Komodo Server remains on Loading/unavailable | Central credential file is missing/invalid/unreadable, Komodo CORS blocks the ADO origin/custom headers, Komodo rejects the read credential, or no visible Server has `config.enabled: true` | Verify the exact SharedTemplates file path/branch and Read permission, inspect OPTIONS/POST status without logging header values, confirm `KOMODO_CORS_ALLOWED_ORIGINS`, and test `ListFullServers` with the dedicated user |
 | Step 1 reports no supported Nginx network | The selected Docker host has neither exact `nginx-network` nor `nginx-net`, or the read credential cannot call `ListDockerNetworks` | Verify the selected Komodo Server, run the read-only network listing, and create/connect the intended external Nginx network before rerunning; the generator intentionally performs no Git write in this state |
+| Step 1 reports no HTTPS server block for a generated Nginx file | The entire file may have been commented out, leaving no active `server` directive | Inspect the file. A wholly commented generated file with managed-route markers is reactivated on rerun, preserving existing managed routes; mixed/manual files and unknown directives require manual review. Verify one matching port-443 server block after restoration |
 | Step 1 fails after creating the Azure DevOps repository | Docker/Nginx support repository creation, bootstrap push, or shared Nginx merge was denied/ambiguous | Grant Create repository/Contribute permission; for Nginx also verify balanced braces, complete managed markers, and exactly one matching port-443 server block before rerunning |
 | Nginx reload still references `bulutdemo.pem` instead of `bulutdemo.ir.pem` | The shared Nginx file was created by a legacy generator that used only the first domain label | Install 0.1.62 and rerun the generator for the same service/Environment; reconciliation migrates only the exact legacy generated PEM/key paths in the matching HTTPS server and is idempotent |
 | A composite frontend/backend repository owns `/` or `/api/` although a closer repository exists | The configuration predates repository-priority routing or the preferred repository was not visible to the signed-in user | Ensure the user can list both repositories, then rerun the preferred `front`/`api` (or exact project-name) generator; managed lower-priority routes are demoted to their own service paths and cannot reclaim the base route on rerun |

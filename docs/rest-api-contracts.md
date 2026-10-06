@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.73
+This document is the integration contract between Pipeline Generator 0.1.76
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 
@@ -325,7 +325,12 @@ existing branch, the UI reads the exact starter-file paths. Normal and Monorepo
 `compose.yml` and `.env` are add-or-semantic-edit only for their managed
 service blocks/tag keys. The shared Nginx file is add-or-semantic-edit: only a missing
 managed Location is inserted; existing Location blocks and manual content are
-not rewritten. The ref `oldObjectId` protects all writes from silently
+not rewritten internally. The managed section or an existing manual root block
+may be moved so `location /` is the last Location in the matching HTTPS server.
+A wholly commented generated Nginx file with managed-route
+markers is reactivated with canonical indentation before merging the new
+Location; unknown commented directives or ambiguous HTTPS servers fail closed.
+The ref `oldObjectId` protects all writes from silently
 overwriting a concurrent branch update.
 
 ## Pipeline create and reconciliation contract

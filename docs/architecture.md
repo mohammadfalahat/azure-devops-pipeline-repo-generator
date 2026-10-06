@@ -1,6 +1,6 @@
 # Architecture and runtime flow
 
-This document describes version 0.1.73 from the implementation in
+This document describes version 0.1.76 from the implementation in
 `vss-extension.json`, `dist/menu-action.js`, `dist/ui.js`, and
 `dist/release-config.js`.
 
@@ -348,17 +348,27 @@ in `$target`. Root uses `proxy_pass http://$target:80`. A non-root route adds
 `proxy_pass http://$target:8080` without a URI slash and without `rewrite`, so
 the original request URI—including its service prefix—is forwarded unchanged.
 This keeps container DNS dynamic. The root Location is
-always placed after every other managed Location. WebSocket forwarding is enabled,
+always placed after every other Location in the matching HTTPS server. If a
+manual Location follows a managed root, the managed-route section moves after
+it; if the root is manual, its block moves after newly generated Locations.
+WebSocket forwarding is enabled,
 `client_max_body_size` is zero, and certificate filenames use the complete
 environment domain (for example, `bulutco.cloud.pem` and `bulutco.cloud.key`).
 A later run reads the shared Nginx file, identifies its unique HTTPS
 `server` by exact `server_name` plus port 443, and enumerates direct-child
-Locations with a quote/comment/brace-aware tokenizer. Existing non-root
+Locations with a quote/comment/brace-aware tokenizer. If the entire generated
+file has been commented out but still contains the
+generator's managed-route markers, reconciliation restores its generated
+directives and canonical indentation before merging. It rejects unknown
+directives and still requires one matching HTTPS server, so existing managed
+routes survive and the new service joins the same managed block. Existing non-root
 legacy service-name paths are migrated to their semantic canonical path, exact
 rewrite lines from the older generated format are removed, direct-host proxy targets become `$target`,
 exact legacy generated certificate paths based on only the domain's first
 label are migrated to the complete Environment domain, and root is moved below
-all other generated route blocks. Certificate migration is scoped to the
+all other generated route blocks. The final merge also checks the complete
+HTTPS server, including Locations outside the managed section, before returning.
+Certificate migration is scoped to the
 matching HTTPS server and does not alter custom paths. Neither root nor
 non-root proxy targets have a URI slash. A missing
 route is inserted inside managed-route
