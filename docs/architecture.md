@@ -1,6 +1,6 @@
 # Architecture and runtime flow
 
-This document describes version 0.1.76 from the implementation in
+This document describes version 0.1.78 from the implementation in
 `vss-extension.json`, `dist/menu-action.js`, `dist/ui.js`, and
 `dist/release-config.js`.
 
@@ -619,7 +619,11 @@ Nginx directories. The logical service has one immutable Nginx
 image for shell/static assets and an optional immutable Node image for BFF output.
 Before any repository write, the browser calls Komodo `ListDockerNetworks` for
 the selected Server and requires an exact existing `nginx-network` or
-`nginx-net`. Compose keeps an existing logical network key when possible and
+`nginx-net`. Network parsing accepts Komodo's `name` and Docker's `Name` field,
+retains case-sensitive names, and rejects unnamed/malformed records. A missing
+network error identifies the selected Server and up to twenty validated names
+returned by Komodo, so operators can compare Periphery's Docker host/socket
+with their CLI listing. Compose keeps an existing logical network key when possible and
 sets its external `name` to the resolved host network. This lets existing
 services continue referring to `nginx-network` while a target host actually
 uses `nginx-net`, without renaming unrelated service blocks.

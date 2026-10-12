@@ -8,7 +8,7 @@ Latest installed live execution observed: **0.1.62 Build and Release success on 
 
 Latest user-reported live failure: **Build 15247, HTTP 500 `Stack busy`, 2026-08-27**
 
-Current local workspace manifest: **0.1.76**; recent fixes are locally validated only.
+Current local workspace manifest: **0.1.78**; recent fixes are locally validated only.
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -21,7 +21,37 @@ No credentials belong in either file. Credentials exposed in conversation,
 including PATs and Komodo API credentials, must never be copied into commands,
 documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local workspace — version 0.1.76
+## Current local workspace — version 0.1.78
+
+On 2026-10-12 the user reported Step 1 rejecting the selected Komodo Server's
+Nginx network while their SOC CLI listing showed exact `nginx-network`. The
+selected Server name and actual `ListDockerNetworks` JSON were not supplied,
+so this is not a verified live root cause. Komodo 1.19.5's published
+`NetworkListItem` schema uses lowercase `name`; the prior parser ignored
+Docker-shaped `Name` records and could mistake a nonempty malformed response
+for a missing network.
+
+The parser now accepts both string fields, validates every record, and
+deduplicates names case-sensitively to preserve exact Docker network identity.
+Missing-network errors include the selected Server and up to twenty validated
+returned network names, plus a reminder to compare Periphery's Docker
+host/socket with the CLI. Unsupported response formats fail separately; exact
+network selection still runs before any repository write.
+
+Local validation: full `npm test`, `node --check dist/ui.js`, `git diff --check`,
+SOC-style lowercase/PascalCase network regression cases, malformed-response
+rejection, selected-Server request assertions, and diagnostic tests passed.
+The packaged UI and README match the workspace; VSIX integrity and version
+checks passed. No signed-in Azure DevOps test, direct Komodo request,
+installation, or live write was performed.
+
+- Package: `mohammad-falahat.pipeline-generator-0.1.78.vsix`
+- SHA-256: `f0b3d1a4bda44d35b6fffc9105a960901b40175f7efb6f7921f2414a21e9b6c5`
+- Live follow-up: inspect the exact selected Server and its returned network
+  names; if they differ from the SOC CLI, verify the Server/Periphery Docker
+  host/socket mapping before changing networks.
+
+## Previous local workspace — version 0.1.76
 
 The user reported that new Nginx Locations could appear after `location /`.
 The previous merge kept root last only within managed-route markers, missing

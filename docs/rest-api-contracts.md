@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.76
+This document is the integration contract between Pipeline Generator 0.1.78
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 
@@ -268,6 +268,14 @@ credential for a second read-only request:
 - method/path: `POST {KOMODO_ADDRESS}/read`;
 - body: `{ "type": "ListDockerNetworks", "params": { "server": "<selected-server>" } }`;
 - accepted result: an exact network name `nginx-network` or `nginx-net`.
+
+The response parser accepts the direct array and the existing `data`, `value`,
+or `networks` array envelopes. Each record must provide a nonempty string
+`name` (Komodo's published field) or `Name` (Docker compatibility). Network
+names are validated and deduplicated case-sensitively; malformed records stop
+provisioning with a response-format error. Missing-network diagnostics include
+the selected Server and up to twenty validated network names, never raw response
+objects or credentials.
 
 Only validated network names are retained and the selected value is passed to
 the in-memory Compose renderer. Existing logical Compose references are

@@ -1,15 +1,22 @@
 schema_version: 1
 last_verified_at: "2026-08-27"
-status: "local_0_1_76_nginx_root_last_validated_not_live_tested"
+status: "local_0_1_78_network_parsing_and_diagnostics_validated_not_live_tested"
 
 development_candidate:
-  version: "0.1.76"
-  local_validated_at: "2026-10-05"
-  package_path: null
-  package_sha256: null
-  local_validation: "passed: full npm test suite and git diff --check, including Nginx root Location ordering across the matching HTTPS server, managed/manual routes, rerun idempotency, commented Nginx recovery, and prior local changes; no live Azure DevOps, Komodo, or Nginx test"
+  version: "0.1.78"
+  local_validated_at: "2026-10-12"
+  package_path: "mohammad-falahat.pipeline-generator-0.1.78.vsix"
+  package_sha256: "f0b3d1a4bda44d35b6fffc9105a960901b40175f7efb6f7921f2414a21e9b6c5"
+  local_validation: "passed: full npm test suite, node --check dist/ui.js, git diff --check, lowercase/PascalCase SOC network fixtures, malformed response rejection, case-sensitive network identity, selected-Server request and missing-network diagnostics; VSIX integrity/version and packaged UI/README equality; no live Azure DevOps, Komodo, or Nginx test"
   installed: false
   live_verified: false
+  soc_network_report:
+    observed_at: "2026-10-12"
+    evidence: "User-provided SOC docker network ls shows exact nginx-network while Step 1 reports neither supported name."
+    selected_komodo_server: null
+    actual_komodo_network_response: null
+    root_cause_verified: false
+    next_diagnostic: "Compare the selected Server and Komodo-returned names with SOC; verify Periphery's Docker host/socket mapping if they differ."
   editable_combobox:
     library: "Tom Select"
     version: "2.6.2"
@@ -46,6 +53,7 @@ development_candidate:
     pipeline: "Find by repository-prefixed desired name/path, then the project-prefixed Server-aware predecessor and earlier allowed legacy names/paths; GET-modify-PUT the same Build Definition ID. Custom Stacks remain isolated. MR considers only MR predecessors."
     release: "Find by exact uppercased Service/optional-Stack/Environment name or Pipeline artifact ID, then reconcile the full Release definition."
   fixes:
+    - "Accept Komodo name and Docker Name fields in network records, reject malformed records separately, preserve case-sensitive exact names, and include selected Server plus validated returned names in missing-network errors. Local regression evidence only."
     - "Keep location / last among every direct-child Location in the matching HTTPS server, including routes outside managed markers; move the managed section or manual root block without changing the block contents. Locally tested only."
     - "Reactivate a wholly commented generated Nginx file with managed-route markers, restore canonical indentation, preserve existing managed routes, and append the new service; reject unknown directives. Based on the user-provided locanit-pro.conf and local validation only."
     - "Match normal and MR Compose image repositories to their respective Build image names, including the Service punctuation contract."
@@ -618,6 +626,8 @@ implementation_contracts:
       - "nginx-network"
       - "nginx-net"
     timing: "Step 1 before any repository creation or Git write"
+    response_parsing: "Direct array or existing data/value/networks envelopes; nonempty string name or Name; safe, case-sensitive network names; malformed records fail separately."
+    missing_network_diagnostics: "Selected Server and up to twenty validated returned network names, plus Periphery Docker host/socket comparison; no raw payload or credential output."
     compose_behavior: "Preserve an existing logical Nginx network key and set its explicit external name to the actual host network."
     missing_network_behavior: "Block provisioning without Git mutation."
   support_repositories:

@@ -870,11 +870,14 @@
     if (!records) {
       throw new Error('Komodo returned an unsupported ListDockerNetworks response.');
     }
-    const names = uniqueCaseInsensitive(
-      records
-        .map((record) => String(record?.name || '').trim())
-        .filter(Boolean)
-    );
+    const names = Array.from(new Set(records.map((record) => {
+      // Komodo uses name; Docker-shaped responses use Name.
+      const name = record?.name ?? record?.Name;
+      if (typeof name !== 'string' || !name.trim()) {
+        throw new Error('Komodo ListDockerNetworks response contains a network without a valid name.');
+      }
+      return name.trim();
+    })));
     const unsafeName = names.find((name) => !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name));
     if (unsafeName) {
       throw new Error('Komodo returned an unsafe Docker network name.');
@@ -919,8 +922,18 @@
     }
   };
 
-  const resolveNginxNetworkForServer = async ({ hostUri, server }) =>
-    selectNginxNetworkName(await fetchKomodoDockerNetworks({ hostUri, server }));
+  const resolveNginxNetworkForServer = async ({ hostUri, server }) => {
+    const networkNames = await fetchKomodoDockerNetworks({ hostUri, server });
+    try {
+      return selectNginxNetworkName(networkNames);
+    } catch (error) {
+      const listedNames = networkNames.slice(0, 20).join(', ') || '(none)';
+      const remaining = networkNames.length > 20 ? ` (+${networkNames.length - 20} more)` : '';
+      error.message += ` Server: ${server}. Networks returned by Komodo: ${listedNames}${remaining}. Verify that this Server's Periphery uses the same Docker host/socket as your network listing.`;
+      error.domain = 'komodo';
+      throw error;
+    }
+  };
 
   const loadDeploymentTargets = async ({ hostUri, branch }) => {
     state.deploymentTargetsReady = false;

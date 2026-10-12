@@ -673,6 +673,47 @@ assert.deepStrictEqual(
   ])),
   ['bridge', 'nginx-net']
 );
+const socDockerNetworks = [
+  { Name: 'bridge', Driver: 'bridge', Scope: 'local' },
+  { Name: 'host', Driver: 'host', Scope: 'local' },
+  { Name: 'komodo-periphery_default', Driver: 'bridge', Scope: 'local' },
+  { Name: 'nginx-network', Driver: 'bridge', Scope: 'local' },
+  { Name: 'none', Driver: 'null', Scope: 'local' }
+];
+for (const payload of [
+  socDockerNetworks,
+  { data: socDockerNetworks },
+  { value: socDockerNetworks },
+  { networks: socDockerNetworks }
+]) {
+  assert.deepStrictEqual(
+    Array.from(hooks.extractDockerNetworkNames(payload)),
+    ['bridge', 'host', 'komodo-periphery_default', 'nginx-network', 'none']
+  );
+  assert.strictEqual(
+    hooks.selectNginxNetworkName(hooks.extractDockerNetworkNames(payload)),
+    'nginx-network'
+  );
+}
+assert.deepStrictEqual(
+  Array.from(hooks.extractDockerNetworkNames([
+    { name: 'NGINX-NETWORK' },
+    { name: 'nginx-network' },
+    { Name: 'nginx-network' }
+  ])),
+  ['NGINX-NETWORK', 'nginx-network']
+);
+assert.deepStrictEqual(Array.from(hooks.extractDockerNetworkNames([])), []);
+for (const payload of [[{ Id: 'missing-name' }], [null], [{ name: 42 }]]) {
+  assert.throws(
+    () => hooks.extractDockerNetworkNames(payload),
+    /ListDockerNetworks response contains a network without a valid name/
+  );
+}
+assert.throws(
+  () => hooks.extractDockerNetworkNames([{ Name: 'nginx-network;invalid' }]),
+  /unsafe Docker network name/
+);
 assert.strictEqual(hooks.selectNginxNetworkName(['bridge', 'nginx-net']), 'nginx-net');
 assert.strictEqual(hooks.selectNginxNetworkName(['nginx-network', 'nginx-net']), 'nginx-network');
 assert.throws(
@@ -1938,6 +1979,11 @@ KOMODO_API_SECRET="synthetic-read-secret"
     'Production-192.168.0.244'
   ]);
 
+  let networkResponseBody = [
+    { name: 'bridge', driver: 'bridge' },
+    { name: 'nginx-net', driver: 'bridge' }
+  ];
+  let networkServer = 'DEMO-192.168.62.91';
   context.fetch = async (url, options = {}) => {
     if (url.includes('path=%2Fkomodo-servers-creds.env')) {
       return response({
@@ -1951,16 +1997,10 @@ KOMODO_API_SECRET="synthetic-read-secret"
     }
     const request = JSON.parse(options.body);
     assert.strictEqual(request.type, 'ListDockerNetworks');
-    assert.strictEqual(request.params.server, 'DEMO-192.168.62.91');
+    assert.strictEqual(request.params.server, networkServer);
     assert.strictEqual(options.headers['X-Api-Key'], 'synthetic-read-key');
     assert.strictEqual(options.headers['X-Api-Secret'], 'synthetic-read-secret');
-    return response({
-      body: [
-        { name: 'bridge', driver: 'bridge' },
-        { name: 'nginx-net', driver: 'bridge' }
-      ],
-      url
-    });
+    return response({ body: networkResponseBody, url });
   };
   assert.strictEqual(
     await hooks.resolveNginxNetworkForServer({
@@ -1968,6 +2008,35 @@ KOMODO_API_SECRET="synthetic-read-secret"
       server: 'DEMO-192.168.62.91'
     }),
     'nginx-net'
+  );
+  networkResponseBody = socDockerNetworks;
+  networkServer = 'SOC';
+  assert.strictEqual(
+    await hooks.resolveNginxNetworkForServer({ hostUri, server: networkServer }),
+    'nginx-network'
+  );
+  networkResponseBody = socDockerNetworks.map(({ Name }) => ({ name: Name }));
+  assert.strictEqual(
+    await hooks.resolveNginxNetworkForServer({ hostUri, server: networkServer }),
+    'nginx-network'
+  );
+  networkServer = 'DEMO-192.168.62.91';
+  networkResponseBody = [{ name: 'bridge' }, { name: 'nginx-net-demo' }];
+  await assert.rejects(
+    hooks.resolveNginxNetworkForServer({ hostUri, server: 'DEMO-192.168.62.91' }),
+    (error) => error.domain === 'komodo' &&
+      /Server: DEMO-192\.168\.62\.91/.test(error.message) &&
+      /Networks returned by Komodo: bridge, nginx-net-demo/.test(error.message)
+  );
+  networkResponseBody = [];
+  await assert.rejects(
+    hooks.resolveNginxNetworkForServer({ hostUri, server: 'DEMO-192.168.62.91' }),
+    /Networks returned by Komodo: \(none\)/
+  );
+  networkResponseBody = [{ Id: 'missing-name' }];
+  await assert.rejects(
+    hooks.resolveNginxNetworkForServer({ hostUri, server: 'DEMO-192.168.62.91' }),
+    (error) => error.domain === 'komodo' && /without a valid name/.test(error.message)
   );
 
   environment.options = [];
