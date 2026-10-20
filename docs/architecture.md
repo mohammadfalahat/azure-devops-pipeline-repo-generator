@@ -1,6 +1,6 @@
 # Architecture and runtime flow
 
-This document describes version 0.1.78 from the implementation in
+This document describes version 0.1.81 from the implementation in
 `vss-extension.json`, `dist/menu-action.js`, `dist/ui.js`, and
 `dist/release-config.js`.
 
@@ -204,6 +204,7 @@ reachable without resizing the host contribution.
 | `deploymentTargets` / `deploymentTargetsReady` | Runtime YAML environments plus direct Komodo enabled-server names, and the gate that keeps Submit disabled until both sources are valid |
 | `sourceBranch` | Branch selected by the user; used inside generated YAML and filename |
 | `branch` | Generated repository branch; fixed to `main` |
+| `isSubmitting` | Blocks repeat submission while provisioning or overwrite review is pending |
 
 `repoId` and the source repository name remain source identity throughout a
 submit/retry cycle; generated repository metadata is never written back into
@@ -330,7 +331,12 @@ including `_`, `-`, and `.`, in both Build and Compose. The Compose tag uses
 adjacent tracked `.env` stores that key and Release updates its version.
 Existing normal Compose files gain a missing service at the end of `services`;
 an existing generated service's image reference is corrected in place while
-other service fields remain intact. MR Compose image repositories use the MR
+other service fields remain intact. Before appending a normal or MR service,
+the merger also checks direct service `image` fields for the exact image
+repository, ignoring tags and digests while retaining the registry port and
+repository spelling. If that image already belongs to a differently named
+service, no duplicate is added and that existing service remains unchanged.
+MR Compose image repositories use the MR
 Pipeline's normalized Service key, so its Build and Compose paths also match.
 Routing uses semantic tokens rather than a short exact-name list. `ui`, `front`, `frontend`, `web`,
 `fe`, `website`, `client`, `portal`, and `spa` indicate frontend; `api`, `back`,
@@ -491,6 +497,30 @@ must add a YAML-safe serializer or explicit validation.
 Provisioning is a sequential workflow, not an atomic distributed transaction.
 Each step updates the status element and attaches its label to any thrown error.
 
+### Read-only review before Step 1
+
+Before any provisioning write or Komodo network lookup, the submit handler lists
+the current project's repositories and finds the exact generated-repository name.
+If it exists, `prepareGeneratedFiles` reads `main` and the proposed YAML paths
+at that exact commit. An absent repository/branch/file needs no confirmation;
+byte-identical content is a no-op. Different same-path normal or MR YAML opens
+the overwrite modal here, before repository creation, Compose/Nginx changes,
+default-branch updates, or Pipeline/Release reconciliation.
+
+The review identifies repository, branch, and file path, shows old/new line
+numbers, removed/added lines, whitespace, and line endings including a missing
+final newline. Cancel receives initial focus. Cancel, Escape, or closing the
+dialog ends the submit with no resource changes; only **Confirm overwrite**
+continues. Reviewed source uses textContent and is cleared on close.
+
+The resulting immutable plan binds the repository identity, commit, exact file
+paths, proposed content, and overwrite policy to this submission. Step 1 checks
+the target ref again before support writes; Step 2 revalidates it and uses this
+same plan without another comparison or prompt. A changed ref, a different
+proposal, or an initialized repository appearing concurrently aborts instead of
+using stale consent. A new submission performs a fresh read and review. Approval
+is never persisted across submissions. MR's deployment contract stays create-once.
+
 ### Step 1: ensure generated and support repositories
 
 The UI lists project repositories using Git API 6.0 and compares exact names.
@@ -503,16 +533,19 @@ Step 2 begins. The extension does not create a root `environments` file.
 
 ### Step 2: add or edit YAML
 
-The UI reads `refs/heads/main` to obtain its current object ID. Missing branches
-use Azure DevOps's all-zero object ID. If `main` already exists, it reads the
-target path as text. When the existing content is byte-for-byte equal to the
-generated YAML, the step returns without a Git Push. Otherwise it chooses Git
-change type `add` or `edit`.
+The UI revalidates the ref against the initial reviewed plan and saves only its
+prepared `add`/`edit` changes. An unchanged plan returns without a Git push.
+There is no late comparison or confirmation after support writes. The initial
+reads use `versionDescriptor.versionType=commit`; missing branches use Azure
+DevOps's all-zero old object ID.
 
 For changed or missing content, it submits one Git push containing one ref
 update and one commit. The ref's old object ID provides optimistic concurrency.
 A concurrent update can therefore cause the push to fail rather than overwrite
-an unseen commit.
+an unseen commit. There is no automatic push retry with stale approval; a new
+submission reads the new snapshot and requires a new review when it differs.
+If a concurrent update occurs during Step 1, support changes already completed
+are not rolled back, but the stale YAML plan is never written or reapproved late.
 
 ### Step 3: set default branch
 

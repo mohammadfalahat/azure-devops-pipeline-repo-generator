@@ -499,6 +499,7 @@
   };
 
   const setSubmitting = (isSubmitting) => {
+    state.isSubmitting = isSubmitting;
     if (submitButton) {
       submitButton.disabled = isSubmitting || state.provisioningComplete || !state.deploymentTargetsReady;
     }
@@ -1679,13 +1680,13 @@
     return payload.value?.[0]?.objectId || ZERO_OBJECT_ID;
   };
 
-  const getRepositoryFileContent = async ({ hostUri, projectId, repoId, branchName, path, accessToken }) => {
+  const getRepositoryFileContent = async ({ hostUri, projectId, repoId, branchName, path, accessToken, commitId }) => {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/items?path=${encodeURIComponent(
       normalizedPath
     )}&versionDescriptor.version=${encodeURIComponent(
-      branchName
-    )}&versionDescriptor.versionType=branch&%24format=text&api-version=6.0`;
+      commitId || branchName
+    )}&versionDescriptor.versionType=${commitId ? 'commit' : 'branch'}&%24format=text&api-version=6.0`;
     const res = await fetch(url, { headers: authHeaders(accessToken) });
 
     if (res.status === 404) {
@@ -2225,6 +2226,41 @@
     return `${lines.join('\n')}${hadTrailingNewline ? '\n' : ''}`.replace(/\n/g, newline);
   };
 
+  const composeImageRepository = (image) => {
+    // A tag (including nested Compose interpolation) or digest does not change
+    // the image repository. A registry port belongs to the repository.
+    const reference = String(image || '').trim().split('@')[0];
+    const literalPrefix = reference.split('$')[0];
+    const tagIndex = literalPrefix.indexOf(':', literalPrefix.lastIndexOf('/') + 1);
+    if (tagIndex !== -1) return literalPrefix.slice(0, tagIndex);
+    return literalPrefix === reference ? reference : '';
+  };
+
+  const collectComposeImageRepositories = (lines) => {
+    const repositories = new Set();
+    const servicesIndex = lines.findIndex((line) => /^services:\s*(?:#.*)?$/.test(line));
+    if (servicesIndex === -1) return repositories;
+    let serviceIndent;
+    let propertyIndent;
+    for (const line of lines.slice(servicesIndex + 1)) {
+      if (!line.trim() || /^\s*#/.test(line)) continue;
+      const indent = /^ */.exec(line)[0].length;
+      if (!indent) break;
+      if (serviceIndent === undefined) serviceIndent = indent;
+      if (indent === serviceIndent) {
+        propertyIndent = undefined;
+        continue;
+      }
+      if (propertyIndent === undefined) propertyIndent = indent;
+      if (indent !== propertyIndent) continue;
+      const image = /^\s+image:\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*(?:#.*)?$/.exec(line);
+      if (!image) continue;
+      const repository = composeImageRepository(image[1] || image[2] || image[3]);
+      if (repository) repositories.add(repository);
+    }
+    return repositories;
+  };
+
   const mergeComposeService = ({ content, sample, nginxNetworkName = 'nginx-network' }) => {
     const newline = content.includes('\r\n') ? '\r\n' : '\n';
     const lines = content.replace(/\r\n/g, '\n').split('\n');
@@ -2264,6 +2300,9 @@
         lines[imageIndex] = lines[imageIndex].replace(/^(    image:\s*)(\S+)(.*)$/, `$1${desiredImage}$3`);
       }
     } else {
+      if (collectComposeImageRepositories(lines).has(composeImageRepository(desiredImage))) {
+        return content;
+      }
       const networkName = selectNginxNetworkName([nginxNetworkName]);
       const networksIndex = lines.findIndex((line) => /^networks:\s*(?:#.*)?$/.test(line));
       const networkEnd = networksIndex === -1 ? -1 : nextSection(networksIndex);
@@ -3170,7 +3209,11 @@
       lines.splice(serviceStart, serviceEnd - serviceStart, ...migratedBlock);
       servicesEnd += migratedBlock.length - (serviceEnd - serviceStart);
     }
-    const missing = desiredServices.filter(({ name }) => !existingNames.has(name));
+    const existingImageRepositories = collectComposeImageRepositories(lines);
+    const missing = desiredServices.filter(({ name, content: serviceContent }) => {
+      const desiredImage = /^    image:\s*(\S+)\s*$/m.exec(serviceContent)?.[1];
+      return !existingNames.has(name) && !existingImageRepositories.has(composeImageRepository(desiredImage));
+    });
     if (missing.length) {
       const insertion = missing.flatMap(({ content: serviceContent }, index) => [
         ...(index || (servicesEnd > servicesIndex + 1 && lines[servicesEnd - 1]?.trim()) ? [''] : []),
@@ -3673,36 +3716,220 @@
     return results;
   };
 
+  const buildYamlDiff = (previous, proposed) => {
+    const tokenize = (value) => String(value).match(/[^\r\n]*(?:\r\n|\r|\n|$)/g).filter(Boolean);
+    const before = tokenize(previous);
+    const after = tokenize(proposed);
+    const edits = [];
+    let prefix = 0;
+    while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) {
+      edits.push({ kind: 'context', token: before[prefix++] });
+    }
+    let suffix = 0;
+    while (suffix < before.length - prefix && suffix < after.length - prefix &&
+      before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix += 1;
+    const oldMiddle = before.slice(prefix, before.length - suffix);
+    const newMiddle = after.slice(prefix, after.length - suffix);
+    // Bound diff computation for unusually large operator files. The fallback
+    // still shows every removed and added line, without truncating either file.
+    if (!oldMiddle.length || !newMiddle.length || oldMiddle.length * newMiddle.length > 1000000) {
+      for (const token of oldMiddle) edits.push({ kind: 'removed', token });
+      for (const token of newMiddle) edits.push({ kind: 'added', token });
+    } else {
+      const lengths = Array.from({ length: oldMiddle.length + 1 }, () => new Uint32Array(newMiddle.length + 1));
+      for (let oldIndex = oldMiddle.length - 1; oldIndex >= 0; oldIndex -= 1) {
+        for (let newIndex = newMiddle.length - 1; newIndex >= 0; newIndex -= 1) {
+          lengths[oldIndex][newIndex] = oldMiddle[oldIndex] === newMiddle[newIndex]
+            ? lengths[oldIndex + 1][newIndex + 1] + 1
+            : Math.max(lengths[oldIndex + 1][newIndex], lengths[oldIndex][newIndex + 1]);
+        }
+      }
+      let oldIndex = 0;
+      let newIndex = 0;
+      while (oldIndex < oldMiddle.length || newIndex < newMiddle.length) {
+        if (oldIndex < oldMiddle.length && newIndex < newMiddle.length && oldMiddle[oldIndex] === newMiddle[newIndex]) {
+          edits.push({ kind: 'context', token: oldMiddle[oldIndex++] });
+          newIndex += 1;
+        } else if (oldIndex < oldMiddle.length &&
+          (newIndex === newMiddle.length || lengths[oldIndex + 1][newIndex] >= lengths[oldIndex][newIndex + 1])) {
+          edits.push({ kind: 'removed', token: oldMiddle[oldIndex++] });
+        } else {
+          edits.push({ kind: 'added', token: newMiddle[newIndex++] });
+        }
+      }
+    }
+    for (const token of before.slice(before.length - suffix)) edits.push({ kind: 'context', token });
+    let oldLine = 0;
+    let newLine = 0;
+    return edits.map(({ kind, token }) => ({
+      kind,
+      oldLine: kind === 'added' ? null : ++oldLine,
+      newLine: kind === 'removed' ? null : ++newLine,
+      text: token.replace(/(?:\r\n|\r|\n)$/, ''),
+      ending: token.endsWith('\r\n') ? 'CRLF' : token.endsWith('\n') ? 'LF' : token.endsWith('\r') ? 'CR' : 'EOF'
+    }));
+  };
+
+  let overwriteReviewPending = false;
+  const confirmPipelineOverwrite = async ({ repositoryName, branchName, filePath, previous, proposed }) => {
+    const dialog = document.getElementById('pipeline-overwrite-dialog');
+    const diffLines = document.getElementById('overwrite-diff-lines');
+    const cancel = document.getElementById('overwrite-cancel');
+    const confirm = document.getElementById('overwrite-confirm');
+    if (!dialog || !diffLines || !cancel || !confirm || typeof dialog.showModal !== 'function') {
+      throw new Error('Cannot display the YAML overwrite review. Reopen the generator in a supported browser; the existing file was not overwritten.');
+    }
+    if (overwriteReviewPending) throw new Error('A YAML overwrite review is already open.');
+    overwriteReviewPending = true;
+    try {
+      const rows = buildYamlDiff(previous, proposed);
+      const fragment = document.createDocumentFragment();
+      for (const row of rows) {
+        const tr = document.createElement('tr');
+        tr.className = `diff-${row.kind}`;
+        for (const value of [row.oldLine ?? '', row.newLine ?? '', row.kind === 'removed' ? '−' : row.kind === 'added' ? '+' : '', row.text, row.ending]) {
+          const td = document.createElement('td');
+          td.textContent = String(value);
+          tr.appendChild(td);
+        }
+        fragment.appendChild(tr);
+      }
+      diffLines.replaceChildren(fragment);
+      document.getElementById('overwrite-target').textContent = `${repositoryName} · ${branchName} · ${filePath}`;
+      document.getElementById('overwrite-summary').textContent =
+        `${rows.filter(({ kind }) => kind === 'removed').length} removed lines · ${rows.filter(({ kind }) => kind === 'added').length} added lines`;
+      const previousFocus = document.activeElement;
+      return await new Promise((resolve, reject) => {
+        let settled = false;
+        const cleanup = () => {
+          cancel.removeEventListener('click', onCancel);
+          confirm.removeEventListener('click', onConfirm);
+          dialog.removeEventListener('cancel', onCancel);
+          dialog.removeEventListener('close', onClose);
+          if (dialog.open) dialog.close();
+          diffLines.replaceChildren();
+          previousFocus?.focus();
+        };
+        const finish = (approved) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(approved);
+        };
+        const onCancel = (event) => { event.preventDefault(); finish(false); };
+        // Native close events are queued. A close from the previous review may
+        // arrive after a new review has opened; it must not dismiss that review.
+        const onClose = (event) => { if (!dialog.open) onCancel(event); };
+        const onConfirm = () => finish(true);
+        cancel.addEventListener('click', onCancel);
+        confirm.addEventListener('click', onConfirm);
+        dialog.addEventListener('cancel', onCancel);
+        dialog.addEventListener('close', onClose);
+        try {
+          dialog.showModal();
+          cancel.focus();
+        } catch (error) {
+          cleanup();
+          reject(new Error('Could not open the YAML overwrite review. The existing file was not overwritten.'));
+        }
+      });
+    } finally {
+      overwriteReviewPending = false;
+    }
+  };
+
+  const requirePipelineOverwriteConfirmation = async (details, confirmOverwrite) => {
+    if (await confirmOverwrite(details) !== true) {
+      const error = new Error('Generation cancelled. The existing pipeline YAML was not overwritten.');
+      error.code = 'PIPELINE_OVERWRITE_CANCELLED';
+      throw error;
+    }
+  };
+
+  const normalizeGeneratedFiles = (files) => files.map((file) => Object.freeze({
+    path: file.path.startsWith('/') ? file.path : `/${file.path}`,
+    content: String(file.content || ''),
+    overwrite: file.overwrite !== false
+  }));
+
+  const prepareGeneratedFiles = async ({ hostUri, projectId, repoId = null, repositoryName, accessToken, files, confirmOverwrite = confirmPipelineOverwrite }) => {
+    const branchName = SCAFFOLD_BRANCH;
+    const oldObjectId = repoId
+      ? await getBranchObjectId({ hostUri, projectId, repoId, branch: branchName, accessToken })
+      : ZERO_OBJECT_ID;
+    const normalizedFiles = normalizeGeneratedFiles(files);
+    const existing = oldObjectId === ZERO_OBJECT_ID
+      ? normalizedFiles.map(() => null)
+      : await Promise.all(normalizedFiles.map((file) => getRepositoryFileContent({
+          hostUri, projectId, repoId, branchName, commitId: oldObjectId, path: file.path, accessToken
+        })));
+    const changes = [];
+    for (const [index, file] of normalizedFiles.entries()) {
+      const previous = existing[index];
+      if (previous !== null && (!file.overwrite || previous === file.content)) continue;
+      if (previous !== null && /\.ya?ml$/i.test(file.path)) {
+        await requirePipelineOverwriteConfirmation({
+          repositoryName, branchName, filePath: file.path, previous, proposed: file.content
+        }, confirmOverwrite);
+      }
+      changes.push(Object.freeze({ ...file, changeType: previous === null ? 'add' : 'edit' }));
+    }
+    return Object.freeze({
+      hostUri, projectId, repoId, repositoryName, branchName, oldObjectId,
+      files: Object.freeze(normalizedFiles), changes: Object.freeze(changes)
+    });
+  };
+
+  const staleGeneratedFilesReview = () => {
+    const error = new Error('The pipeline repository or YAML changed after the initial review. No YAML was overwritten. Submit again to review the latest version before provisioning.');
+    error.code = 'PIPELINE_REVIEW_STALE';
+    return error;
+  };
+
+  const assertGeneratedFilesPlanCurrent = async ({ hostUri, projectId, repoId, accessToken, plan }) => {
+    if (plan.hostUri !== hostUri || plan.projectId !== projectId || (plan.repoId && plan.repoId !== repoId)) {
+      throw staleGeneratedFilesReview();
+    }
+    const currentObjectId = await getBranchObjectId({ hostUri, projectId, repoId, branch: plan.branchName, accessToken });
+    if (currentObjectId !== plan.oldObjectId) throw staleGeneratedFilesReview();
+  };
+
+  const useGeneratedFilesPlan = async ({ reviewedPlan, ...options }) => {
+    if (!reviewedPlan) return prepareGeneratedFiles(options);
+    if (reviewedPlan.repositoryName !== options.repositoryName ||
+        JSON.stringify(reviewedPlan.files) !== JSON.stringify(normalizeGeneratedFiles(options.files))) {
+      throw staleGeneratedFilesReview();
+    }
+    await assertGeneratedFilesPlanCurrent({ ...options, plan: reviewedPlan });
+    return reviewedPlan;
+  };
+
   const postScaffold = async ({
     hostUri,
     projectId,
     repoId,
+    repositoryName = repoId,
     branch,
     accessToken,
     content,
-    pipelineFilename = 'project-repo-environment-branch.yml'
+    pipelineFilename = 'project-repo-environment-branch.yml',
+    confirmOverwrite = confirmPipelineOverwrite,
+    reviewedPlan
   }) => {
     const branchName = SCAFFOLD_BRANCH;
     const branchRef = `refs/heads/${branchName}`;
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=6.0`;
     const pipelineContent = content || '';
-    const oldObjectId = await getBranchObjectId({ hostUri, projectId, repoId, branch: branchName, accessToken });
     const filePath = `/${pipelineFilename}`;
-    const existingContent =
-      oldObjectId === ZERO_OBJECT_ID
-        ? null
-        : await getRepositoryFileContent({
-          hostUri,
-          projectId,
-          repoId,
-        branchName,
-        path: filePath,
-          accessToken
-        });
-    const fileExists = existingContent !== null;
-    if (fileExists && existingContent === pipelineContent) {
+    const plan = await useGeneratedFilesPlan({
+      hostUri, projectId, repoId, repositoryName, accessToken, confirmOverwrite, reviewedPlan,
+      files: [{ path: filePath, content: pipelineContent }]
+    });
+    const { oldObjectId } = plan;
+    if (!plan.changes.length) {
       return { skipped: true, unchanged: true, path: filePath, branch: branchRef };
     }
+    const fileExists = plan.changes[0].changeType === 'edit';
     const body = {
       refUpdates: [
         {
@@ -3742,33 +3969,11 @@
     }
   };
 
-  const postGeneratedFiles = async ({ hostUri, projectId, repoId, accessToken, files, comment }) => {
+  const postGeneratedFiles = async ({ hostUri, projectId, repoId, repositoryName = repoId, accessToken, files, comment, confirmOverwrite = confirmPipelineOverwrite, reviewedPlan }) => {
     const branchName = SCAFFOLD_BRANCH;
     const branchRef = `refs/heads/${branchName}`;
-    const oldObjectId = await getBranchObjectId({ hostUri, projectId, repoId, branch: branchName, accessToken });
-    const normalizedFiles = files.map((file) => ({
-      ...file,
-      path: file.path.startsWith('/') ? file.path : `/${file.path}`,
-      content: String(file.content || '')
-    }));
-    const existing = oldObjectId === ZERO_OBJECT_ID
-      ? normalizedFiles.map(() => null)
-      : await Promise.all(normalizedFiles.map((file) => getRepositoryFileContent({
-          hostUri,
-          projectId,
-          repoId,
-          branchName,
-          path: file.path,
-          accessToken
-        })));
-    const changes = [];
-    normalizedFiles.forEach((file, index) => {
-      const previous = existing[index];
-      if (previous === null) {
-        changes.push({ ...file, changeType: 'add' });
-      } else if (file.overwrite !== false && previous !== file.content) {
-        changes.push({ ...file, changeType: 'edit' });
-      }
+    const { oldObjectId, changes } = await useGeneratedFilesPlan({
+      hostUri, projectId, repoId, repositoryName, accessToken, files, confirmOverwrite, reviewedPlan
     });
     if (!changes.length) return { skipped: true, unchanged: true, paths: [] };
     const url = `${hostUri}${encodeURIComponent(projectId)}/_apis/git/repositories/${repoId}/pushes?api-version=6.0`;
@@ -4883,7 +5088,7 @@
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (state.provisioningComplete) return;
+    if (state.provisioningComplete || state.isSubmitting) return;
     setCompletionVisibility(false);
     if (initializationPromise) {
       try {
@@ -4892,6 +5097,7 @@
         console.error('Initialization failed before submit', error);
       }
     }
+    if (state.provisioningComplete || state.isSubmitting) return;
     if (!state.deploymentTargetsReady) {
       setStatus(
         `Deployment targets are unavailable. Verify ${DEPLOYMENT_TARGETS_CONFIG.collection}/${DEPLOYMENT_TARGETS_CONFIG.project}/${DEPLOYMENT_TARGETS_CONFIG.repository}:${DEPLOYMENT_TARGETS_CONFIG.path} on ${DEPLOYMENT_TARGETS_CONFIG.branch} and reopen the generator.`,
@@ -5014,6 +5220,33 @@
     const targetBranch = SCAFFOLD_BRANCH;
     try {
       const provisioningProjectName = state.rawProjectName || state.projectName;
+      const generatedFiles = [
+        { path: `/${pipelineFilename}`, content: yaml },
+        ...(isMonorepoMode()
+          ? [{ path: '/.devops/deployments.yml', content: buildMonorepoDeploymentContract(), overwrite: false }]
+          : [])
+      ];
+      const { projectRepositories, existingPipelineRepo, reviewedPlan } = await runProvisioningStep(
+        'Preflight: reviewing existing pipeline YAML before making any changes...',
+        async () => {
+          const projectRepositories = await listProjectRepositories({
+            hostUri: state.hostUri,
+            projectId: state.projectId,
+            accessToken: state.accessToken
+          });
+          const repositoryName = `${provisioningProjectName}_Azure_DevOps`;
+          const existingPipelineRepo = projectRepositories.find(({ name }) => name === repositoryName);
+          const reviewedPlan = await prepareGeneratedFiles({
+            hostUri: state.hostUri,
+            projectId: state.projectId,
+            repoId: existingPipelineRepo?.id,
+            repositoryName,
+            accessToken: state.accessToken,
+            files: generatedFiles
+          });
+          return { projectRepositories, existingPipelineRepo, reviewedPlan };
+        }
+      );
       let supportRepositories = [];
       let nginxNetworkName = '';
       let serviceRoutingPlan;
@@ -5024,22 +5257,26 @@
             hostUri: state.hostUri,
             server: payload.komodoServer
           });
-          const projectRepositories = await listProjectRepositories({
-            hostUri: state.hostUri,
-            projectId: state.projectId,
-            accessToken: state.accessToken
-          });
           serviceRoutingPlan = buildProjectServiceRoutingPlan({
             repositories: projectRepositories,
             projectName: provisioningProjectName,
             repositoryName: sourceRepositoryName,
             service: payload.service
           });
-          const pipelineRepo = await ensureRepo({
+          const pipelineRepo = existingPipelineRepo || await ensureRepo({
             hostUri: state.hostUri,
             projectId: state.projectId,
             projectName: provisioningProjectName,
             accessToken: state.accessToken
+          });
+          // Do not touch support repositories if the reviewed target changed,
+          // including a repository/main branch created concurrently with preflight.
+          await assertGeneratedFilesPlanCurrent({
+            hostUri: state.hostUri,
+            projectId: state.projectId,
+            repoId: pipelineRepo.id,
+            accessToken: state.accessToken,
+            plan: reviewedPlan
           });
           supportRepositories = await ensureSupportRepositories({
             hostUri: state.hostUri,
@@ -5074,22 +5311,23 @@
               hostUri: state.hostUri,
               projectId: state.projectId,
               repoId: repo.id,
+              repositoryName: repo.name,
               branch: targetBranch,
               accessToken: state.accessToken,
               content: yaml,
-              pipelineFilename
+              pipelineFilename,
+              reviewedPlan
             });
           }
           return postGeneratedFiles({
             hostUri: state.hostUri,
             projectId: state.projectId,
             repoId: repo.id,
+            repositoryName: repo.name,
             accessToken: state.accessToken,
             comment: `Generate MR Pipeline ${pipelineFilename}`,
-            files: [
-              { path: `/${pipelineFilename}`, content: yaml },
-              { path: '/.devops/deployments.yml', content: buildMonorepoDeploymentContract(), overwrite: false }
-            ]
+            files: generatedFiles,
+            reviewedPlan
           });
         }
       );
@@ -5183,6 +5421,18 @@
         contractPath: isMonorepoMode() ? '/.devops/deployments.yml' : undefined
       });
     } catch (error) {
+      if (error?.code === 'PIPELINE_OVERWRITE_CANCELLED') {
+        setStatus('Generation cancelled before provisioning. No resources were changed.');
+        setSubmitting(false);
+        submitButton?.focus();
+        return yaml;
+      }
+      if (error?.code === 'PIPELINE_REVIEW_STALE') {
+        setStatus(error.message, true);
+        setSubmitting(false);
+        submitButton?.focus();
+        return yaml;
+      }
       console.error(error);
       const detail = sanitizeErrorDetail(error?.detail || error?.message || '');
       const step = error?.provisioningStep || 'Provisioning';

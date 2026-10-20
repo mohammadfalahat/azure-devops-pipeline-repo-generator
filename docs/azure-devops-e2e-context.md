@@ -8,7 +8,7 @@ Latest installed live execution observed: **0.1.62 Build and Release success on 
 
 Latest user-reported live failure: **Build 15247, HTTP 500 `Stack busy`, 2026-08-27**
 
-Current local workspace manifest: **0.1.78**; recent fixes are locally validated only.
+Current local workspace manifest: **0.1.81**; recent fixes are locally validated only.
 
 This document records the durable findings from debugging and testing the
 Pipeline Generator extension against the on-premises Azure DevOps instance. It
@@ -21,7 +21,65 @@ No credentials belong in either file. Credentials exposed in conversation,
 including PATs and Komodo API credentials, must never be copied into commands,
 documentation, extension assets, or logs and must be revoked/rotated.
 
-## Current local workspace — version 0.1.78
+## Current local workspace — Pipeline YAML review before provisioning, 2026-10-20
+
+Normal and MR generation now perform a read-only review before Step 1 and every
+provisioning mutation. Repository listing, ref lookup, and commit-pinned file
+reads precede the overwrite decision; an absent target needs no prompt. A
+native in-page modal identifies repository, branch,
+and file, and shows removed/added lines with old/new line numbers, whitespace,
+line-ending labels, and missing-final-newline markers. Only Confirm overwrite
+allows provisioning to start. Cancel, Escape, or dismissal leaves repositories,
+Compose/Nginx, Pipelines, and Releases untouched. New or identical files do not
+prompt; the MR deployment contract remains create-once. The initial implementation
+prompted in Step 2 after support writes; that ordering defect is now corrected.
+
+An immutable, submission-local plan binds repository identity, commit, exact
+proposed content, and overwrite policies. The ref is revalidated before support
+writes and again in Step 2, which saves the reviewed plan without another diff
+or prompt. A concurrent change or initialized target appearing after the initial
+read aborts without stale approval. The push retains the reviewed oldObjectId.
+If an external update occurs during Step 1, completed support writes cannot be
+rolled back, but the changed YAML is never overwritten with stale consent.
+YAML is rendered with textContent, not HTML, and cleared on close. The manifest
+was already 0.1.81 when this ordering correction began; documentation was aligned.
+
+Validation method: local only. Full `npm test`, JavaScript syntax checks, state
+YAML parsing, and `git diff --check` passed. The overwrite VM regression covers exact diff
+reconstruction, pending/approved/cancelled normal/MR commits, protected MR
+contracts, commit-pinned reads, conflicts/fresh consent, modal focus/dismissal,
+and literal YAML rendering. Actual normal/MR submit-handler tests verify GET-only
+requests while review is pending, zero resource mutations on Cancel/Escape/close,
+successful continuation with exactly the approved YAML and no second prompt,
+proposal-bound consent, stale refs, concurrently created targets, and missing
+repository creation after preflight. A local headless Chrome check with synthetic YAML
+and all browser network requests blocked verified Cancel/Confirm/Escape,
+keyboard focus restoration, and desktop/mobile/short-height layouts. The check
+also exposed and fixed a queued native close event dismissing a newly reopened
+review. No signed-in Azure DevOps session, authentication-adapted browser test,
+direct REST call, installation, or live write was performed. This source change
+has not been packaged; existing VSIX files predate the overwrite review.
+
+## Previous local workspace — Compose image deduplication, 2026-10-20
+
+The user reported duplicate Compose service generation when the same image was
+already present under another service name. Normal and MR mergers previously
+checked service names alone. They now also compare direct service image
+repositories before appending a missing service, ignoring tags/digests while
+preserving registry ports and exact repository spelling. A differently named
+existing service keeps its image reference and all operator settings. Existing
+name-based image/runtime migration remains available.
+
+Local validation: full `npm test` using the bundled Node 24 runtime and system
+`js-yaml` via `NODE_PATH=/usr/share/nodejs`; regression fixtures cover the
+reported worker settings, nested interpolation, quoting/comments, registry
+ports, digests, CRLF, nested-field false positives, partial MR insertion, and
+no Git push when Compose and `.env` are unchanged. README's stale 0.1.78 label
+was aligned with the pre-existing 0.1.79 manifest. This source change has not
+been packaged, installed, or live-tested; existing VSIX files predate it. No
+Azure DevOps, Komodo, or Nginx resource was changed.
+
+## Previous local workspace — version 0.1.78
 
 On 2026-10-12 the user reported Step 1 rejecting the selected Komodo Server's
 Nginx network while their SOC CLI listing showed exact `nginx-network`. The

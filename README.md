@@ -6,7 +6,7 @@ creates or reuses a project-level repository, writes a generated YAML file,
 registers a YAML Pipeline that points to that file, and creates a classic
 Release definition that consumes the Pipeline as a Build artifact.
 
-The manifest version documented here is **0.1.78**. The manifest targets Azure
+The manifest version documented here is **0.1.81**. The manifest targets Azure
 DevOps Services and Azure DevOps Server range `[16.0,20.0)`. The complete live
 workflow has been verified on the documented on-premises Server environment;
 the Azure DevOps Services Release API route still requires a separate
@@ -109,14 +109,19 @@ credentials used by MR Build/Release need permission to create/update Komodo
 Repo and Stack resources and execute `DeployStack` on the selected Server;
 they are not read from or embedded in the browser bundle.
 
-The browser workflow performs five visible steps:
+Before provisioning, the generator reads the existing Pipeline YAML and shows
+its exact diff when the same filename contains different content. Overwriting
+requires explicit confirmation before any repository, Compose/Nginx, Pipeline,
+or Release change. Cancelling this initial review leaves all resources untouched.
+
+After this read-only review, the browser workflow performs five visible steps:
 
 1. Resolve the selected Server's external Nginx Docker network, then create or reuse `<ProjectName>_Azure_DevOps`,
    `<ProjectNameWithoutSpaces>_Docker_DevOps`, and
    `<ProjectNameWithoutSpaces>_Nginx_DevOps`; initialize the two support
    repositories with a starter `compose.yml`, its adjacent tracked `.env`, and one shared
    project/Environment Nginx configuration with managed service routes.
-2. Add or edit the generated YAML file on `main`.
+2. Save the generated YAML file on `main` using the reviewed content and commit.
 3. set `refs/heads/main` as the generated repository's default branch.
 4. Create or update the YAML Pipeline under `\komodo`.
 5. Create or reconcile the classic Release definition under `\komodo`, embed

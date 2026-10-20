@@ -817,6 +817,96 @@ const legacyWorkerCompose = workerSpecs[0].content.replace('${api_worker}', '${I
 const migratedWorkerCompose = workerSpecs[0].mergeExisting(legacyWorkerCompose);
 assert(migratedWorkerCompose.includes('image: registry.buluttakin.com/180feedback/api-worker-pro:${api_worker}'));
 assert.strictEqual(workerSpecs[0].mergeExisting(migratedWorkerCompose), migratedWorkerCompose);
+
+// The operator may rename a service while retaining its image and runtime
+// settings. Image identity must prevent an additional generated container.
+const workerImageSpecs = hooks.buildSupportRepositorySpecs({
+  projectName: 'DevOpsServices',
+  environment: 'pro',
+  stack: 'worker',
+  service: 'devops_services_agent',
+  repositoryAddress: 'registry.buluttakin.com',
+  includeNginx: false
+});
+const operatorWorkerCompose = [
+  'services:',
+  '  operator_worker:',
+  '    container_name: devopsservices_devops_services_agent_worker_pro',
+  '    image: registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:${devops_services_agent_worker:-CHANGE_ME}',
+  '    restart: unless-stopped',
+  '    user: "0:0"',
+  '    read_only: true',
+  '    environment:',
+  '      WORKER_ID: ${WORKER_ID:?Set a stable unique worker ID}',
+  '      WORKER_TOKEN: ${WORKER_TOKEN:?Set a random token with at least 32 characters}',
+  '      METRICS_TOKEN: ${METRICS_TOKEN:-${WORKER_TOKEN}}',
+  '    ports:',
+  '      - "${MANAGEMENT_BIND_IP:-127.0.0.1}:9091:9091"',
+  '      - "${LISTEN_PORT_RANGE_2:-${LISTEN_PORT_RANGE_1:-7000-7099}}:${LISTEN_PORT_RANGE_2:-${LISTEN_PORT_RANGE_1:-7000-7099}}"',
+  '    volumes:',
+  '      - /mnt/graid/projects/DevOpsServices/tcp-duplicator-data:/data',
+  '      - /var/projects/nginx/conf.d:/nginx-certificates:rw',
+  '    cap_drop:',
+  '      - ALL',
+  '    networks:',
+  '      - nginx-network',
+  '',
+  '  devopsservices_docker_devops_worker_pro:',
+  '    image: registry.buluttakin.com/devopsservices/docker_devops-worker-pro:${docker_devops_worker}',
+  '',
+  'networks:',
+  '  nginx-network:',
+  '    name: nginx-network',
+  '    external: true',
+  ''
+].join('\n');
+assert.doesNotThrow(() => yaml.load(operatorWorkerCompose));
+for (const tag of [
+  ':${devops_services_agent_worker:-CHANGE_ME}',
+  ':${IMAGE_TAG:-${FALLBACK_TAG:-latest}}',
+  ':${IMAGE_TAG:?Set a tag for build/release}',
+  ':1.0.123',
+  '@sha256:' + 'a'.repeat(64),
+  ''
+]) {
+  for (const quote of ['', '"', "'"]) {
+    const compose = operatorWorkerCompose.replace(
+      'registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:${devops_services_agent_worker:-CHANGE_ME}',
+      `${quote}registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro${tag}${quote} # keep operator image`
+    );
+    for (const input of [compose, compose.replace(/\n/g, '\r\n'), compose.trimEnd()]) {
+      assert.strictEqual(workerImageSpecs[0].mergeExisting(input), input);
+    }
+  }
+}
+const portRegistrySpecs = hooks.buildSupportRepositorySpecs({
+  projectName: 'DevOpsServices', environment: 'pro', stack: 'worker',
+  service: 'devops_services_agent', repositoryAddress: 'registry.buluttakin.com:5000', includeNginx: false
+});
+const portRegistryCompose = operatorWorkerCompose.replaceAll('registry.buluttakin.com/', 'registry.buluttakin.com:5000/');
+assert.strictEqual(portRegistrySpecs[0].mergeExisting(portRegistryCompose), portRegistryCompose);
+for (const otherImage of [
+  'registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro-extra:1',
+  'registry.buluttakin.com/devopsservices/devops_services_agent-worker-demo:1',
+  'other.registry/devopsservices/devops_services_agent-worker-pro:1',
+  'registry.buluttakin.com:5000/devopsservices/devops_services_agent-worker-pro:1'
+]) {
+  const input = operatorWorkerCompose.replace(
+    'registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:${devops_services_agent_worker:-CHANGE_ME}', otherImage
+  );
+  const merged = workerImageSpecs[0].mergeExisting(input);
+  assert.strictEqual(Object.keys(yaml.load(merged).services).length, 3);
+  assert.strictEqual(workerImageSpecs[0].mergeExisting(merged), merged);
+}
+const nestedImageCompose = operatorWorkerCompose.replace(
+  '    image: registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:${devops_services_agent_worker:-CHANGE_ME}',
+  '    labels:\n      image: registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:1'
+);
+assert.strictEqual(Object.keys(yaml.load(workerImageSpecs[0].mergeExisting(nestedImageCompose)).services).length, 3);
+const extensionImageCompose = 'x-defaults:\n  image: registry.buluttakin.com/devopsservices/devops_services_agent-worker-pro:1\nservices: {}\n';
+assert.strictEqual(Object.keys(yaml.load(workerImageSpecs[0].mergeExisting(extensionImageCompose)).services).length, 1);
+const fourSpaceCompose = operatorWorkerCompose.replace(/^( +)/gm, '$1$1');
+assert.strictEqual(workerImageSpecs[0].mergeExisting(fourSpaceCompose), fourSpaceCompose);
 assert.strictEqual(workerUiSpecs[0].additionalFiles[0].mergeExisting('api_worker:1.0.100\n'),
   'api_worker:1.0.100\nui_worker:CHANGE_ME\n');
 const mergedWorkerNginx = workerUiSpecs[1].mergeExisting(workerSpecs[1].content);
@@ -923,6 +1013,34 @@ assert.strictEqual(
   }),
   mergedMonorepoCompose
 );
+const renamedMonorepoCompose = mergedMonorepoCompose
+  .replace('  180feedback_frontend_demo:', '  operator_static:')
+  .replace('  180feedback_frontend_bff_demo:', '  operator_bff:')
+  .replace('frontend-demo:${frontend}', 'frontend-demo:1.0.14999')
+  .replace('frontend-bff-demo:${frontend_bff}', 'frontend-bff-demo@sha256:' + 'b'.repeat(64));
+const mergeFrontendCompose = (content) => hooks.mergeMonorepoComposeServices({
+  content, projectKey: '180feedback', serviceKey: 'frontend', environment: 'demo'
+});
+assert.strictEqual(mergeFrontendCompose(renamedMonorepoCompose), renamedMonorepoCompose);
+const partialMonorepoCompose = [
+  'services:',
+  '  operator_static:',
+  '    image: "registry.buluttakin.com/180feedback/frontend-demo:1.0.14999" # pinned',
+  '    labels:',
+  '      owner: operator',
+  '',
+  'networks:',
+  '  nginx-network:',
+  '    name: nginx-network',
+  '    external: true',
+  ''
+].join('\n');
+const mergedPartialMonorepo = mergeFrontendCompose(partialMonorepoCompose);
+const partialServices = yaml.load(mergedPartialMonorepo).services;
+assert.deepStrictEqual(Object.keys(partialServices), ['operator_static', '180feedback_frontend_bff_demo']);
+assert.strictEqual(partialServices.operator_static.image, 'registry.buluttakin.com/180feedback/frontend-demo:1.0.14999');
+assert.strictEqual(partialServices.operator_static.labels.owner, 'operator');
+assert.strictEqual(mergeFrontendCompose(mergedPartialMonorepo), mergedPartialMonorepo);
 const immutableTaggedCompose = mergedMonorepoCompose.replace(
   'image: registry.buluttakin.com/180feedback/frontend-demo:${frontend}',
   'image: registry.buluttakin.com/180feedback/frontend-demo:1.0.14999'
@@ -2191,6 +2309,34 @@ KOMODO_API_SECRET="synthetic-read-secret"
   assert.strictEqual(existingBootstrap.skipped, true);
   assert(existingSupportCalls.every(({ method }) => method === 'GET'));
 
+  const duplicateImageCalls = [];
+  context.fetch = async (url, options = {}) => {
+    const method = options.method || 'GET';
+    duplicateImageCalls.push(method);
+    if (url.includes('/refs?') && method === 'GET') {
+      return response({ body: { value: [{ objectId: '3333333333333333333333333333333333333333' }] }, url });
+    }
+    if (url.includes('/items?') && method === 'GET') {
+      const filePath = new URL(url).searchParams.get('path');
+      return response({ body: filePath.endsWith('/.env') ? 'devops_services_agent_worker:1.0.123\n' : operatorWorkerCompose, url });
+    }
+    throw new Error(`Existing image must not cause a Git write: ${method} ${url}`);
+  };
+  const duplicateImageBootstrap = await hooks.ensureRepositoryBootstrapFiles({
+    hostUri, projectId,
+    repo: { id: 'docker-repo-id', name: 'DevOpsServices_Docker_DevOps' },
+    directory: workerImageSpecs[0].directory,
+    sampleFile: {
+      path: workerImageSpecs[0].filePath,
+      content: workerImageSpecs[0].content,
+      mergeExisting: workerImageSpecs[0].mergeExisting
+    },
+    additionalFiles: workerImageSpecs[0].additionalFiles,
+    accessToken: 'extension-session-token'
+  });
+  assert.strictEqual(duplicateImageBootstrap.skipped, true);
+  assert(duplicateImageCalls.every((method) => method === 'GET'));
+
   let secondServicePush;
   context.fetch = async (url, options = {}) => {
     const method = options.method || 'GET';
@@ -2297,6 +2443,12 @@ KOMODO_API_SECRET="synthetic-read-secret"
     hostUri,
     projectId,
     repoId: repo.id,
+    confirmOverwrite: async ({ filePath, previous, proposed }) => {
+      assert.strictEqual(filePath, '/mr.yml');
+      assert.strictEqual(previous, 'old pipeline yaml\n');
+      assert.strictEqual(proposed, 'new pipeline yaml\n');
+      return true;
+    },
     accessToken: 'extension-session-token',
     files: [
       { path: '/mr.yml', content: 'new pipeline yaml\n' },

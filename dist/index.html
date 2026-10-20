@@ -143,5 +143,24 @@
       </section>
     </section>
   </main>
+  <dialog id="pipeline-overwrite-dialog" class="overwrite-dialog" aria-labelledby="overwrite-title" aria-describedby="overwrite-description">
+    <div class="overwrite-heading">
+      <h2 id="overwrite-title">Replace existing pipeline YAML?</h2>
+      <p id="overwrite-description">This file already exists with different content. Review the exact changes before replacing it.</p>
+      <p id="overwrite-target" class="overwrite-target"></p>
+      <p id="overwrite-summary" role="status"></p>
+      <p class="hint">− Removed from the current file · + Added to the new file. Line endings are shown as LF, CRLF, CR, or EOF (no final newline).</p>
+    </div>
+    <div class="overwrite-diff" tabindex="0" role="region" aria-label="Pipeline YAML changes">
+      <table class="diff-table">
+        <thead><tr><th scope="col">Old</th><th scope="col">New</th><th scope="col">Change</th><th scope="col">YAML</th><th scope="col">Ending</th></tr></thead>
+        <tbody id="overwrite-diff-lines"></tbody>
+      </table>
+    </div>
+    <div class="overwrite-actions">
+      <button id="overwrite-cancel" type="button" class="secondary" autofocus>Cancel generation</button>
+      <button id="overwrite-confirm" type="button" class="primary-inline">Confirm overwrite</button>
+    </div>
+  </dialog>
 </body>
 </html>

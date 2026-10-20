@@ -1,6 +1,6 @@
 # Azure DevOps REST contracts
 
-This document is the integration contract between Pipeline Generator 0.1.78
+This document is the integration contract between Pipeline Generator 0.1.81
 and Azure DevOps. Paths are relative to the collection base URI unless stated
 otherwise.
 
@@ -320,6 +320,22 @@ For an existing branch, `oldObjectId` is the current ref object ID. If the file
 exists, `changeType` becomes `edit` and the commit message starts with `Update`.
 Azure DevOps performs the concurrency check against `oldObjectId`.
 
+Normal and MR Pipeline YAML reads are pinned to that object ID through
+`versionDescriptor.version=<oldObjectId>&versionDescriptor.versionType=commit`.
+Before any provisioning mutation, the UI lists repositories and reviews the
+existing generated YAML using read-only requests. If same-path YAML differs,
+an exact line diff must be displayed and explicitly confirmed at this point.
+Cancel, Escape, or modal dismissal stops before repository creation, support
+file commits, branch PATCHes, and Pipeline/Release reconciliation. New
+files and byte-identical files require no confirmation. An existing MR contract
+with `overwrite: false` is never included as an edit. An immutable, submission-local
+plan retains the exact repository, file content, overwrite policies, and original
+`oldObjectId`. The ref is checked before support writes and again before the YAML
+commit. Step 2 uses that plan without another diff or prompt. Concurrent ref
+changes or a concurrently initialized target repository abort without an
+automatic retry or approval transfer to another proposal. The push still carries
+the reviewed `oldObjectId` for the final concurrency check.
+
 The UI currently does not return or persist the push response; downstream
 provisioning relies on the POST completing successfully and on the server being
 able to resolve the new path immediately.
@@ -331,7 +347,12 @@ Compose plus adjacent `.env`, or, for a configured Environment, the shared
 Nginx starter in the Stack-specific directory. On an
 existing branch, the UI reads the exact starter-file paths. Normal and Monorepo
 `compose.yml` and `.env` are add-or-semantic-edit only for their managed
-service blocks/tag keys. The shared Nginx file is add-or-semantic-edit: only a missing
+service blocks/tag keys. A missing normal or MR service name does not trigger
+insertion when another service already references the same exact image
+repository; tags and digests are ignored for that check, registry ports are
+retained, and the existing service's image and runtime settings are preserved.
+An unchanged Compose plus unchanged `.env` produces no Git push.
+The shared Nginx file is add-or-semantic-edit: only a missing
 managed Location is inserted; existing Location blocks and manual content are
 not rewritten internally. The managed section or an existing manual root block
 may be moved so `location /` is the last Location in the matching HTTPS server.

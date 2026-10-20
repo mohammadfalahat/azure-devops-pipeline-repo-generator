@@ -1,6 +1,33 @@
 schema_version: 1
 last_verified_at: "2026-08-27"
-status: "local_0_1_78_network_parsing_and_diagnostics_validated_not_live_tested"
+status: "local_0_1_81_pipeline_yaml_preflight_validated_not_live_tested"
+
+workspace_pipeline_yaml_overwrite_review:
+  manifest_version: "0.1.81"
+  local_validated_at: "2026-10-20"
+  evidence_method: "local VM actual-submit-handler and write-path regressions; existing synthetic headless Chrome modal checks; no live request"
+  behavior: "Read-only normal/MR YAML review before Step 1 and every provisioning mutation; same-path changes require a complete line diff and explicit Confirm overwrite; new/identical files do not prompt."
+  comparison: "Old/new line numbers, added/removed lines, preserved whitespace, LF/CRLF/CR/EOF; textContent rendering and clearing on close."
+  concurrency: "Immutable submission-local plan binds repository, files, proposal, policy and commit; revalidate ref before support writes and Step 2, retain oldObjectId for push, and reject changed refs/concurrently initialized repos without a late diff or approval reuse."
+  cancellation_scope: "Preflight Cancel/Escape/dismissal leaves all resources untouched. External changes during Step 1 may leave completed support writes, but stale YAML is never overwritten."
+  local_validation: "Full npm test, JavaScript syntax, state YAML parsing, git diff --check; actual normal/MR submit tests prove GET-only requests pending consent, zero mutations on cancellation, exact approved writes without a second prompt, stale-plan/proposal rejection, concurrent target creation, and missing-repository provisioning; existing native dialog regressions pass."
+  packaged: false
+  installed: false
+  live_verified: false
+  existing_vsix_contains_fix: false
+  live_resources_changed: false
+
+workspace_compose_image_deduplication:
+  manifest_version: "0.1.79"
+  local_validated_at: "2026-10-20"
+  evidence_method: "local validation only; user-provided worker Compose settings and synthetic fixtures"
+  behavior: "Before appending a missing normal/MR service, skip an image repository already used by another service; ignore tags/digests, retain registry ports and exact repository spelling, and preserve existing service settings."
+  local_validation: "Full npm test with bundled Node 24 and NODE_PATH=/usr/share/nodejs; nested interpolation, quoting/comments, registry ports, digests, CRLF, nested-field false positives, partial MR insertion, and no-op Git push regression cases passed."
+  packaged: false
+  installed: false
+  live_verified: false
+  existing_vsix_contains_fix: false
+  live_resources_changed: false
 
 development_candidate:
   version: "0.1.78"

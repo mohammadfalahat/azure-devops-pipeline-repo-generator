@@ -255,6 +255,17 @@ assembled as text:
 - run `npm test` and inspect a concrete generated document;
 - validate the document in a test Pipeline on the target server.
 
+Both normal and MR generation require explicit confirmation before replacing
+different content at the same Pipeline YAML path. This read-only review runs
+before Step 1 and every provisioning mutation. The modal shows the complete
+line diff, old/new numbers, whitespace and line endings. Cancel/Escape leaves
+repositories, Compose/Nginx files, Pipelines, and Releases untouched. An immutable
+plan carries the reviewed proposal to Step 2 without another prompt; identical content and new
+paths proceed without a prompt. Changes to this behavior must preserve
+commit-pinned reads, ref validation before support writes and YAML commit,
+proposal-bound consent, optimistic concurrency, safe text rendering, keyboard focus,
+and the create-once MR deployment contract.
+
 `buildPipelineFilename` requires Service, Environment, and the selected Komodo Server and returns
 `<repository>[-MR]-<service>[-<stack>]-<SanitizedBranch>To<UPPERCASE-ENVIRONMENT>EnvOn<SERVER>Srv.yml`;
 `buildPipelineName` returns that filename unchanged. `buildReleaseName` uses
@@ -270,7 +281,11 @@ For normal services, the Build template pushes
 Compose file uses that exact repository and `${<service>[_<stack>]}` as its tag
 reference, with punctuation in the tag key converted to underscores. The
 adjacent tracked `.env` stores the matching version key. A new Service is
-appended to the existing Compose `services` section; a rerun leaves an
+appended to the existing Compose `services` section only when neither its
+service name nor its image repository is present. Normal and MR mergers compare
+the full image repository (including registry port), ignoring tags and digests.
+An image already used under another service name keeps that service's settings
+and image reference unchanged. A rerun leaves an
 unchanged file untouched. The maintained SharedTemplates `release-komodo.sh`
 updates that same `.env` key and migrates its older punctuated spelling.
 
@@ -360,7 +375,8 @@ Run:
 npm test
 ```
 
-This executes five independent checks.
+This runs the extension, action/UI, overwrite, retry, Release, listener, and
+shell validation checks.
 
 ### Extension validation
 
@@ -412,6 +428,9 @@ REST responses to assert that:
   reruns cannot reclaim `/` or `/api/`;
 - editable Stack normalization/discovery, default-name compatibility, custom
   Compose/Nginx directories, Pipeline/Release/Image/Container/Komodo isolation;
+- normal/MR image-based duplicate prevention across renamed services, literal
+  and interpolated tags, digests, quoted images, registry ports, nested-field
+  false positives, partial MR insertion, and no-op Git writes;
 - Docker/Nginx DevOps repository names, Compose/shared-Nginx paths, project
   hostname, service route, ports, WebSocket headers, and certificate paths
   follow the documented semantic frontend/backend/variant convention, including
@@ -443,6 +462,22 @@ REST responses to assert that:
   additional group IDs are preserved.
 
 The production file is not modified and contains no test-only global hook.
+
+### Pipeline overwrite regression test
+
+`scripts/validate-pipeline-overwrite.js` instruments the production functions
+only in a Node VM. It verifies exact diff reconstruction (including whitespace,
+line endings, repeated lines and missing final newlines), pending/approved/
+cancelled normal and MR writes, protected contracts, commit-pinned reads,
+concurrent-write failure with fresh approval on retry, dialog dismissal/focus,
+and safe literal rendering. It performs no network request.
+The actual normal/MR submit-handler regression additionally asserts GET-only
+requests and zero mutations while review is pending or cancelled, successful
+continuation with the exact approved YAML, no second prompt, stale-plan rejection
+before support writes, and safe handling of a concurrently created target repo.
+It also verifies a missing target repository can still be provisioned.
+A local Chrome interaction check additionally verifies native keyboard behavior and responsive
+layout; this does not prove signed-in Azure DevOps behavior.
 
 ### Service Hook self-test
 
